@@ -25,16 +25,9 @@ def build_user_prompt(context: dict) -> str:
         "alert_priority": risk_level,
         "device_actions": [],
     }
-    event_context = {
-        "rule_result": rule,
-        "source_payload": context.get("source_payload", {}),
-        "recent_vital": context.get("recent_vital"),
-        "recent_environment": context.get("recent_environment"),
-        "recent_vision": context.get("recent_vision", []),
-    }
     return (
         "你只输出一行合法 JSON，不输出 Markdown，不换行，不解释。"
-        f"事件上下文:{json.dumps(event_context, ensure_ascii=False, separators=(',', ':'), default=str)}。"
+        f"根据事件:risk_level={risk_level} risk_score={risk_score} event_type={event_type} summary={summary}。"
         "输出必须使用这个 schema 和已给默认值，可微调 reasoning_summary，但不要改变 risk_level 或 alert_priority："
         f"{json.dumps(template, ensure_ascii=False, separators=(',', ':'), default=str)}"
     )
