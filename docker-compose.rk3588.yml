@@ -2,6 +2,9 @@ services:
   mosquitto:
     image: eclipse-mosquitto:2
     restart: unless-stopped
+    networks:
+      guardian-net:
+        ipv4_address: 172.30.0.10
     ports:
       - "1883:1883"
     volumes:
@@ -28,7 +31,7 @@ services:
       - .env
     environment:
       APP_ENV: production
-      MQTT_HOST: mosquitto
+      MQTT_HOST: 172.30.0.10
       MQTT_PORT: 1883
       DATABASE_URL: sqlite:////app/data/guardian.db
       LLM_MOCK: ${LLM_MOCK:-true}
@@ -37,6 +40,9 @@ services:
     volumes:
       - ./data:/app/data
       - ./configs:/app/configs:ro
+    networks:
+      guardian-net:
+        ipv4_address: 172.30.0.20
 
   web-dashboard:
     build:
@@ -57,6 +63,9 @@ services:
       - guardian-core
     ports:
       - "5173:80"
+    networks:
+      guardian-net:
+        ipv4_address: 172.30.0.30
 
   elder-hmi:
     build:
@@ -77,6 +86,9 @@ services:
       - guardian-core
     ports:
       - "5174:80"
+    networks:
+      guardian-net:
+        ipv4_address: 172.30.0.31
 
   wechat-adapter:
     build:
@@ -93,10 +105,13 @@ services:
         no_proxy: ${no_proxy:-}
     restart: unless-stopped
     environment:
-      GUARDIAN_CORE_URL: http://guardian-core:8000
+      GUARDIAN_CORE_URL: http://172.30.0.20:8000
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8102"]
     ports:
       - "8102:8102"
+    networks:
+      guardian-net:
+        ipv4_address: 172.30.0.40
 
   vision-service:
     build:
@@ -115,12 +130,15 @@ services:
     depends_on:
       - mosquitto
     environment:
-      MQTT_HOST: mosquitto
+      MQTT_HOST: 172.30.0.10
       MQTT_PORT: 1883
       ELDER_ID: ${ELDER_ID:-elder_001}
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8101"]
     ports:
       - "8101:8101"
+    networks:
+      guardian-net:
+        ipv4_address: 172.30.0.50
 
   voice-hmi-service:
     build:
@@ -139,7 +157,17 @@ services:
     depends_on:
       - mosquitto
     environment:
-      MQTT_HOST: mosquitto
+      MQTT_HOST: 172.30.0.10
       MQTT_PORT: 1883
       ELDER_ID: ${ELDER_ID:-elder_001}
     command: ["python", "-m", "app.main", "--listen-only"]
+    networks:
+      guardian-net:
+        ipv4_address: 172.30.0.51
+
+networks:
+  guardian-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
