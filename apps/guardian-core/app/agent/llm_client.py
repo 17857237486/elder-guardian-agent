@@ -28,6 +28,16 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
+def _pick(value: Any, keys: list[str]) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if hasattr(value, "model_dump"):
+        value = value.model_dump(mode="json")
+    if not isinstance(value, dict):
+        return None
+    return {key: _json_safe(value.get(key)) for key in keys if key in value}
+
+
 class LLMClient:
     def __init__(self) -> None:
         self.mock = settings.llm_mock
@@ -125,9 +135,24 @@ class LLMClient:
                     "trace": rule.get("trace"),
                 },
                 "source_payload": source,
-                "recent_vital": recent_vital,
-                "recent_environment": recent_environment,
-                "recent_vision": recent_vision[:2] if isinstance(recent_vision, list) else recent_vision,
-                "device_states": devices[:8] if isinstance(devices, list) else devices,
+                "recent_vital": _pick(
+                    recent_vital,
+                    ["heart_rate", "spo2", "systolic_bp", "diastolic_bp", "body_temperature", "timestamp"],
+                ),
+                "recent_environment": _pick(
+                    recent_environment,
+                    ["room", "temperature", "humidity", "co2_ppm", "gas_ppm", "smoke_ppm", "timestamp"],
+                ),
+                "recent_vision": [
+                    _pick(item, ["event_type", "room", "confidence", "posture", "motion_state", "timestamp"])
+                    for item in recent_vision[:2]
+                ]
+                if isinstance(recent_vision, list)
+                else [],
+                "device_states": [
+                    _pick(item, ["room", "device", "state", "value", "online", "timestamp"]) for item in devices[:8]
+                ]
+                if isinstance(devices, list)
+                else [],
             }
         )
