@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -13,6 +14,18 @@ from app.agent.prompt_templates import SYSTEM_PROMPT, build_user_prompt
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 class LLMClient:
@@ -57,11 +70,12 @@ class LLMClient:
     async def _call_openai_compatible(self, context: dict[str, Any]) -> dict[str, Any]:
         url = settings.llm_base_url.rstrip("/") + "/chat/completions"
         headers = {"Authorization": f"Bearer {settings.llm_api_key}"}
+        compact_context = self._compact_context(context)
         payload = {
             "model": settings.llm_model,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": build_user_prompt(context)},
+                {"role": "user", "content": build_user_prompt(compact_context)},
             ],
             "temperature": 0.2,
             "max_tokens": settings.llm_max_tokens,
@@ -74,3 +88,46 @@ class LLMClient:
         content = data["choices"][0]["message"]["content"]
         logger.info("LLM response received")
         return {"raw": content}
+
+    def _compact_context(self, context: dict[str, Any]) -> dict[str, Any]:
+        rule = context.get("rule_result", {})
+        event = context.get("current_event", {})
+        source = context.get("source_payload", {})
+        elder_profile = context.get("elder_profile", {})
+        recent_vital = context.get("recent_vital")
+        recent_environment = context.get("recent_environment")
+        recent_vision = context.get("vision_summary", [])
+        devices = context.get("device_states", [])
+
+        return _json_safe(
+            {
+                "elder_profile": {
+                    "elder_id": elder_profile.get("elder_id"),
+                    "name": elder_profile.get("name"),
+                    "age": elder_profile.get("age"),
+                    "conditions": elder_profile.get("conditions", []),
+                },
+                "current_event": {
+                    "event_id": event.get("event_id"),
+                    "event_type": event.get("event_type"),
+                    "risk_level": event.get("risk_level"),
+                    "risk_score": event.get("risk_score"),
+                    "room": event.get("room"),
+                    "summary": event.get("summary"),
+                },
+                "rule_result": {
+                    "event_type": rule.get("event_type"),
+                    "risk_level": rule.get("risk_level"),
+                    "risk_score": rule.get("risk_score"),
+                    "summary": rule.get("summary"),
+                    "source": rule.get("source"),
+                    "room": rule.get("room"),
+                    "trace": rule.get("trace"),
+                },
+                "source_payload": source,
+                "recent_vital": recent_vital,
+                "recent_environment": recent_environment,
+                "recent_vision": recent_vision[:2] if isinstance(recent_vision, list) else recent_vision,
+                "device_states": devices[:8] if isinstance(devices, list) else devices,
+            }
+        )

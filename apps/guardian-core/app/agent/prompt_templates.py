@@ -7,10 +7,9 @@ SYSTEM_PROMPT = """你是居家老人健康守护与环境协同 Agent。
 
 def build_user_prompt(context: dict) -> str:
     return (
-        "请基于以下上下文输出 AgentDecision JSON：\n"
+        "请基于以下紧凑上下文输出一个 AgentDecision JSON 对象：\n"
         f"{context}\n"
-        "字段必须包含 risk_level, risk_score, event_type, reasoning_summary, "
+        "必须只输出 JSON，不要 Markdown。字段必须包含 risk_level, risk_score, event_type, reasoning_summary, "
         "recommended_actions, need_elder_confirmation, need_family_notification, "
-        "alert_priority, device_actions。"
+        "alert_priority, device_actions。device_actions 只能是建议，不要生成 MQTT 指令。"
     )
-
