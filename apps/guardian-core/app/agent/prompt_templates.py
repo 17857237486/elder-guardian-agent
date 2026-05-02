@@ -13,7 +13,10 @@ def build_user_prompt(context: dict) -> str:
     return (
         "请基于以下紧凑上下文输出一个 AgentDecision JSON 对象：\n"
         f"{context_json}\n"
-        "必须只输出 JSON，不要 Markdown。字段必须包含 risk_level, risk_score, event_type, reasoning_summary, "
-        "recommended_actions, need_elder_confirmation, need_family_notification, "
-        "alert_priority, device_actions。device_actions 只能是建议，不要生成 MQTT 指令。"
+        "必须只输出 JSON，不要 Markdown。严格使用这些字段和类型："
+        '{"risk_level":"P0|P1|P2|P3|P4","risk_score":0.0,"event_type":"string",'
+        '"reasoning_summary":"string","recommended_actions":["string"],'
+        '"need_elder_confirmation":false,"need_family_notification":false,'
+        '"alert_priority":"P0|P1|P2|P3|P4","device_actions":[]}'
+        "。alert_priority 必须是 P0/P1/P2/P3/P4，不要写高/中/低。device_actions 只能是建议，不要生成 MQTT 指令。"
     )
