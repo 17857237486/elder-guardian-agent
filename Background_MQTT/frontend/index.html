@@ -1,0 +1,1249 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MQTT 传感器数据记录</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+        background: #f5f7fa;
+        color: #152033;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+      }
+
+      main {
+        width: min(1500px, calc(100vw - 40px));
+        margin: 0 auto;
+        padding: 22px 0 32px;
+      }
+
+      header {
+        padding-bottom: 16px;
+        border-bottom: 1px solid #d9e2ee;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        line-height: 1.2;
+      }
+
+      h2 {
+        margin: 0;
+        padding: 14px 16px;
+        border-bottom: 1px solid #e1e8f1;
+        font-size: 18px;
+      }
+
+      .muted {
+        margin: 0;
+        color: #607086;
+        line-height: 1.6;
+      }
+
+      .status-bar {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(150px, 1fr));
+        gap: 10px;
+        margin: 16px 0;
+      }
+
+      .status-item,
+      .panel {
+        border: 1px solid #d9e2ee;
+        border-radius: 8px;
+        background: #fff;
+        box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+      }
+
+      .status-item {
+        padding: 12px 14px;
+      }
+
+      .status-item span {
+        display: block;
+        margin-bottom: 6px;
+        color: #627188;
+        font-size: 13px;
+      }
+
+      .status-item strong {
+        display: block;
+        font-size: 18px;
+        color: #0d6674;
+        overflow-wrap: anywhere;
+      }
+
+      .panel {
+        overflow: hidden;
+      }
+
+      .panel + .panel,
+      .records-grid {
+        margin-top: 16px;
+      }
+
+      .table-wrap {
+        overflow: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+
+      th,
+      td {
+        padding: 10px 12px;
+        border-bottom: 1px solid #edf1f6;
+        text-align: left;
+        vertical-align: middle;
+        white-space: nowrap;
+      }
+
+      th {
+        background: #f8fbff;
+        color: #4e5f75;
+        font-weight: 700;
+      }
+
+      input,
+      select {
+        width: 100%;
+        min-width: 90px;
+        height: 34px;
+        border: 1px solid #cfd9e6;
+        border-radius: 6px;
+        padding: 0 9px;
+        color: #152033;
+        font: inherit;
+      }
+
+      input:focus,
+      select:focus {
+        border-color: #0d8b92;
+        outline: 2px solid rgba(13, 139, 146, 0.14);
+      }
+
+      input[type="checkbox"] {
+        width: auto;
+        min-width: 0;
+        height: auto;
+      }
+
+      button {
+        height: 34px;
+        padding: 0 12px;
+        border: 1px solid #cfd9e6;
+        border-radius: 6px;
+        background: #fff;
+        color: #152033;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      button.primary {
+        border-color: #087f83;
+        background: #087f83;
+        color: #fff;
+      }
+
+      button.template-button {
+        height: auto;
+        min-height: 54px;
+        padding: 8px 10px;
+        text-align: left;
+        border-color: #d7e1ed;
+      }
+
+      button.template-button.active {
+        border-color: #087f83;
+        background: #e9f7f5;
+        color: #075f62;
+      }
+
+      button:disabled {
+        cursor: wait;
+        opacity: 0.7;
+      }
+
+      .form-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        padding: 16px;
+      }
+
+      .template-grid {
+        display: grid;
+        grid-template-columns: repeat(7, minmax(135px, 1fr));
+        gap: 10px;
+        padding: 16px;
+      }
+
+      .template-note {
+        margin: 0 16px 16px;
+        border: 1px solid #d9e2ee;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .timeline-panel {
+        padding: 16px;
+      }
+
+      .timeline-grid {
+        display: grid;
+        grid-template-columns: 1.1fr 1.1fr 1.2fr 0.9fr;
+        gap: 12px;
+        align-items: end;
+      }
+
+      .timeline-field label {
+        display: block;
+        margin-bottom: 6px;
+        color: #4e5f75;
+        font-weight: 700;
+      }
+
+      .timeline-field output {
+        display: block;
+        margin-top: 6px;
+        color: #087f83;
+        font-weight: 800;
+      }
+
+      .timeline-field input[type="range"] {
+        padding: 0;
+      }
+
+      .scenario-summary {
+        margin-top: 14px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .scenario-summary-row {
+        display: grid;
+        grid-template-columns: 110px minmax(0, 1fr);
+        gap: 12px;
+        padding: 12px 14px;
+        border: 1px solid #e0e7f0;
+        border-radius: 8px;
+        background: #fbfdff;
+      }
+
+      .scenario-summary-row b {
+        color: #4e5f75;
+      }
+
+      .scenario-summary-row span {
+        white-space: normal;
+        line-height: 1.6;
+      }
+
+      .scenario-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 12px 14px;
+        border: 1px solid #e0e7f0;
+        border-radius: 8px;
+        background: #fbfdff;
+      }
+
+      .realtime-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: #4e5f75;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .scenario-action-right {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .form-block {
+        border: 1px solid #e0e7f0;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .form-block h3 {
+        margin: 0;
+        padding: 12px 14px;
+        border-bottom: 1px solid #e0e7f0;
+        background: #fbfdff;
+        font-size: 16px;
+      }
+
+      .rule-hints {
+        display: grid;
+        gap: 8px;
+        padding: 12px 14px;
+        border-top: 1px solid #e0e7f0;
+        background: #fbfdff;
+      }
+
+      .rule-hints h4 {
+        margin: 0;
+        color: #4e5f75;
+        font-size: 14px;
+      }
+
+      .hint-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .hint-item {
+        display: grid;
+        gap: 4px;
+        padding: 9px 10px;
+        border: 1px solid #e0e7f0;
+        border-radius: 6px;
+        background: #fff;
+      }
+
+      .hint-item strong {
+        color: #152033;
+        font-size: 13px;
+      }
+
+      .hint-item span {
+        color: #607086;
+        font-size: 12px;
+        line-height: 1.45;
+        white-space: normal;
+      }
+
+      .form-table th {
+        width: 92px;
+      }
+
+      .form-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 14px;
+        background: #fbfdff;
+      }
+
+      .submit-status {
+        color: #607086;
+        font-size: 13px;
+        white-space: normal;
+      }
+
+      .submit-status.ok {
+        color: #087f83;
+      }
+
+      .submit-status.error {
+        color: #b42318;
+      }
+
+      .key-table td:nth-child(2),
+      .key-table td:nth-child(4),
+      .key-table td:nth-child(6) {
+        font-size: 17px;
+        font-weight: 800;
+        color: #152033;
+      }
+
+      .section-row th {
+        background: #edf7f5;
+        color: #006b65;
+        font-size: 15px;
+      }
+
+      .section-row.env th {
+        background: #eef4ff;
+        color: #175cd3;
+      }
+
+      .unit {
+        color: #66758a;
+        font-size: 13px;
+      }
+
+      .records-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        align-items: start;
+      }
+
+      .record-table th {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+      }
+
+      .record-table-wrap {
+        max-height: 620px;
+      }
+
+      .empty {
+        padding: 18px 16px;
+        color: #66758a;
+      }
+
+      .toolbar {
+        display: flex;
+        justify-content: flex-end;
+        padding: 12px 16px;
+        border-bottom: 1px solid #e1e8f1;
+      }
+
+      @media (max-width: 1180px) {
+        .status-bar,
+        .template-grid,
+        .timeline-grid,
+        .form-grid,
+        .records-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 720px) {
+        main {
+          width: min(100vw - 24px, 1500px);
+          padding-top: 16px;
+        }
+
+        .status-bar {
+          grid-template-columns: 1fr;
+        }
+
+        .scenario-summary-row,
+        .scenario-actions,
+        .scenario-action-right {
+          align-items: stretch;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .hint-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .realtime-toggle {
+          white-space: normal;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>MQTT 传感器数据记录</h1>
+        <p class="muted">独立监听主系统标准消息，也可以手动录入数据并发送给 Mosquitto，由 RK3588 上的主系统继续处理。</p>
+      </header>
+
+      <section class="status-bar" aria-label="运行状态">
+        <article class="status-item"><span>WebSocket</span><strong id="ws-status">连接中</strong></article>
+        <article class="status-item"><span>录入方式</span><strong>手动 / 模拟脚本</strong></article>
+        <article class="status-item"><span>生命体征记录</span><strong id="vital-count">0</strong></article>
+        <article class="status-item"><span>环境数据记录</span><strong id="env-count">0</strong></article>
+        <article class="status-item"><span>最近接收时间</span><strong id="latest-received">--</strong></article>
+      </section>
+
+      <article class="panel">
+        <h2>场景时间轴事件触发</h2>
+        <div class="timeline-panel">
+          <div class="timeline-grid">
+            <div class="timeline-field">
+              <label for="scenario-scene">生活场景</label>
+              <select id="scenario-scene">
+                <option value="morning_getup">老人早上起床</option>
+                <option value="midday_nap">老人中午午休</option>
+                <option value="dinner" selected>老人晚上吃饭</option>
+                <option value="night_bathroom">夜间起夜</option>
+                <option value="tv_evening">客厅看电视</option>
+                <option value="cooking">厨房做饭</option>
+                <option value="after_meal_walk">饭后散步</option>
+                <option value="sleep_night">夜间睡眠</option>
+              </select>
+            </div>
+            <div class="timeline-field">
+              <label for="scenario-event">插入事件</label>
+              <select id="scenario-event">
+                <option value="normal">正常状态</option>
+                <option value="spo2_low">血氧异常</option>
+                <option value="heart_rate_abnormal">心率异常</option>
+                <option value="co2_high">CO2 偏高</option>
+                <option value="gas_leak" selected>燃气泄漏</option>
+                <option value="temperature_high">室温过高</option>
+                <option value="temperature_low">室温过低</option>
+              </select>
+            </div>
+            <div class="timeline-field">
+              <label for="scenario-trigger">触发时间</label>
+              <input id="scenario-trigger" type="range" min="0" max="120" step="5" value="60" />
+              <output id="scenario-trigger-label">第 60 秒</output>
+            </div>
+            <div class="timeline-field">
+              <label for="scenario-elder">老人 ID</label>
+              <input id="scenario-elder" value="elder_001" />
+            </div>
+          </div>
+
+          <div class="scenario-summary">
+            <div class="scenario-summary-row">
+              <b>生成方式</b>
+              <span id="scenario-method">基础场景曲线 + 事件注入曲线，默认生成 2 分钟、每 5 秒 1 组数据。</span>
+            </div>
+            <div class="scenario-summary-row">
+              <b>预期触发</b>
+              <span id="scenario-expected">燃气在触发点前后平滑升高，超过 100 ppm 后触发 gas_leak P0。</span>
+            </div>
+            <div class="scenario-actions">
+              <label class="realtime-toggle">
+                <input id="scenario-realtime" type="checkbox" />
+                <span>按真实时间发送</span>
+              </label>
+              <div class="scenario-action-right">
+                <button id="submit-scenario" class="primary" type="button">生成并发送场景数据</button>
+                <span id="scenario-submit-status" class="submit-status">等待选择场景</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel">
+        <h2>手动输入数据</h2>
+        <div class="template-grid" aria-label="事件模板">
+          <button class="template-button active" type="button" data-template="normal">正常状态<br />P4 正常记录</button>
+          <button class="template-button" type="button" data-template="spo2_low">血氧异常<br />触发生命体征风险</button>
+          <button class="template-button" type="button" data-template="heart_rate_abnormal">心率异常<br />触发本地询问</button>
+          <button class="template-button" type="button" data-template="co2_high">CO2 偏高<br />触发通风建议</button>
+          <button class="template-button" type="button" data-template="gas_leak">燃气泄漏<br />触发 P0 告警</button>
+          <button class="template-button" type="button" data-template="temperature_high">室温过高<br />触发降温建议</button>
+          <button class="template-button" type="button" data-template="temperature_low">室温过低<br />触发升温建议</button>
+        </div>
+        <div class="template-note">
+          <table>
+            <tbody>
+              <tr>
+                <th>当前模板</th>
+                <td id="template-name">正常状态</td>
+                <th>预期事件</th>
+                <td id="template-event">normal</td>
+                <th>预期等级</th>
+                <td id="template-risk">P4</td>
+              </tr>
+              <tr>
+                <th>触发说明</th>
+                <td id="template-reason" colspan="5">所有指标处于正常范围，主系统只记录和刷新看板。</td>
+              </tr>
+              <tr>
+                <th>处理链路</th>
+                <td id="template-flow" colspan="5">网页提交 -> MQTT 发布 -> Mosquitto -> guardian-core -> SQLite / Rule Engine / Agent / Dashboard</td>
+              </tr>
+              <tr>
+                <th>快捷操作</th>
+                <td colspan="5">
+                  <button id="submit-template" class="primary" type="button">一键发送当前模板</button>
+                  <span id="template-submit-status" class="submit-status">等待选择模板</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="form-grid">
+          <form id="vital-form" class="form-block">
+            <h3>生命体征录入</h3>
+            <div class="table-wrap">
+              <table class="form-table">
+                <tbody>
+                  <tr>
+                    <th>老人 ID</th>
+                    <td><input id="manual-vital-elder" name="elder_id" value="elder_001" required /></td>
+                    <th>心率</th>
+                    <td><input id="manual-heart-rate" name="heart_rate" type="number" min="0" step="1" value="78" required /></td>
+                    <th>血氧</th>
+                    <td><input id="manual-spo2" name="spo2" type="number" min="0" max="100" step="1" value="96" required /></td>
+                  </tr>
+                  <tr>
+                    <th>收缩压</th>
+                    <td><input id="manual-systolic-bp" name="systolic_bp" type="number" min="0" step="1" value="128" /></td>
+                    <th>舒张压</th>
+                    <td><input id="manual-diastolic-bp" name="diastolic_bp" type="number" min="0" step="1" value="80" /></td>
+                    <th>体温</th>
+                    <td><input id="manual-body-temperature" name="body_temperature" type="number" min="30" max="45" step="0.1" value="36.6" /></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="form-actions">
+              <button id="submit-vital" class="primary" type="submit">提交生命体征</button>
+              <span id="vital-submit-status" class="submit-status">等待输入</span>
+            </div>
+            <div class="rule-hints">
+              <h4>规则提示</h4>
+              <div class="hint-grid">
+                <div class="hint-item"><strong>心率 heart_rate</strong><span>55-110 bpm：正常；&lt;55 或 &gt;110：P2；&lt;45 或 &gt;130：P1。</span></div>
+                <div class="hint-item"><strong>血氧 spo2</strong><span>&ge;92%：正常；&lt;92%：P1；&lt;88%：P0 紧急风险。</span></div>
+                <div class="hint-item"><strong>血压</strong><span>当前主系统只记录展示，暂不参与规则分级。</span></div>
+                <div class="hint-item"><strong>体温</strong><span>当前主系统只记录展示，暂不参与规则分级。</span></div>
+              </div>
+            </div>
+          </form>
+
+          <form id="env-form" class="form-block">
+            <h3>环境数据录入</h3>
+            <div class="table-wrap">
+              <table class="form-table">
+                <tbody>
+                  <tr>
+                    <th>老人 ID</th>
+                    <td><input id="manual-env-elder" name="elder_id" value="elder_001" required /></td>
+                    <th>房间</th>
+                    <td>
+                      <select id="manual-room" name="room">
+                        <option value="living_room">living_room</option>
+                        <option value="bedroom">bedroom</option>
+                        <option value="kitchen">kitchen</option>
+                        <option value="bathroom">bathroom</option>
+                      </select>
+                    </td>
+                    <th>温度</th>
+                    <td><input id="manual-temperature" name="temperature" type="number" step="0.1" value="25.0" required /></td>
+                  </tr>
+                  <tr>
+                    <th>湿度</th>
+                    <td><input id="manual-humidity" name="humidity" type="number" min="0" max="100" step="0.1" value="50.0" required /></td>
+                    <th>CO2</th>
+                    <td><input id="manual-co2" name="co2_ppm" type="number" min="0" step="1" value="900" required /></td>
+                    <th>燃气</th>
+                    <td><input id="manual-gas" name="gas_ppm" type="number" min="0" step="1" value="0" required /></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="form-actions">
+              <button id="submit-env" class="primary" type="submit">提交环境数据</button>
+              <span id="env-submit-status" class="submit-status">等待输入</span>
+            </div>
+            <div class="rule-hints">
+              <h4>规则提示</h4>
+              <div class="hint-grid">
+                <div class="hint-item"><strong>温度 temperature</strong><span>16-30°C：正常；&le;16°C 或 &ge;30°C：P3。</span></div>
+                <div class="hint-item"><strong>CO2 co2_ppm</strong><span>&lt;1500 ppm：正常；&ge;1500 ppm：P3，建议通风。</span></div>
+                <div class="hint-item"><strong>燃气 gas_ppm</strong><span>&lt;100 ppm：正常；&ge;100 ppm：P0 紧急告警。</span></div>
+                <div class="hint-item"><strong>湿度 humidity</strong><span>当前主系统只记录展示，暂不参与规则分级。</span></div>
+              </div>
+            </div>
+          </form>
+        </div>
+      </article>
+
+      <article class="panel">
+        <h2>最新关键数据表</h2>
+        <div class="table-wrap">
+          <table class="key-table">
+            <tbody>
+              <tr class="section-row">
+                <th colspan="6">生命体征数据</th>
+              </tr>
+              <tr>
+                <th>老人 ID</th>
+                <td id="vital-elder">--</td>
+                <th>采样时间</th>
+                <td id="vital-time">--</td>
+                <th>心率</th>
+                <td><span id="heart-rate">--</span> <span class="unit">bpm</span></td>
+              </tr>
+              <tr>
+                <th>血氧</th>
+                <td><span id="spo2">--</span> <span class="unit">%</span></td>
+                <th>体温</th>
+                <td><span id="body-temperature">--</span> <span class="unit">°C</span></td>
+                <th>血压</th>
+                <td><span id="blood-pressure">--</span> <span class="unit">mmHg</span></td>
+              </tr>
+
+              <tr class="section-row env">
+                <th colspan="6">环境传感器数据</th>
+              </tr>
+              <tr>
+                <th>老人 ID</th>
+                <td id="env-elder">--</td>
+                <th>采样时间</th>
+                <td id="env-time">--</td>
+                <th>房间</th>
+                <td id="room">--</td>
+              </tr>
+              <tr>
+                <th>温度</th>
+                <td><span id="temperature">--</span> <span class="unit">°C</span></td>
+                <th>湿度</th>
+                <td><span id="humidity">--</span> <span class="unit">%</span></td>
+                <th>CO2</th>
+                <td><span id="co2">--</span> <span class="unit">ppm</span></td>
+              </tr>
+              <tr>
+                <th>燃气</th>
+                <td><span id="gas">--</span> <span class="unit">ppm</span></td>
+                <th>烟雾</th>
+                <td><span id="smoke">--</span> <span class="unit">ppm</span></td>
+                <th></th>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <section class="records-grid">
+        <article class="panel">
+          <h2>生命体征记录</h2>
+          <div class="toolbar">
+            <button id="clear-local" type="button">清空当前网页显示</button>
+          </div>
+          <div class="table-wrap record-table-wrap">
+            <table class="record-table">
+              <thead>
+                <tr>
+                  <th>序号</th>
+                  <th>接收时间</th>
+                  <th>老人 ID</th>
+                  <th>心率</th>
+                  <th>血氧</th>
+                  <th>收缩压</th>
+                  <th>舒张压</th>
+                  <th>体温</th>
+                  <th>采样时间</th>
+                </tr>
+              </thead>
+              <tbody id="vital-rows"></tbody>
+            </table>
+            <div id="vital-empty" class="empty">暂无生命体征数据。</div>
+          </div>
+        </article>
+
+        <article class="panel">
+          <h2>环境数据记录</h2>
+          <div class="table-wrap record-table-wrap">
+            <table class="record-table">
+              <thead>
+                <tr>
+                  <th>序号</th>
+                  <th>接收时间</th>
+                  <th>老人 ID</th>
+                  <th>房间</th>
+                  <th>温度</th>
+                  <th>湿度</th>
+                  <th>CO2</th>
+                  <th>燃气</th>
+                  <th>烟雾</th>
+                  <th>采样时间</th>
+                </tr>
+              </thead>
+              <tbody id="env-rows"></tbody>
+            </table>
+            <div id="env-empty" class="empty">暂无环境数据。</div>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <script>
+      const state = {
+        records: [],
+        activeTemplate: "normal",
+        scenarioRunning: false,
+        scenarioStatusTimer: null,
+      };
+
+      const scenarioTemplates = {
+        normal: {
+          name: "正常状态",
+          event: "normal",
+          risk: "P4",
+          reason: "所有指标处于正常范围，主系统只记录和刷新看板。",
+          vital: { heart_rate: 78, spo2: 96, systolic_bp: 128, diastolic_bp: 80, body_temperature: 36.6 },
+          env: { room: "living_room", temperature: 25.0, humidity: 50.0, co2_ppm: 900, gas_ppm: 0, smoke_ppm: 0 },
+        },
+        spo2_low: {
+          name: "血氧异常",
+          event: "spo2_low",
+          risk: "P0",
+          reason: "血氧低于 88%，guardian-core 的生命体征规则会进入紧急风险。",
+          vital: { heart_rate: 88, spo2: 86, systolic_bp: 132, diastolic_bp: 82, body_temperature: 36.7 },
+          env: { room: "bedroom", temperature: 24.8, humidity: 52.0, co2_ppm: 900, gas_ppm: 0, smoke_ppm: 0 },
+        },
+        heart_rate_abnormal: {
+          name: "心率异常",
+          event: "heart_rate_abnormal",
+          risk: "P1",
+          reason: "心率高于 130 次/分，规则会识别为明显异常并触发高风险处置。",
+          vital: { heart_rate: 138, spo2: 95, systolic_bp: 145, diastolic_bp: 88, body_temperature: 36.8 },
+          env: { room: "living_room", temperature: 25.5, humidity: 50.0, co2_ppm: 920, gas_ppm: 0, smoke_ppm: 0 },
+        },
+        co2_high: {
+          name: "CO2 偏高",
+          event: "co2_high",
+          risk: "P3",
+          reason: "CO2 高于 1500 ppm，环境规则会建议通风或开窗。",
+          vital: { heart_rate: 80, spo2: 96, systolic_bp: 126, diastolic_bp: 78, body_temperature: 36.5 },
+          env: { room: "living_room", temperature: 26.0, humidity: 55.0, co2_ppm: 1800, gas_ppm: 0, smoke_ppm: 0 },
+        },
+        gas_leak: {
+          name: "燃气泄漏",
+          event: "gas_leak",
+          risk: "P0",
+          reason: "燃气浓度高于 100 ppm，安全红线会触发 P0；只允许开窗、关燃气阀、报警和通知家属。",
+          vital: { heart_rate: 92, spo2: 95, systolic_bp: 135, diastolic_bp: 84, body_temperature: 36.7 },
+          env: { room: "kitchen", temperature: 27.0, humidity: 54.0, co2_ppm: 1000, gas_ppm: 180, smoke_ppm: 0 },
+        },
+        temperature_high: {
+          name: "室温过高",
+          event: "temperature_high",
+          risk: "P3",
+          reason: "室温达到 30°C 及以上，环境规则会触发 P3 并建议降温。",
+          vital: { heart_rate: 82, spo2: 96, systolic_bp: 128, diastolic_bp: 80, body_temperature: 36.7 },
+          env: { room: "living_room", temperature: 31.0, humidity: 50.0, co2_ppm: 980, gas_ppm: 0, smoke_ppm: 0 },
+        },
+        temperature_low: {
+          name: "室温过低",
+          event: "temperature_low",
+          risk: "P3",
+          reason: "室温达到 16°C 及以下，环境规则会触发 P3 并建议升温。",
+          vital: { heart_rate: 76, spo2: 96, systolic_bp: 126, diastolic_bp: 78, body_temperature: 36.4 },
+          env: { room: "bedroom", temperature: 15.0, humidity: 46.0, co2_ppm: 850, gas_ppm: 0, smoke_ppm: 0 },
+        },
+      };
+
+      const sceneLabels = {
+        morning_getup: "老人早上起床",
+        midday_nap: "老人中午午休",
+        dinner: "老人晚上吃饭",
+        night_bathroom: "夜间起夜",
+        tv_evening: "客厅看电视",
+        cooking: "厨房做饭",
+        after_meal_walk: "饭后散步",
+        sleep_night: "夜间睡眠",
+      };
+
+      const eventExpectations = {
+        normal: "保持基础场景曲线，预期为 P4 正常记录。",
+        spo2_low: "血氧在触发点前后平滑下降，低于 88% 后触发 spo2_low P0。",
+        heart_rate_abnormal: "心率在触发点前后升高，高于 130 bpm 后触发 heart_rate_abnormal P1。",
+        co2_high: "CO2 在触发点前后升高，超过 1500 ppm 后触发 co2_high P3。",
+        gas_leak: "燃气在触发点前后平滑升高，超过 100 ppm 后触发 gas_leak P0。",
+        temperature_high: "室温在触发点前后升高，达到 30°C 及以上后触发 temperature_high P3。",
+        temperature_low: "室温在触发点前后降低，达到 16°C 及以下后触发 temperature_low P3。",
+      };
+
+      const $ = (id) => document.getElementById(id);
+
+      function formatTime(value) {
+        if (!value) return "--";
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+      }
+
+      function valueOrDash(value) {
+        return value === null || value === undefined || value === "" ? "--" : value;
+      }
+
+      function numberOrNull(value) {
+        if (value === null || value === undefined || value === "") return null;
+        return Number(value);
+      }
+
+      function latestByKind(kind) {
+        return state.records.find((record) => record.kind === kind);
+      }
+
+      function recordsByKind(kind) {
+        return state.records.filter((record) => record.kind === kind);
+      }
+
+      function setText(id, value) {
+        $(id).textContent = valueOrDash(value);
+      }
+
+      function setSubmitStatus(id, text, className = "") {
+        const target = $(id);
+        target.textContent = text;
+        target.className = `submit-status ${className}`.trim();
+      }
+
+      function setInputValue(id, value) {
+        $(id).value = value;
+      }
+
+      function buildVitalPayload() {
+        return {
+          elder_id: $("manual-vital-elder").value.trim(),
+          heart_rate: Number($("manual-heart-rate").value),
+          spo2: Number($("manual-spo2").value),
+          systolic_bp: numberOrNull($("manual-systolic-bp").value),
+          diastolic_bp: numberOrNull($("manual-diastolic-bp").value),
+          body_temperature: numberOrNull($("manual-body-temperature").value),
+        };
+      }
+
+      function buildEnvPayload() {
+        return {
+          elder_id: $("manual-env-elder").value.trim(),
+          room: $("manual-room").value,
+          temperature: Number($("manual-temperature").value),
+          humidity: Number($("manual-humidity").value),
+          co2_ppm: Number($("manual-co2").value),
+          gas_ppm: Number($("manual-gas").value),
+        };
+      }
+
+      function updateScenarioPreview() {
+        const scene = $("scenario-scene").value;
+        const eventType = $("scenario-event").value;
+        const triggerSecond = Number($("scenario-trigger").value);
+        $("scenario-trigger-label").textContent = `第 ${triggerSecond} 秒`;
+        setText(
+          "scenario-method",
+          `${sceneLabels[scene]}基础曲线 + 事件注入曲线，生成 2 分钟、每 5 秒 1 组数据。`,
+        );
+        setText("scenario-expected", eventExpectations[eventType]);
+      }
+
+      function buildScenarioPayload() {
+        return {
+          scene: $("scenario-scene").value,
+          event_type: $("scenario-event").value,
+          trigger_second: Number($("scenario-trigger").value),
+          elder_id: $("scenario-elder").value.trim(),
+          duration_sec: 120,
+          interval_sec: 5,
+          realtime: $("scenario-realtime").checked,
+        };
+      }
+
+      function setScenarioControlsDisabled(disabled) {
+        ["scenario-scene", "scenario-event", "scenario-trigger", "scenario-elder", "scenario-realtime"].forEach((id) => {
+          $(id).disabled = disabled;
+        });
+      }
+
+      function scenarioProgressText(job) {
+        const sent = job.sent_samples ?? 0;
+        const total = job.total_samples ?? 0;
+        const messages = job.published_messages ?? 0;
+        if (job.status === "running" && job.stop_requested) return `正在中断：已发送 ${sent} / 共 ${total} 组`;
+        if (job.status === "running") return `发送中：已发送 ${sent} / 共 ${total} 组，${messages} 条 MQTT 消息`;
+        if (job.status === "stopped") return `已中断：已发送 ${sent} / 共 ${total} 组`;
+        if (job.status === "completed") return `已完成：已发送 ${sent} / 共 ${total} 组，等待 MQTT 回流`;
+        if (job.status === "failed") return `发送失败：${job.error ?? "未知错误"}`;
+        return "等待选择场景";
+      }
+
+      function stopScenarioStatusPolling() {
+        if (state.scenarioStatusTimer) {
+          clearInterval(state.scenarioStatusTimer);
+          state.scenarioStatusTimer = null;
+        }
+      }
+
+      function updateScenarioJobUi(job) {
+        const running = job.status === "running";
+        state.scenarioRunning = running;
+        $("submit-scenario").textContent = running ? "停止发送" : "生成并发送场景数据";
+        setScenarioControlsDisabled(running);
+        setSubmitStatus("scenario-submit-status", scenarioProgressText(job), job.status === "failed" ? "error" : running ? "" : "ok");
+        if (!running) stopScenarioStatusPolling();
+      }
+
+      async function refreshScenarioStatus() {
+        const response = await fetch("/api/scenario/status");
+        const job = await response.json();
+        updateScenarioJobUi(job);
+      }
+
+      function startScenarioStatusPolling() {
+        stopScenarioStatusPolling();
+        state.scenarioStatusTimer = setInterval(() => {
+          refreshScenarioStatus().catch((error) => {
+            setSubmitStatus("scenario-submit-status", `状态刷新失败：${error.message}`, "error");
+          });
+        }, 1000);
+      }
+
+      function applyTemplate(templateKey) {
+        const template = scenarioTemplates[templateKey];
+        if (!template) return;
+        state.activeTemplate = templateKey;
+
+        document.querySelectorAll(".template-button").forEach((button) => {
+          button.classList.toggle("active", button.dataset.template === templateKey);
+        });
+
+        setText("template-name", template.name);
+        setText("template-event", template.event);
+        setText("template-risk", template.risk);
+        setText("template-reason", template.reason);
+
+        setInputValue("manual-heart-rate", template.vital.heart_rate);
+        setInputValue("manual-spo2", template.vital.spo2);
+        setInputValue("manual-systolic-bp", template.vital.systolic_bp);
+        setInputValue("manual-diastolic-bp", template.vital.diastolic_bp);
+        setInputValue("manual-body-temperature", template.vital.body_temperature);
+
+        setInputValue("manual-room", template.env.room);
+        setInputValue("manual-temperature", template.env.temperature);
+        setInputValue("manual-humidity", template.env.humidity);
+        setInputValue("manual-co2", template.env.co2_ppm);
+        setInputValue("manual-gas", template.env.gas_ppm);
+
+        setSubmitStatus("template-submit-status", "模板已填入，可微调后发送");
+      }
+
+      async function postJson(url, body) {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail ?? data);
+          throw new Error(detail || `HTTP ${response.status}`);
+        }
+        return data;
+      }
+
+      function renderKeyTable() {
+        const latestVital = latestByKind("vital");
+        const latestEnv = latestByKind("env");
+        const vital = latestVital?.payload ?? {};
+        const env = latestEnv?.payload ?? {};
+        const newest = state.records[0];
+
+        setText("latest-received", formatTime(newest?.received_at));
+
+        setText("vital-elder", latestVital?.elder_id);
+        setText("vital-time", formatTime(latestVital?.sample_timestamp));
+        setText("heart-rate", vital.heart_rate);
+        setText("spo2", vital.spo2);
+        setText("body-temperature", vital.body_temperature);
+        setText("blood-pressure", `${valueOrDash(vital.systolic_bp)}/${valueOrDash(vital.diastolic_bp)}`);
+
+        setText("env-elder", latestEnv?.elder_id);
+        setText("env-time", formatTime(latestEnv?.sample_timestamp));
+        setText("room", env.room);
+        setText("temperature", env.temperature);
+        setText("humidity", env.humidity);
+        setText("co2", env.co2_ppm);
+        setText("gas", env.gas_ppm);
+        setText("smoke", env.smoke_ppm);
+      }
+
+      function renderVitalRows(records) {
+        $("vital-count").textContent = records.length;
+        $("vital-empty").style.display = records.length === 0 ? "block" : "none";
+        $("vital-rows").innerHTML = records
+          .slice(0, 400)
+          .map((record, index) => {
+            const data = record.payload ?? {};
+            const displayNo = records.length - index;
+            return `
+              <tr>
+                <td>${displayNo}</td>
+                <td>${formatTime(record.received_at)}</td>
+                <td>${valueOrDash(record.elder_id)}</td>
+                <td>${valueOrDash(data.heart_rate)} bpm</td>
+                <td>${valueOrDash(data.spo2)}%</td>
+                <td>${valueOrDash(data.systolic_bp)} mmHg</td>
+                <td>${valueOrDash(data.diastolic_bp)} mmHg</td>
+                <td>${valueOrDash(data.body_temperature)}°C</td>
+                <td>${formatTime(data.timestamp)}</td>
+              </tr>
+            `;
+          })
+          .join("");
+      }
+
+      function renderEnvRows(records) {
+        $("env-count").textContent = records.length;
+        $("env-empty").style.display = records.length === 0 ? "block" : "none";
+        $("env-rows").innerHTML = records
+          .slice(0, 400)
+          .map((record, index) => {
+            const data = record.payload ?? {};
+            const displayNo = records.length - index;
+            return `
+              <tr>
+                <td>${displayNo}</td>
+                <td>${formatTime(record.received_at)}</td>
+                <td>${valueOrDash(record.elder_id)}</td>
+                <td>${valueOrDash(data.room)}</td>
+                <td>${valueOrDash(data.temperature)}°C</td>
+                <td>${valueOrDash(data.humidity)}%</td>
+                <td>${valueOrDash(data.co2_ppm)} ppm</td>
+                <td>${valueOrDash(data.gas_ppm)} ppm</td>
+                <td>${valueOrDash(data.smoke_ppm)} ppm</td>
+                <td>${formatTime(data.timestamp)}</td>
+              </tr>
+            `;
+          })
+          .join("");
+      }
+
+      function renderRecords() {
+        renderVitalRows(recordsByKind("vital"));
+        renderEnvRows(recordsByKind("env"));
+      }
+
+      function renderAll() {
+        renderKeyTable();
+        renderRecords();
+      }
+
+      function setRecords(records) {
+        state.records = records ?? [];
+        renderAll();
+      }
+
+      function addRecord(record) {
+        state.records = [record, ...state.records].slice(0, 1000);
+        renderAll();
+      }
+
+      async function loadSnapshot() {
+        const response = await fetch("/api/records?limit=800");
+        const data = await response.json();
+        setRecords(data.items);
+      }
+
+      function connectWs() {
+        const protocol = location.protocol === "https:" ? "wss" : "ws";
+        const ws = new WebSocket(`${protocol}://${location.host}/ws`);
+        ws.onopen = () => {
+          $("ws-status").textContent = "已连接";
+        };
+        ws.onclose = () => {
+          $("ws-status").textContent = "重连中";
+          setTimeout(connectWs, 1500);
+        };
+        ws.onmessage = (event) => {
+          const message = JSON.parse(event.data);
+          if (message.type === "snapshot") {
+            setRecords(message.data);
+          }
+          if (message.type === "mqtt_record") {
+            addRecord(message.data);
+          }
+        };
+      }
+
+      $("vital-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const button = $("submit-vital");
+        button.disabled = true;
+        setSubmitStatus("vital-submit-status", "提交中");
+        try {
+          await postJson("/api/manual/vital", buildVitalPayload());
+          setSubmitStatus("vital-submit-status", "已发送，等待 MQTT 回流", "ok");
+        } catch (error) {
+          setSubmitStatus("vital-submit-status", `发送失败：${error.message}`, "error");
+        } finally {
+          button.disabled = false;
+        }
+      });
+
+      $("env-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const button = $("submit-env");
+        button.disabled = true;
+        setSubmitStatus("env-submit-status", "提交中");
+        try {
+          await postJson("/api/manual/env", buildEnvPayload());
+          setSubmitStatus("env-submit-status", "已发送，等待 MQTT 回流", "ok");
+        } catch (error) {
+          setSubmitStatus("env-submit-status", `发送失败：${error.message}`, "error");
+        } finally {
+          button.disabled = false;
+        }
+      });
+
+      document.querySelectorAll(".template-button").forEach((button) => {
+        button.addEventListener("click", () => {
+          applyTemplate(button.dataset.template);
+        });
+      });
+
+      $("submit-template").addEventListener("click", async () => {
+        const button = $("submit-template");
+        button.disabled = true;
+        setSubmitStatus("template-submit-status", "提交中");
+        try {
+          await postJson("/api/manual/vital", buildVitalPayload());
+          await postJson("/api/manual/env", buildEnvPayload());
+          setSubmitStatus("template-submit-status", "已发送，等待 MQTT 回流", "ok");
+          setSubmitStatus("vital-submit-status", "已发送，等待 MQTT 回流", "ok");
+          setSubmitStatus("env-submit-status", "已发送，等待 MQTT 回流", "ok");
+        } catch (error) {
+          setSubmitStatus("template-submit-status", `发送失败：${error.message}`, "error");
+        } finally {
+          button.disabled = false;
+        }
+      });
+
+      ["scenario-scene", "scenario-event", "scenario-trigger"].forEach((id) => {
+        $(id).addEventListener("input", updateScenarioPreview);
+        $(id).addEventListener("change", updateScenarioPreview);
+      });
+
+      $("submit-scenario").addEventListener("click", async () => {
+        const button = $("submit-scenario");
+        button.disabled = true;
+        try {
+          if (state.scenarioRunning) {
+            const result = await postJson("/api/scenario/stop", {});
+            updateScenarioJobUi(result);
+            setSubmitStatus("scenario-submit-status", scenarioProgressText(result), "ok");
+          } else {
+            setSubmitStatus("scenario-submit-status", $("scenario-realtime").checked ? "启动实时发送中" : "启动快速发送中");
+            const result = await postJson("/api/scenario/start", buildScenarioPayload());
+            updateScenarioJobUi(result);
+            startScenarioStatusPolling();
+          }
+        } catch (error) {
+          setSubmitStatus("scenario-submit-status", `发送失败：${error.message}`, "error");
+        } finally {
+          button.disabled = false;
+        }
+      });
+
+      $("clear-local").addEventListener("click", () => {
+        setRecords([]);
+      });
+
+      applyTemplate(state.activeTemplate);
+      updateScenarioPreview();
+      loadSnapshot();
+      refreshScenarioStatus().catch(() => {});
+      connectWs();
+    </script>
+  </body>
+</html>
