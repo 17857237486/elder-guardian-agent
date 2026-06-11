@@ -32,7 +32,7 @@ declare global {
 export const API_BASE =
   window.__ELDER_GUARDIAN_CONFIG__?.GUARDIAN_API_BASE ??
   import.meta.env.VITE_GUARDIAN_API_BASE ??
-  "http://localhost:8000";
+  "http://localhost:8010";
 
 export function wsUrl(): string {
   const url = new URL(API_BASE);

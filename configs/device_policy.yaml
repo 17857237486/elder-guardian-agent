@@ -3,6 +3,8 @@ devices:
     allowed_actions: ["open", "close"]
   living_room/air_conditioner:
     allowed_actions: ["turn_on", "turn_off", "set_temperature"]
+  bedroom/air_conditioner:
+    allowed_actions: ["turn_on", "turn_off", "set_temperature"]
   living_room/fan:
     allowed_actions: ["turn_on", "turn_off"]
   bedroom/light:
@@ -31,4 +33,3 @@ event_constraints:
       - room: local
         device: local_alarm
         action: alarm_on
-

@@ -1,76 +1,39 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
-import { API_BASE, type DashboardMessage, wsUrl } from "@elder-guardian/frontend-shared";
+import { API_BASE } from "@elder-guardian/frontend-shared";
 
 type AnyRecord = Record<string, any>;
 
-const connected = ref(false);
 const state = reactive<AnyRecord>({
-  elder_status: "加载中",
+  elder_id: "elder_001",
   current_risk_level: "P4",
-  latest_vital: null,
-  latest_env: null,
   events: [],
-  agent_runs: [],
-  devices: [],
+  observations: [],
+  workflows: [],
+  workflow_steps: [],
+  tool_calls: [],
+  action_executions: [],
+  hmi_prompts: [],
   alerts: []
 });
-const liveLog = ref<AnyRecord[]>([]);
+const loading = ref(false);
+const lastUpdated = ref("");
 
-const latestRoom = computed(() => state.latest_env?.room ?? state.recent_vision?.[0]?.room ?? "living_room");
+const latestEvent = computed(() => state.events?.[0] ?? null);
+const latestObservation = computed(() => state.observations?.[0] ?? null);
+const latestWorkflow = computed(() => state.workflows?.[0] ?? null);
 
 async function loadState() {
-  const response = await fetch(`${API_BASE}/api/dashboard/state`);
+  loading.value = true;
+  const response = await fetch(`${API_BASE}/api/v2/dashboard/state`);
   Object.assign(state, await response.json());
-}
-
-function upsertDevice(deviceState: AnyRecord) {
-  const index = state.devices.findIndex((item: AnyRecord) => item.room === deviceState.room && item.device === deviceState.device);
-  if (index >= 0) state.devices[index] = { ...state.devices[index], ...deviceState };
-  else state.devices.unshift(deviceState);
-}
-
-function prepend(listName: string, item: AnyRecord, limit = 30) {
-  state[listName] = [item, ...(state[listName] ?? [])].slice(0, limit);
-}
-
-function connectWs() {
-  const ws = new WebSocket(wsUrl());
-  ws.onopen = () => {
-    connected.value = true;
-  };
-  ws.onclose = () => {
-    connected.value = false;
-    window.setTimeout(connectWs, 2000);
-  };
-  ws.onmessage = (event) => {
-    const message = JSON.parse(event.data) as DashboardMessage;
-    liveLog.value = [message, ...liveLog.value].slice(0, 60);
-    if (message.type === "dashboard_state") Object.assign(state, message.data);
-    if (message.type === "sensor_vital") state.latest_vital = message.data;
-    if (message.type === "sensor_env") state.latest_env = message.data;
-    if (message.type === "risk_event") {
-      prepend("events", message.data);
-      state.current_risk_level = message.data.risk_level;
-      state.elder_status = message.data.risk_level === "P4" ? "正常" : "注意";
-    }
-    if (message.type === "agent_decision") prepend("agent_runs", { decision: message.data, created_at: message.timestamp });
-    if (message.type === "alert" || message.type === "emergency_alert") prepend("alerts", message.data);
-    if (message.type === "device_state") upsertDevice(message.data);
-  };
-}
-
-async function command(room: string, device: string, action: string, value: unknown = null) {
-  await fetch(`${API_BASE}/api/home/device/command`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ room, device, action, value, reason: "Dashboard manual control" })
-  });
+  lastUpdated.value = new Date().toLocaleTimeString();
+  loading.value = false;
 }
 
 onMounted(async () => {
   await loadState();
-  connectWs();
+  window.setInterval(loadState, 3000);
 });
 </script>
 
@@ -78,92 +41,108 @@ onMounted(async () => {
   <main class="dashboard">
     <header>
       <div>
-        <h1>居家老人健康守护 Dashboard</h1>
-        <p>{{ connected ? "实时连接已建立" : "正在连接 WebSocket" }}</p>
+        <h1>居家老人健康守护 v2 Dashboard</h1>
+        <p>Edge MCP / Orchestrator 复盘视图 · {{ loading ? "刷新中" : `最近刷新 ${lastUpdated}` }}</p>
       </div>
       <strong :class="state.current_risk_level">{{ state.current_risk_level }}</strong>
     </header>
 
     <section class="metrics">
       <article>
-        <span>老人状态</span>
-        <b>{{ state.elder_status }}</b>
+        <span>老人 ID</span>
+        <b>{{ state.elder_id }}</b>
       </article>
       <article>
-        <span>心率</span>
-        <b>{{ state.latest_vital?.heart_rate ?? "--" }}</b>
+        <span>当前风险</span>
+        <b>{{ state.current_risk_level }}</b>
       </article>
       <article>
-        <span>血氧</span>
-        <b>{{ state.latest_vital?.spo2 ?? "--" }}%</b>
+        <span>最近事件</span>
+        <b>{{ latestEvent?.event_type ?? "--" }}</b>
       </article>
       <article>
-        <span>CO2</span>
-        <b>{{ state.latest_env?.co2_ppm ?? "--" }}</b>
+        <span>最近观测</span>
+        <b>{{ latestObservation?.kind ?? "--" }}</b>
       </article>
       <article>
-        <span>温度</span>
-        <b>{{ state.latest_env?.temperature ?? "--" }}°C</b>
+        <span>最近 Workflow</span>
+        <b>{{ latestWorkflow?.status ?? "--" }}</b>
       </article>
       <article>
-        <span>当前房间</span>
-        <b>{{ latestRoom }}</b>
+        <span>工具调用</span>
+        <b>{{ state.tool_calls?.length ?? 0 }}</b>
       </article>
     </section>
 
     <section class="grid">
-      <article class="panel">
-        <h2>风险事件</h2>
+      <article class="panel wide">
+        <h2>v2 事件链路</h2>
         <ul>
           <li v-for="event in state.events" :key="event.event_id">
             <strong>{{ event.risk_level }}</strong>
-            <span>{{ event.event_type }}</span>
+            <span>{{ event.event_type }} · {{ event.state }}</span>
             <p>{{ event.summary }}</p>
           </li>
         </ul>
       </article>
 
-      <article class="panel">
-        <h2>Agent 决策</h2>
+      <article class="panel wide">
+        <h2>原始观测</h2>
         <ul>
-          <li v-for="run in state.agent_runs" :key="run.run_id ?? run.created_at">
-            <strong>{{ run.decision?.risk_level ?? run.decision?.alert_priority ?? "--" }}</strong>
-            <p>{{ run.decision?.reasoning_summary ?? run.decision?.summary ?? "等待决策" }}</p>
+          <li v-for="observation in state.observations" :key="observation.observation_id">
+            <strong>{{ observation.kind }}</strong>
+            <span>{{ observation.topic ?? observation.source }}</span>
+            <p>{{ JSON.stringify(observation.payload) }}</p>
           </li>
         </ul>
       </article>
 
-      <article class="panel">
-        <h2>智能家居</h2>
-        <div class="devices">
-          <div v-for="device in state.devices" :key="`${device.room}/${device.device}`">
-            <span>{{ device.room }}/{{ device.device }}</span>
-            <b>{{ device.state }}</b>
-          </div>
-        </div>
-        <div class="controls">
-          <button @click="command('living_room', 'window', 'open')">开窗</button>
-          <button @click="command('living_room', 'window', 'close')">关窗</button>
-          <button @click="command('living_room', 'fan', 'turn_on')">开风扇</button>
-          <button @click="command('living_room', 'fan', 'turn_off')">关风扇</button>
-          <button @click="command('bedroom', 'light', 'turn_on')">开灯</button>
-          <button @click="command('bedroom', 'light', 'turn_off')">关灯</button>
-        </div>
+      <article class="panel wide">
+        <h2>Workflow Steps</h2>
+        <ul>
+          <li v-for="step in state.workflow_steps" :key="step.step_id">
+            <strong>{{ step.status }}</strong>
+            <span>{{ step.step_name }} · {{ step.model ?? "mock" }}</span>
+            <p>{{ JSON.stringify(step.output) }}</p>
+          </li>
+        </ul>
       </article>
 
-      <article class="panel">
-        <h2>告警与实时消息</h2>
+      <article class="panel wide">
+        <h2>MCP 工具与设备执行</h2>
+        <ul>
+          <li v-for="call in state.tool_calls" :key="call.call_id">
+            <strong>{{ call.status }}</strong>
+            <span>{{ call.tool_name }}</span>
+            <p>{{ call.reason || JSON.stringify(call.result) }}</p>
+          </li>
+        </ul>
+        <ul>
+          <li v-for="execution in state.action_executions" :key="execution.execution_id">
+            <strong>{{ execution.status }}</strong>
+            <span>{{ execution.command?.room }}/{{ execution.command?.device }} {{ execution.command?.action }}</span>
+            <p>{{ execution.reason }} {{ execution.mqtt_topic ?? "" }}</p>
+          </li>
+        </ul>
+      </article>
+
+      <article class="panel wide">
+        <h2>HMI 与告警</h2>
+        <ul>
+          <li v-for="prompt in state.hmi_prompts" :key="prompt.prompt_id">
+            <strong>{{ prompt.status }}</strong>
+            <span>{{ prompt.risk_level }} · {{ prompt.event_type }}</span>
+            <p>{{ prompt.message }}</p>
+          </li>
+        </ul>
         <ul>
           <li v-for="alert in state.alerts" :key="alert.alert_id">
-            <strong>{{ alert.priority }}</strong>
+            <strong>{{ alert.alert_level }}</strong>
+            <span>{{ alert.channel }} · {{ alert.status }}</span>
             <p>{{ alert.message }}</p>
           </li>
         </ul>
-        <ol class="log">
-          <li v-for="item in liveLog" :key="`${item.timestamp}-${item.type}`">{{ item.type }}</li>
-        </ol>
       </article>
     </section>
   </main>
 </template>
-

@@ -6,8 +6,9 @@ dependencies:
   - pip
   - pip:
       - -e ./packages/guardian-shared
+      - -e ./apps/edge-mcp-server
+      - -e ./apps/guardian-orchestrator
       - -e ./apps/guardian-core
       - -e ./apps/vision-service
       - -e ./apps/voice-hmi-service
       - -e ./apps/wechat-adapter
-

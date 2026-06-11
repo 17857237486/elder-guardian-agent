@@ -26,6 +26,37 @@ services:
       - ./data:/app/data
       - ./configs:/app/configs:ro
 
+  edge-mcp-server:
+    build:
+      context: .
+      dockerfile: apps/edge-mcp-server/Dockerfile
+    container_name: elder-guardian-edge-mcp
+    depends_on:
+      - mosquitto
+    env_file:
+      - .env.example
+    environment:
+      MQTT_HOST: mosquitto
+      DATABASE_URL: sqlite:////app/data/guardian.db
+      ORCHESTRATOR_URL: http://guardian-orchestrator:8020
+    ports:
+      - "8010:8010"
+    volumes:
+      - ./data:/app/data
+      - ./configs:/app/configs:ro
+
+  guardian-orchestrator:
+    build:
+      context: .
+      dockerfile: apps/guardian-orchestrator/Dockerfile
+    container_name: elder-guardian-orchestrator
+    env_file:
+      - .env.example
+    environment:
+      EDGE_API_BASE: http://edge-mcp-server:8010
+    ports:
+      - "8020:8020"
+
   web-dashboard:
     image: node:24-alpine
     container_name: elder-guardian-dashboard
@@ -47,4 +78,3 @@ services:
       - "5174:5174"
     volumes:
       - .:/app
-

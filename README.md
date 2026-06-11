@@ -1,6 +1,6 @@
 # RK3588 居家老人健康守护与环境协同 Agent
 
-这是一个面向 RK3588 Ubuntu 22 Desktop 的 monorepo MVP。系统通过 MQTT 接入传感器、视觉事件和智能家居设备，使用 FastAPI + SQLite 持久化事件闭环，通过 WebSocket 推送到家属 dashboard 和老人本地 HMI。默认 `LLM_MOCK=true`，无需真实模型即可跑通核心验收链路。
+这是一个面向 RK3588 Ubuntu 22 Desktop 的 monorepo。v2 架构把系统拆成三层：`edge-mcp-server` 负责传感器/执行器/MQTT/SQLite/MCP 桥接，`guardian-orchestrator` 负责规则触发和多轮小模型 workflow，前端负责老人 HMI 和家属 dashboard 展示。默认 `LLM_MOCK=true`，无需真实模型即可跑通核心链路骨架。
 
 后续使用 Agent 修 bug、加功能或重构前，请先阅读 `AGENTS.md`，它定义了本项目的分层职责、安全红线和统一开发风格。
 
@@ -13,13 +13,18 @@
  Mosquitto MQTT Broker
         |
         v
- guardian-core
-  ├─ Rule Engine: P0/P1/P2/P3/P4 安全分级
-  ├─ Agent Runtime: 上下文、LLM/mock、解释和建议
-  ├─ Action Planner: 生成高层动作
-  ├─ Device Policy: 校验设备安全策略
-  ├─ Action Executor: MQTT 控制、HMI、微信 mock、WebSocket
-  └─ SQLite: 事件、决策、告警、HMI、设备动作复盘
+ edge-mcp-server
+  ├─ MQTT Bridge: 接入传感器、视觉、设备 ack/state
+  ├─ MCP Tools: 读取上下文、请求设备动作、发起告警、记录 workflow
+  ├─ Device Policy: 工具内部策略门控和审计
+  └─ SQLite: raw observations、events、workflows、tool calls、executions
+        |
+        v
+ guardian-orchestrator
+  ├─ Rule Gate: P0/P1/P2/P3/P4 确定性安全分级
+  ├─ Step LLM: 每个步骤 fresh conversation
+  ├─ Workflow Runner: context -> fusion -> decision -> action request
+  └─ Guardrails: P0/P1 不降级，燃气场景动作白名单
         |
         ├─ elder-hmi: RK3588 本地屏幕确认
         ├─ web-dashboard: 家属/开发实时看板
@@ -34,7 +39,9 @@ data/                     SQLite、日志、视觉快照目录
 scripts/                  传感器、视觉、设备模拟和开发启动脚本
 packages/guardian-shared  Python 共享枚举、schema、MQTT topic
 packages/frontend-shared  前端共享类型与 API 地址工具
-apps/guardian-core        FastAPI 主后端
+apps/edge-mcp-server      v2 MCP/HTTP/MQTT/SQLite 桥接服务
+apps/guardian-orchestrator v2 规则触发和多轮小模型编排服务
+apps/guardian-core        旧 MVP FastAPI 主后端，保留作对照
 apps/vision-service       mock 视觉服务
 apps/voice-hmi-service    mock ASR/TTS HMI 服务
 apps/wechat-adapter       mock 微信适配器

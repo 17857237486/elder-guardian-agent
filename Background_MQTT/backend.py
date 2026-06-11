@@ -11,6 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 import paho.mqtt.client as mqtt
+import httpx
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -28,6 +29,8 @@ MQTT_HOST = os.getenv("BACKGROUND_MQTT_HOST", os.getenv("MQTT_HOST", "localhost"
 MQTT_PORT = int(os.getenv("BACKGROUND_MQTT_PORT", os.getenv("MQTT_PORT", "1883")))
 MQTT_TOPICS = ("elder/+/sensor/vital", "elder/+/sensor/env")
 MAX_RECORDS = int(os.getenv("BACKGROUND_MAX_RECORDS", "1000"))
+EDGE_API_BASE = os.getenv("EDGE_API_BASE", "http://localhost:8010").rstrip("/")
+ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://localhost:8020").rstrip("/")
 
 APP_ROOT = Path(__file__).resolve().parent
 
@@ -128,9 +131,33 @@ def append_record(topic: str, payload: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
+def observation_kind_for_topic(topic: str) -> str:
+    if topic.endswith("/sensor/vital"):
+        return "vital"
+    if topic.endswith("/sensor/env"):
+        return "environment"
+    return "vital"
+
+
+def post_observation_to_edge(topic: str, payload: SensorVitalSample | SensorEnvSample) -> None:
+    body = {
+        "elder_id": payload.elder_id,
+        "kind": observation_kind_for_topic(topic),
+        "source": "background_mqtt_http_fallback",
+        "topic": topic,
+        "payload": payload.model_dump(mode="json"),
+    }
+    try:
+        response = httpx.post(f"{EDGE_API_BASE}/api/v2/observations", json=body, timeout=10)
+        response.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"MQTT not connected and edge fallback failed: {exc}") from exc
+
+
 def publish_model(topic: str, payload: SensorVitalSample | SensorEnvSample) -> None:
     if mqtt_client is None or not mqtt_connected:
-        raise HTTPException(status_code=503, detail="MQTT not connected")
+        post_observation_to_edge(topic, payload)
+        return
     result = mqtt_client.publish(topic, model_to_json(payload), qos=1)
     result.wait_for_publish()
     if result.rc != mqtt.MQTT_ERR_SUCCESS:
@@ -143,7 +170,6 @@ def ensure_mqtt_connected() -> None:
 
 
 def publish_sample_pair(sample: dict[str, Any]) -> int:
-    ensure_mqtt_connected()
     vital_sample, env_sample = to_standard_samples(sample)
     publish_model(elder_sensor_vital(sample["elder_id"]), vital_sample)
     publish_model(elder_sensor_env(sample["elder_id"]), env_sample)
@@ -275,6 +301,33 @@ async def health() -> dict[str, Any]:
         },
         "record_count": len(records),
     }
+
+
+async def fetch_json(url: str) -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.json()
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "url": url}
+
+
+@app.get("/api/v2/guardian/health")
+async def guardian_v2_health() -> dict[str, Any]:
+    edge = await fetch_json(f"{EDGE_API_BASE}/health")
+    orchestrator = await fetch_json(f"{ORCHESTRATOR_URL}/health")
+    return {
+        "ok": bool(edge.get("ok")) and bool(orchestrator.get("ok")) and mqtt_connected,
+        "mqtt_connected": mqtt_connected,
+        "edge": edge,
+        "orchestrator": orchestrator,
+    }
+
+
+@app.get("/api/v2/guardian/state")
+async def guardian_v2_state(elder_id: str = "elder_001") -> dict[str, Any]:
+    return await fetch_json(f"{EDGE_API_BASE}/api/v2/dashboard/state?elder_id={elder_id}")
 
 
 @app.get("/api/records")

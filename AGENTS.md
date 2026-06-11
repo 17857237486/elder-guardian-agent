@@ -2,7 +2,7 @@
 
 你是本项目的长期维护 Agent，不是一次性补丁脚本。你可以做同风格重构，也应该在必要时敢于跨模块清理设计债，但必须先保护安全闭环、协议稳定性和可复盘性。
 
-本项目是“基于 RK3588 边缘计算的居家老人健康守护与环境协同 Agent 系统”。MVP 的首要目标是跑通闭环，而不是堆叠真实硬件细节：多源感知 -> 规则分级 -> Agent 理解 -> Action Planner -> Device Policy -> Action Executor -> HMI/家属/设备 -> DB/WebSocket 复盘。
+本项目是“基于 RK3588 边缘计算的居家老人健康守护与环境协同 Agent 系统”。v2 架构目标是把硬件 IO、规则/小模型编排、显示界面拆开：传感器/执行器/MQTT 通过 `edge-mcp-server` 暴露 MCP/HTTP 语义工具；`guardian-orchestrator` 负责规则触发和多轮小模型 workflow；HMI/dashboard 只做交互和复盘展示。
 
 ## 首读顺序
 
@@ -10,8 +10,9 @@
 
 1. `README.md`：系统目标、启动方式、验收链路。
 2. `packages/guardian-shared/guardian_shared/enums.py`、`schemas.py`、`topics.py`：全系统协议源头。
-3. `apps/guardian-core/app/main.py`：依赖装配和运行入口。
-4. 与任务相关的分层模块：`rule_engine`、`agent`、`action`、`services`、`gateways`、`db`、`api`、前端 app。
+3. `apps/edge-mcp-server/app/main.py`、`apps/guardian-orchestrator/app/main.py`：v2 MCP 桥接和智能执行入口。
+4. 如需对照旧 MVP，再读 `apps/guardian-core/app/main.py`。
+5. 与任务相关的分层模块：MCP tools、rules、workflow、policy、db、api、前端 app。
 
 不要在没理解事件流和安全边界前直接写补丁。
 
@@ -19,10 +20,10 @@
 
 - `packages/guardian-shared` 是协议层。所有跨服务流转的枚举、Pydantic schema、MQTT topic 都从这里定义，其他模块只复用，不私造平行字段。
 - `configs` 是策略和环境配置层。风险阈值、设备策略、MQTT topic 示例、老人画像示例放这里；不要把可配置策略散落到业务代码里。
-- `gateways` 是外部 IO 层。MQTT、WebSocket、HMI、WeChat 等外部接口在这里封装；业务层不要直接处理 socket 细节。
-- `rule_engine` 是安全底线层。P0/P1/P2/P3/P4 的硬规则先于 LLM 执行，并且要可解释、可追踪。
-- `agent` 是上下文理解和建议层。它负责 ContextBuilder、LLM/mock、JSON 解析、Guardrails、同一老人串行队列；它不直接控制设备。
-- `action` 是处置编排层。ActionPlanner 生成高层动作，DevicePolicy 校验设备安全，ActionExecutor 才执行 MQTT/HMI/告警/WebSocket/DB 副作用。
+- `apps/edge-mcp-server` 是传感器、执行器、MQTT、SQLite 和 MCP 的桥接层。它可以执行设备控制和报警，但必须在工具内部做策略门控和审计。
+- `apps/guardian-orchestrator` 是智能执行层。它负责规则触发、必要时拆分多轮小模型新对话、调用 MCP/HTTP 语义工具、记录 workflow；它不直接 publish MQTT。
+- `rule_engine` / v2 rules 是安全底线层。P0/P1/P2/P3/P4 的硬规则先于 LLM 执行，并且要可解释、可追踪。
+- `agent` / workflow 是上下文理解和建议层。小模型每轮只做一件事，fresh conversation；它不能绕过 MCP policy gate。
 - `services` 是业务编排层。传感器、视觉、家居、HMI、告警、报表等流程在这里串起来；不要把一个 service 写成全能上帝对象。
 - `db` 是持久化层。SQLAlchemy models 和 CRUD 要可复用；所有事件、决策、动作、响应都要能落库复盘。
 - `api` 是 HTTP/WebSocket 边界层。API 只做输入校验、调用 service、返回结果，不承载核心业务决策。
@@ -133,4 +134,3 @@ python scripts/simulate_sensor.py --event gas_leak
 - 不要让 API、service 或前端直接决定底层设备控制。
 - 不要为了局部 UI 展示改变后端协议语义。
 - 不要提交 `data/guardian.db`、`dist/`、`node_modules/`、`__pycache__/`、egg-info 等生成物。
-
