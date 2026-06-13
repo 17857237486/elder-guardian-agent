@@ -19,13 +19,13 @@ from guardian_shared.topics import elder_sensor_env, elder_sensor_vital
 from guardian_shared.utils import model_to_json
 
 SCENE_LABELS = {
-    "morning_getup": "老人早上起床",
-    "midday_nap": "老人中午午休",
-    "dinner": "老人晚上吃饭",
+    "morning_getup": "早上起床",
+    "midday_nap": "中午午休",
+    "dinner": "晚上吃饭",
     "night_bathroom": "夜间起夜",
     "tv_evening": "客厅看电视",
     "cooking": "厨房做饭",
-    "after_meal_walk": "饭后散步",
+    "away": "外出",
     "sleep_night": "夜间睡眠",
 }
 
@@ -38,6 +38,8 @@ EVENT_LABELS = {
     "temperature_high": "室温过高",
     "temperature_low": "室温过低",
 }
+
+ROOM_KEYS = ("bedroom", "kitchen", "living_room", "bathroom")
 
 
 def iso_at(base: datetime, seconds: int) -> str:
@@ -78,11 +80,13 @@ def scene_base_time(scene: str, base_time: datetime | None = None) -> datetime:
         "morning_getup": 6,
         "midday_nap": 12,
         "dinner": 18,
+        "away": 10,
     }
     minute_map = {
         "morning_getup": 30,
         "midday_nap": 40,
         "dinner": 30,
+        "away": 0,
     }
     return datetime(
         today.year,
@@ -209,23 +213,24 @@ def scenario_sample(
             "smoke_ppm": round(wave(index, total, 8)),
         }
         note = "厨房做饭阶段，燃气和烟雾读数略有波动但低于告警阈值。"
-    elif scene == "after_meal_walk":
-        posture = "standing"
-        motion_state = "slow_walk"
-        heart_rate = round(82 + progress * 18 + wave(index, total, 4))
+    elif scene == "away":
+        posture = "away"
+        motion_state = "out_of_home"
+        heart_rate = round(76 + wave(index, total, 2))
         spo2 = 96
-        systolic_bp = round(128 + progress * 6)
-        diastolic_bp = round(80 + progress * 3)
-        body_temperature = round(36.6 + wave(index, total, 0.1), 1)
+        systolic_bp = round(126 + wave(index, total, 2))
+        diastolic_bp = round(78 + wave(index, total, 2))
+        body_temperature = round(36.5 + wave(index, total, 0.1), 1)
         env = {
-            "room": "living_room",
-            "temperature": round(24.5 + wave(index, total, 0.4), 1),
-            "humidity": round(48 + wave(index, total, 2), 1),
-            "co2_ppm": round(820 + progress * 130),
+            "room": "outside",
+            "presence": "away",
+            "temperature": round(24.0 + wave(index, total, 0.4), 1),
+            "humidity": round(50 + wave(index, total, 2), 1),
+            "co2_ppm": round(760 + progress * 90),
             "gas_ppm": 0,
             "smoke_ppm": 0,
         }
-        note = "饭后散步阶段，心率随活动自然上升但低于异常阈值。"
+        note = "外出阶段，老人不在家；非燃气环境异常只记录，不联动家具。"
     elif scene == "sleep_night":
         posture = "lying"
         motion_state = "sleeping"
@@ -245,6 +250,9 @@ def scenario_sample(
         note = "夜间睡眠阶段，心率降低但保持正常，环境数据平稳。"
     else:
         raise ValueError(f"unknown scene: {scene}")
+
+    env.setdefault("occupant_room", env.get("room"))
+    env.setdefault("life_scene", scene)
 
     return {
         "sample_id": f"{run_id}_{index + 1:03d}",
@@ -306,11 +314,18 @@ def build_samples(scene: str, duration_sec: int, interval_sec: int, elder_id: st
     return [scenario_sample(scene, index, total, interval_sec, elder_id, run_id, base_time) for index in range(total)]
 
 
-def inject_event(samples: list[dict[str, Any]], event_type: str, trigger_second: int) -> list[dict[str, Any]]:
+def inject_event(
+    samples: list[dict[str, Any]],
+    event_type: str,
+    trigger_second: int,
+    event_room: str = "living_room",
+) -> list[dict[str, Any]]:
     if event_type == "normal":
         return samples
     if event_type not in EVENT_LABELS:
         raise ValueError(f"unknown event_type: {event_type}")
+    if event_room not in ROOM_KEYS:
+        raise ValueError(f"unknown event_room: {event_room}")
 
     for sample in samples:
         time_offset_sec = int(sample.get("time_offset_sec", 0))
@@ -323,6 +338,9 @@ def inject_event(samples: list[dict[str, Any]], event_type: str, trigger_second:
             continue
 
         sample["injected_event"] = event_type
+        env.setdefault("occupant_room", env.get("room"))
+        env.setdefault("life_scene", sample["scene"])
+        env["room"] = event_room
         if event_type == "spo2_low":
             vital["spo2"] = round(lerp(vital["spo2"], 86, intensity))
             vital["heart_rate"] = round(lerp(vital["heart_rate"], max(vital["heart_rate"], 92), intensity))
@@ -335,7 +353,6 @@ def inject_event(samples: list[dict[str, Any]], event_type: str, trigger_second:
             env["temperature"] = round(lerp(env["temperature"], max(env["temperature"], 26.0), intensity), 1)
             env["humidity"] = round(lerp(env["humidity"], max(env["humidity"], 55.0), intensity), 1)
         elif event_type == "gas_leak":
-            env["room"] = "kitchen"
             env["gas_ppm"] = round(lerp(env["gas_ppm"], 180, intensity))
             vital["heart_rate"] = round(lerp(vital["heart_rate"], max(vital["heart_rate"], 92), intensity))
         elif event_type == "temperature_high":
@@ -362,9 +379,10 @@ def build_event_samples(
     duration_sec: int,
     interval_sec: int,
     elder_id: str,
+    event_room: str = "living_room",
 ) -> list[dict[str, Any]]:
     samples = build_samples(scene, duration_sec, interval_sec, elder_id)
-    return inject_event(samples, event_type, trigger_second)
+    return inject_event(samples, event_type, trigger_second, event_room)
 
 
 def to_standard_samples(sample: dict[str, Any]) -> tuple[SensorVitalSample, SensorEnvSample]:
@@ -420,6 +438,7 @@ def main() -> None:
     parser.add_argument("--scene", choices=SCENE_LABELS.keys(), default="morning_getup")
     parser.add_argument("--event-type", choices=EVENT_LABELS.keys(), default="normal")
     parser.add_argument("--trigger-second", type=int, default=60)
+    parser.add_argument("--event-room", choices=ROOM_KEYS, default="living_room")
     parser.add_argument("--duration-sec", type=int, default=120)
     parser.add_argument("--interval-sec", type=int, default=5)
     parser.add_argument("--elder-id", default="elder_001")
@@ -439,6 +458,7 @@ def main() -> None:
         args.duration_sec,
         args.interval_sec,
         args.elder_id,
+        args.event_room,
     )
 
     client = mqtt.Client(client_id=f"background-scenario-generator-{int(time.time())}")
@@ -448,7 +468,8 @@ def main() -> None:
     print(
         f"connected mqtt://{args.host}:{args.port}; "
         f"samples={len(samples)}; standard_messages={len(samples) * 2}; "
-        f"scene={args.scene}; event_type={args.event_type}; trigger_second={args.trigger_second}"
+        f"scene={args.scene}; event_type={args.event_type}; "
+        f"event_room={args.event_room}; trigger_second={args.trigger_second}"
     )
     published_count = 0
     try:

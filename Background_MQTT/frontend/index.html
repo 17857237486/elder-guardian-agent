@@ -92,6 +92,45 @@
         margin-top: 16px;
       }
 
+      .page-zone {
+        margin-top: 18px;
+        border: 1px solid #cfd9e6;
+        border-radius: 10px;
+        background: #eef4f8;
+        overflow: hidden;
+      }
+
+      .zone-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 14px 16px;
+        border-bottom: 1px solid #cfd9e6;
+        background: #f8fbff;
+      }
+
+      .zone-header h2 {
+        margin: 0;
+        padding: 0;
+        border: 0;
+        font-size: 20px;
+      }
+
+      .zone-header p {
+        margin: 0;
+        color: #607086;
+        line-height: 1.5;
+      }
+
+      .zone-body {
+        padding: 16px;
+      }
+
+      .zone-body > .panel:first-child {
+        margin-top: 0;
+      }
+
       .table-wrap {
         overflow: auto;
       }
@@ -204,7 +243,7 @@
 
       .timeline-grid {
         display: grid;
-        grid-template-columns: 1.1fr 1.1fr 1.2fr 0.9fr;
+        grid-template-columns: 1.05fr 1.05fr 1fr 1.2fr 0.9fr;
         gap: 12px;
         align-items: end;
       }
@@ -413,12 +452,262 @@
         border-bottom: 1px solid #e1e8f1;
       }
 
+      .device-panel-body {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 14px;
+        padding: 16px;
+      }
+
+      .current-scene-status {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        padding: 12px;
+        border: 1px solid #e0e7f0;
+        border-radius: 8px;
+        background: #fbfdff;
+      }
+
+      .current-scene-status div {
+        min-width: 0;
+        padding: 9px 10px;
+        border: 1px solid #edf1f6;
+        border-radius: 6px;
+        background: #fff;
+      }
+
+      .current-scene-status span {
+        display: block;
+        color: #66758a;
+        font-size: 12px;
+      }
+
+      .current-scene-status strong {
+        display: block;
+        margin-top: 4px;
+        color: #152033;
+        overflow-wrap: anywhere;
+      }
+
+      .device-rooms {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(240px, 1fr));
+        gap: 12px;
+        align-items: start;
+      }
+
+      .device-room {
+        border: 1px solid #e0e7f0;
+        border-radius: 8px;
+        background: #fbfdff;
+        overflow: hidden;
+      }
+
+      .device-room h3 {
+        margin: 0;
+        padding: 10px 12px;
+        border-bottom: 1px solid #e0e7f0;
+        color: #4e5f75;
+        font-size: 15px;
+      }
+
+      .room-env-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        padding: 10px 12px;
+        border-bottom: 1px solid #e0e7f0;
+        background: #fff;
+      }
+
+      .room-env-item {
+        min-width: 0;
+        padding: 8px;
+        border: 1px solid #edf1f6;
+        border-radius: 6px;
+        background: #f8fbff;
+      }
+
+      .room-env-item span {
+        display: block;
+        color: #66758a;
+        font-size: 12px;
+      }
+
+      .room-env-item strong {
+        display: block;
+        margin-top: 3px;
+        color: #152033;
+        font-size: 17px;
+        line-height: 1.2;
+      }
+
+      .room-env-time {
+        padding: 0 12px 10px;
+        border-bottom: 1px solid #edf1f6;
+        background: #fff;
+        color: #66758a;
+        font-size: 12px;
+      }
+
+      .device-card {
+        padding: 12px;
+        border-bottom: 1px solid #edf1f6;
+      }
+
+      .device-card:last-child {
+        border-bottom: 0;
+      }
+
+      .device-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 9px;
+      }
+
+      .device-name {
+        font-weight: 800;
+      }
+
+      .device-state {
+        min-width: 68px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: #eef4ff;
+        color: #175cd3;
+        text-align: center;
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .device-state.on,
+      .device-state.open {
+        background: #ecfdf3;
+        color: #067647;
+      }
+
+      .device-state.off,
+      .device-state.closed {
+        background: #f2f4f7;
+        color: #475467;
+      }
+
+      .device-controls {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .device-controls button {
+        width: 100%;
+        min-width: 0;
+        white-space: nowrap;
+      }
+
+      .device-temp {
+        display: grid;
+        grid-template-columns: minmax(64px, 1fr) 64px;
+        gap: 8px;
+        margin-top: 8px;
+      }
+
+      .device-temp input,
+      .device-temp button {
+        min-width: 0;
+      }
+
+      .device-temp button {
+        padding: 0 6px;
+        overflow: hidden;
+        text-overflow: clip;
+      }
+
+      .device-log-panel {
+        border: 1px solid #e0e7f0;
+        border-radius: 8px;
+        background: #fbfdff;
+        padding: 12px;
+      }
+
+      .device-log-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+
+      .device-log-toolbar h3 {
+        margin: 0;
+        color: #4e5f75;
+        font-size: 15px;
+      }
+
+      .device-log-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .device-log {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        max-height: 220px;
+        overflow: auto;
+      }
+
+      .device-log-item {
+        padding: 9px 10px;
+        border: 1px solid #e0e7f0;
+        border-radius: 7px;
+        background: #fff;
+        color: #4e5f75;
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+      }
+
+      .device-log-item.error {
+        border-color: #fecdca;
+        background: #fef3f2;
+        color: #b42318;
+      }
+
+      .device-log-item.guardian_core {
+        border-color: #bfdbfe;
+        background: #eff6ff;
+        color: #175cd3;
+      }
+
+      .device-log-item.device_command {
+        border-color: #fedf89;
+        background: #fffaeb;
+        color: #93370d;
+      }
+
+      .device-log-item.device_state,
+      .device-log-item.device_ack,
+      .device-log-item.manual_command {
+        border-color: #abefc6;
+        background: #ecfdf3;
+        color: #067647;
+      }
+
       @media (max-width: 1180px) {
         .status-bar,
         .template-grid,
         .timeline-grid,
         .form-grid,
-        .records-grid {
+        .records-grid,
+        .device-panel-body,
+        .current-scene-status,
+        .device-rooms,
+        .device-log {
           grid-template-columns: 1fr;
         }
       }
@@ -466,6 +755,43 @@
         <article class="status-item"><span>最近接收时间</span><strong id="latest-received">--</strong></article>
       </section>
 
+      <section class="page-zone">
+        <div class="zone-header">
+          <div>
+            <h2>智能家居设备控制</h2>
+            <p>统一展示房间设备状态，手动控制经 guardian-core API，自动事件命令经 MQTT 回流同步。</p>
+          </div>
+        </div>
+        <div class="zone-body">
+      <article class="panel">
+        <h2>智能家居设备控制与状态同步</h2>
+        <div class="device-panel-body">
+          <div id="current-scene-status" class="current-scene-status"></div>
+          <div id="device-rooms" class="device-rooms"></div>
+          <div class="device-log-panel">
+            <div class="device-log-toolbar">
+              <h3>设备命令日志</h3>
+              <div class="device-log-actions">
+                <button id="refresh-devices" type="button">刷新 guardian-core 设备</button>
+                <span id="device-submit-status" class="submit-status">等待设备状态</span>
+              </div>
+            </div>
+            <div id="device-log" class="device-log"></div>
+          </div>
+        </div>
+      </article>
+
+        </div>
+      </section>
+
+      <section class="page-zone">
+        <div class="zone-header">
+          <div>
+            <h2>生命体征与环境数据</h2>
+            <p>手动录入或场景生成的数据会发布到 MQTT，并在记录区实时回流展示。</p>
+          </div>
+        </div>
+        <div class="zone-body">
       <article class="panel">
         <h2>场景时间轴事件触发</h2>
         <div class="timeline-panel">
@@ -473,13 +799,13 @@
             <div class="timeline-field">
               <label for="scenario-scene">生活场景</label>
               <select id="scenario-scene">
-                <option value="morning_getup">老人早上起床</option>
-                <option value="midday_nap">老人中午午休</option>
-                <option value="dinner" selected>老人晚上吃饭</option>
+                <option value="morning_getup">早上起床</option>
+                <option value="midday_nap">中午午休</option>
+                <option value="dinner" selected>晚上吃饭</option>
                 <option value="night_bathroom">夜间起夜</option>
                 <option value="tv_evening">客厅看电视</option>
                 <option value="cooking">厨房做饭</option>
-                <option value="after_meal_walk">饭后散步</option>
+                <option value="away">外出</option>
                 <option value="sleep_night">夜间睡眠</option>
               </select>
             </div>
@@ -493,6 +819,15 @@
                 <option value="gas_leak" selected>燃气泄漏</option>
                 <option value="temperature_high">室温过高</option>
                 <option value="temperature_low">室温过低</option>
+              </select>
+            </div>
+            <div class="timeline-field">
+              <label for="scenario-event-room">插入事件房间</label>
+              <select id="scenario-event-room">
+                <option value="bedroom">bedroom</option>
+                <option value="kitchen">kitchen</option>
+                <option value="living_room" selected>living_room</option>
+                <option value="bathroom">bathroom</option>
               </select>
             </div>
             <div class="timeline-field">
@@ -510,6 +845,14 @@
             <div class="scenario-summary-row">
               <b>生成方式</b>
               <span id="scenario-method">基础场景曲线 + 事件注入曲线，默认生成 2 分钟、每 5 秒 1 组数据。</span>
+            </div>
+            <div class="scenario-summary-row">
+              <b>场景房间</b>
+              <span id="scenario-room-note">kitchen -> living_room</span>
+            </div>
+            <div class="scenario-summary-row">
+              <b>事件房间</b>
+              <span id="scenario-event-room-note">living_room</span>
             </div>
             <div class="scenario-summary-row">
               <b>预期触发</b>
@@ -765,14 +1108,37 @@
           </div>
         </article>
       </section>
+        </div>
+      </section>
     </main>
 
     <script>
       const state = {
         records: [],
+        devices: [],
+        deviceLog: [],
+        roomEnv: {},
         activeTemplate: "normal",
         scenarioRunning: false,
+        scenarioJob: null,
         scenarioStatusTimer: null,
+      };
+
+      const roomOrder = ["bedroom", "kitchen", "living_room", "bathroom"];
+
+      const deviceLabels = {
+        bedroom: "Bedroom",
+        kitchen: "Kitchen",
+        living_room: "Living room",
+        bathroom: "Bathroom",
+        local: "Local",
+        air_conditioner: "Air conditioner",
+        fan: "Fan",
+        window: "Window",
+        light: "Light",
+        gas_valve: "Gas valve",
+        heater: "Heater",
+        local_alarm: "Local alarm",
       };
 
       const scenarioTemplates = {
@@ -835,14 +1201,25 @@
       };
 
       const sceneLabels = {
-        morning_getup: "老人早上起床",
-        midday_nap: "老人中午午休",
-        dinner: "老人晚上吃饭",
+        morning_getup: "早上起床",
+        midday_nap: "中午午休",
+        dinner: "晚上吃饭",
         night_bathroom: "夜间起夜",
         tv_evening: "客厅看电视",
         cooking: "厨房做饭",
-        after_meal_walk: "饭后散步",
+        away: "外出",
         sleep_night: "夜间睡眠",
+      };
+
+      const sceneRoomNotes = {
+        morning_getup: "bedroom",
+        midday_nap: "bedroom",
+        dinner: "kitchen -> living_room",
+        night_bathroom: "bedroom -> bathroom -> bedroom",
+        tv_evening: "living_room",
+        cooking: "kitchen",
+        away: "outside / 不在家",
+        sleep_night: "bedroom",
       };
 
       const eventExpectations = {
@@ -880,6 +1257,10 @@
         return state.records.filter((record) => record.kind === kind);
       }
 
+      function latestEnvPayload() {
+        return latestByKind("env")?.payload ?? {};
+      }
+
       function setText(id, value) {
         $(id).textContent = valueOrDash(value);
       }
@@ -892,6 +1273,229 @@
 
       function setInputValue(id, value) {
         $(id).value = value;
+      }
+
+      function deviceLabel(value) {
+        return deviceLabels[value] || value;
+      }
+
+      function deviceKey(device) {
+        return `${device.room}/${device.device}`;
+      }
+
+      function actionLabel(action, value) {
+        const labels = {
+          open: "打开",
+          close: "关闭",
+          turn_on: "打开",
+          turn_off: "关闭",
+          alarm_on: "启动报警",
+          alarm_off: "关闭报警",
+          set_temperature: `设置温度为 ${valueOrDash(value)}°C`,
+        };
+        return labels[action] || action || "执行命令";
+      }
+
+      function stateLabel(state, value) {
+        const labels = {
+          on: "已打开",
+          off: "已关闭",
+          open: "已打开",
+          closed: "已关闭",
+          acked: "已确认执行",
+        };
+        const text = labels[state] || state || "状态已更新";
+        return value === null || value === undefined || value === "" ? text : `${text}，当前值 ${value}`;
+      }
+
+      function describeDeviceLog(item) {
+        const data = item.data ?? {};
+        if (item.type === "device_command") {
+          return `${deviceLabel(data.room)} 的 ${deviceLabel(data.device)} 收到命令：${actionLabel(data.action, data.value)}。`;
+        }
+        if (item.type === "device_state") {
+          return `${deviceLabel(data.room)} 的 ${deviceLabel(data.device)} 状态变化：${stateLabel(data.state, data.value)}。`;
+        }
+        if (item.type === "device_ack") {
+          return `${deviceLabel(data.room)} 的 ${deviceLabel(data.device)} 已确认执行命令。`;
+        }
+        if (item.type === "manual_command") {
+          const payload = data.payload ?? {};
+          return `${deviceLabel(payload.room)} 的 ${deviceLabel(payload.device)} 手动控制：${actionLabel(payload.action, payload.value)}。`;
+        }
+        if (item.type === "temperature_control") {
+          if (data.status === "target_recorded") {
+            return `${deviceLabel(data.room)} 的 ${deviceLabel(data.device)} 降温目标记录为 ${data.target_temperature}°C。`;
+          }
+          return `${deviceLabel(data.room)} 的 ${deviceLabel(data.device)} 温控目标未更新。`;
+        }
+        if (item.type === "guardian_core") {
+          return data.status === "devices_synced" ? "已从 guardian-core 同步设备状态。" : `guardian-core 同步失败：${data.error ?? "未知错误"}`;
+        }
+        if (item.type === "scenario_downgraded") {
+          return `${sceneLabels[data.scene] || data.scene} 中 ${deviceLabel(data.event_room)} 发生 ${data.event_type}，但老人当前在 ${deviceLabel(data.occupant_room)}，已向 guardian-core 上报正常环境值。`;
+        }
+        if (item.type === "error") {
+          return `设备链路错误：${data.message ?? data.error ?? JSON.stringify(data)}`;
+        }
+        return JSON.stringify(data);
+      }
+
+      function upsertDevice(device) {
+        const index = state.devices.findIndex((item) => deviceKey(item) === deviceKey(device));
+        if (index >= 0) state.devices[index] = { ...state.devices[index], ...device };
+        else state.devices.push(device);
+        renderDevices();
+      }
+
+      function setDevices(devices) {
+        state.devices = devices ?? [];
+        renderDevices();
+      }
+
+      function setRoomEnv(roomEnv) {
+        const next = {};
+        if (Array.isArray(roomEnv)) {
+          roomEnv.forEach((item) => {
+            if (item?.room) next[item.room] = item;
+          });
+        } else if (roomEnv && typeof roomEnv === "object") {
+          Object.assign(next, roomEnv);
+        }
+        state.roomEnv = next;
+        renderDevices();
+      }
+
+      function renderCurrentSceneStatus() {
+        const job = state.scenarioJob ?? {};
+        const scene = job.scene || $("scenario-scene")?.value || "dinner";
+        const eventRoom = job.event_room || $("scenario-event-room")?.value || "living_room";
+        const latestEnv = latestEnvPayload();
+        const occupantRoom =
+          latestEnv.life_scene === scene ? latestEnv.occupant_room || latestEnv.room || sceneRoomNotes[scene] : sceneRoomNotes[scene];
+        const status = state.scenarioRunning ? "运行中" : "未运行";
+        $("current-scene-status").innerHTML = `
+          <div><span>当前生活场景</span><strong>${sceneLabels[scene] || scene}</strong></div>
+          <div><span>老人所在房间</span><strong>${valueOrDash(occupantRoom)}</strong></div>
+          <div><span>插入事件房间</span><strong>${deviceLabel(eventRoom)} (${eventRoom})</strong></div>
+          <div><span>场景状态</span><strong>${status}</strong></div>
+        `;
+      }
+
+      function setDeviceLog(log) {
+        state.deviceLog = log ?? [];
+        renderDeviceLog();
+      }
+
+      function roomEnvMetric(room, field, unit = "") {
+        const value = state.roomEnv[room]?.[field];
+        return valueOrDash(value) + (value === null || value === undefined || value === "" ? "" : unit);
+      }
+
+      function roomEnvPanel(room) {
+        const env = state.roomEnv[room] ?? {};
+        return `
+          <div class="room-env-grid">
+            <div class="room-env-item"><span>Temperature</span><strong>${roomEnvMetric(room, "temperature", "°C")}</strong></div>
+            <div class="room-env-item"><span>Humidity</span><strong>${roomEnvMetric(room, "humidity", "%")}</strong></div>
+            <div class="room-env-item"><span>CO2</span><strong>${roomEnvMetric(room, "co2_ppm", " ppm")}</strong></div>
+          </div>
+          <div class="room-env-time">Updated: ${formatTime(env.updated_at || env.timestamp)}</div>
+        `;
+      }
+
+      function deviceActionButtons(device) {
+        if (device.device === "window" || device.device === "gas_valve") {
+          return `
+            <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'open')">Open</button>
+            <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'close')">Close</button>
+          `;
+        }
+        if (device.device === "local_alarm") {
+          return `
+            <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'alarm_on')">Alarm on</button>
+            <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'alarm_off')">Alarm off</button>
+          `;
+        }
+        if (device.device === "air_conditioner") {
+          const key = deviceKey(device);
+          const temp = device.value ?? 26;
+          return `
+            <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'turn_on')">Turn on</button>
+            <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'turn_off')">Turn off</button>
+            <div class="device-temp">
+              <input id="temp-${key}" type="number" min="16" max="30" value="${temp}" />
+              <button class="primary" type="button" title="Set temperature" onclick="commandDevice('${device.room}', '${device.device}', 'set_temperature', Number($('temp-${key}').value || 26))">Set</button>
+            </div>
+          `;
+        }
+        return `
+          <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'turn_on')">Turn on</button>
+          <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'turn_off')">Turn off</button>
+        `;
+      }
+
+      function renderDevices() {
+        const grouped = {};
+        state.devices.forEach((device) => {
+          if (!grouped[device.room]) grouped[device.room] = [];
+          grouped[device.room].push(device);
+        });
+        const rooms = [...roomOrder, ...Object.keys(grouped).filter((room) => !roomOrder.includes(room))];
+        $("device-rooms").innerHTML = rooms
+          .map(
+            (room) => `
+              <section class="device-room">
+                <h3>${deviceLabel(room)}</h3>
+                ${roomOrder.includes(room) ? roomEnvPanel(room) : ""}
+                ${(grouped[room] ?? [])
+                  .map(
+                    (device) => `
+                      <article class="device-card">
+                        <div class="device-head">
+                          <span class="device-name">${deviceLabel(device.device)}</span>
+                          <span class="device-state ${device.state}">${device.state}${device.value !== null && device.value !== undefined ? ` / ${device.value}` : ""}</span>
+                        </div>
+                        <div class="device-controls">${deviceActionButtons(device)}</div>
+                      </article>
+                    `,
+                  )
+                  .join("")}
+              </section>
+            `,
+          )
+          .join("");
+      }
+
+      function renderDeviceLog() {
+        $("device-log").innerHTML = state.deviceLog
+          .slice(0, 80)
+          .map((item) => `<div class="device-log-item ${item.type}">${formatTime(item.timestamp)} ${describeDeviceLog(item)}</div>`)
+          .join("");
+      }
+
+      async function commandDevice(room, device, action, value = null) {
+        setSubmitStatus("device-submit-status", `Sending ${room}/${device} ${action}`);
+        try {
+          await postJson("/api/device/command", {
+            room,
+            device,
+            action,
+            value,
+            reason: "Background MQTT unified dashboard control",
+          });
+          setSubmitStatus("device-submit-status", "Command sent through guardian-core", "ok");
+        } catch (error) {
+          setSubmitStatus("device-submit-status", `Command failed: ${error.message}`, "error");
+        }
+      }
+
+      async function loadDevices() {
+        const response = await fetch("/api/devices");
+        const data = await response.json();
+        setDevices(data.devices);
+        setDeviceLog(data.device_log);
+        setRoomEnv(data.room_env);
       }
 
       function buildVitalPayload() {
@@ -919,19 +1523,24 @@
       function updateScenarioPreview() {
         const scene = $("scenario-scene").value;
         const eventType = $("scenario-event").value;
+        const eventRoom = $("scenario-event-room").value;
         const triggerSecond = Number($("scenario-trigger").value);
         $("scenario-trigger-label").textContent = `第 ${triggerSecond} 秒`;
         setText(
           "scenario-method",
-          `${sceneLabels[scene]}基础曲线 + 事件注入曲线，生成 2 分钟、每 5 秒 1 组数据。`,
+          `${sceneLabels[scene]}基础曲线 + ${eventRoom} 房间事件注入曲线，生成 2 分钟、每 5 秒 1 组数据。`,
         );
+        setText("scenario-room-note", sceneRoomNotes[scene]);
+        setText("scenario-event-room-note", `${deviceLabel(eventRoom)} (${eventRoom})`);
         setText("scenario-expected", eventExpectations[eventType]);
+        renderCurrentSceneStatus();
       }
 
       function buildScenarioPayload() {
         return {
           scene: $("scenario-scene").value,
           event_type: $("scenario-event").value,
+          event_room: $("scenario-event-room").value,
           trigger_second: Number($("scenario-trigger").value),
           elder_id: $("scenario-elder").value.trim(),
           duration_sec: 120,
@@ -941,7 +1550,7 @@
       }
 
       function setScenarioControlsDisabled(disabled) {
-        ["scenario-scene", "scenario-event", "scenario-trigger", "scenario-elder", "scenario-realtime"].forEach((id) => {
+        ["scenario-scene", "scenario-event", "scenario-event-room", "scenario-trigger", "scenario-elder", "scenario-realtime"].forEach((id) => {
           $(id).disabled = disabled;
         });
       }
@@ -968,9 +1577,11 @@
       function updateScenarioJobUi(job) {
         const running = job.status === "running";
         state.scenarioRunning = running;
+        state.scenarioJob = job;
         $("submit-scenario").textContent = running ? "停止发送" : "生成并发送场景数据";
         setScenarioControlsDisabled(running);
         setSubmitStatus("scenario-submit-status", scenarioProgressText(job), job.status === "failed" ? "error" : running ? "" : "ok");
+        renderCurrentSceneStatus();
         if (!running) stopScenarioStatusPolling();
       }
 
@@ -1117,6 +1728,7 @@
       function renderAll() {
         renderKeyTable();
         renderRecords();
+        renderCurrentSceneStatus();
       }
 
       function setRecords(records) {
@@ -1149,9 +1761,24 @@
           const message = JSON.parse(event.data);
           if (message.type === "snapshot") {
             setRecords(message.data);
+            setDevices(message.devices);
+            setDeviceLog(message.device_log);
+            setRoomEnv(message.room_env);
           }
           if (message.type === "mqtt_record") {
             addRecord(message.data);
+          }
+          if (message.room_env) {
+            setRoomEnv(message.room_env);
+          }
+          if (message.devices) {
+            setDevices(message.devices);
+          }
+          if (message.device_log) {
+            setDeviceLog(message.device_log);
+          }
+          if (message.type === "device_state") {
+            upsertDevice(message.data);
           }
         };
       }
@@ -1209,7 +1836,7 @@
         }
       });
 
-      ["scenario-scene", "scenario-event", "scenario-trigger"].forEach((id) => {
+      ["scenario-scene", "scenario-event", "scenario-event-room", "scenario-trigger"].forEach((id) => {
         $(id).addEventListener("input", updateScenarioPreview);
         $(id).addEventListener("change", updateScenarioPreview);
       });
@@ -1239,9 +1866,21 @@
         setRecords([]);
       });
 
+      $("refresh-devices").addEventListener("click", async () => {
+        try {
+          await loadDevices();
+          setSubmitStatus("device-submit-status", "Devices refreshed from guardian-core", "ok");
+        } catch (error) {
+          setSubmitStatus("device-submit-status", `Refresh failed: ${error.message}`, "error");
+        }
+      });
+
       applyTemplate(state.activeTemplate);
       updateScenarioPreview();
       loadSnapshot();
+      loadDevices().catch((error) => {
+        setSubmitStatus("device-submit-status", `Device load failed: ${error.message}`, "error");
+      });
       refreshScenarioStatus().catch(() => {});
       connectWs();
     </script>
