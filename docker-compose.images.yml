@@ -34,6 +34,44 @@ services:
       guardian-net:
         ipv4_address: 172.30.0.20
 
+  edge-mcp-server:
+    image: ${IMAGE_PREFIX}/edge-mcp-server:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+    env_file:
+      - .env
+    environment:
+      APP_ENV: production
+      MQTT_HOST: 172.30.0.10
+      MQTT_PORT: 1883
+      DATABASE_URL: sqlite:////app/data/guardian.db
+      ORCHESTRATOR_URL: http://172.30.0.70:8020
+    ports:
+      - "8010:8010"
+    volumes:
+      - ./data:/app/data
+      - ./configs:/app/configs:ro
+    networks:
+      guardian-net:
+        ipv4_address: 172.30.0.60
+
+  guardian-orchestrator:
+    image: ${IMAGE_PREFIX}/guardian-orchestrator:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      - edge-mcp-server
+    env_file:
+      - .env
+    environment:
+      APP_ENV: production
+      EDGE_API_BASE: http://172.30.0.60:8010
+    ports:
+      - "8020:8020"
+    networks:
+      guardian-net:
+        ipv4_address: 172.30.0.70
+
   web-dashboard:
     image: ${IMAGE_PREFIX}/web-dashboard:${IMAGE_TAG:-latest}
     restart: unless-stopped

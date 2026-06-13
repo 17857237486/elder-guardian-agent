@@ -50,6 +50,14 @@ jobs:
             context: .
             build_args: |
               APP_DIR=apps/voice-hmi-service
+          - image: edge-mcp-server
+            dockerfile: apps/edge-mcp-server/Dockerfile
+            context: .
+            build_args: ""
+          - image: guardian-orchestrator
+            dockerfile: apps/guardian-orchestrator/Dockerfile
+            context: .
+            build_args: ""
 
     steps:
       - name: Checkout

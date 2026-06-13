@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import StrEnum
 from typing import Any
+
+try:
+    from enum import StrEnum
+except ImportError:
+    from enum import Enum as _Enum
+
+    class StrEnum(str, _Enum):
+        pass
 
 from pydantic import Field
 

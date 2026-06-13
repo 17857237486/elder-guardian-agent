@@ -65,7 +65,7 @@ load_system_proxy() {
   if [ -z "${http_proxy:-}" ] && [ -n "${HTTP_PROXY:-}" ]; then export http_proxy="$HTTP_PROXY"; fi
   if [ -z "${https_proxy:-}" ] && [ -n "${HTTPS_PROXY:-}" ]; then export https_proxy="$HTTPS_PROXY"; fi
 
-  local default_no_proxy="localhost,127.0.0.1,::1,mosquitto,guardian-core,web-dashboard,elder-hmi,wechat-adapter,vision-service,voice-hmi-service,${PUBLIC_HOST}"
+  local default_no_proxy="localhost,127.0.0.1,::1,mosquitto,guardian-core,edge-mcp-server,guardian-orchestrator,web-dashboard,elder-hmi,wechat-adapter,vision-service,voice-hmi-service,${PUBLIC_HOST}"
   if [ -z "${NO_PROXY:-}" ] && [ -z "${no_proxy:-}" ]; then
     export NO_PROXY="$default_no_proxy"
     export no_proxy="$default_no_proxy"

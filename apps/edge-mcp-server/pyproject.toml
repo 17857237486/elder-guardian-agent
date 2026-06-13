@@ -2,7 +2,7 @@
 name = "edge-mcp-server"
 version = "0.1.0"
 description = "MCP and MQTT bridge for the RK3588 elder guardian v2 architecture."
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",

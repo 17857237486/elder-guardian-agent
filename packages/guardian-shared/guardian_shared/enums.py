@@ -1,4 +1,12 @@
-from enum import StrEnum
+from __future__ import annotations
+
+try:
+    from enum import StrEnum
+except ImportError:
+    from enum import Enum as _Enum
+
+    class StrEnum(str, _Enum):
+        pass
 
 
 class RiskLevel(StrEnum):

@@ -1,12 +1,9 @@
+# RK3588 host-network Compose (for kernels without iptables/netfilter bridge support)
 services:
   mosquitto:
     image: eclipse-mosquitto:2
     restart: unless-stopped
-    networks:
-      guardian-net:
-        ipv4_address: 172.30.0.10
-    ports:
-      - "1883:1883"
+    network_mode: host
     volumes:
       - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./data/mosquitto:/mosquitto/data
@@ -25,24 +22,20 @@ services:
         https_proxy: ${https_proxy:-}
         no_proxy: ${no_proxy:-}
     restart: unless-stopped
+    network_mode: host
     depends_on:
       - mosquitto
     env_file:
       - .env
     environment:
       APP_ENV: production
-      MQTT_HOST: 172.30.0.10
+      MQTT_HOST: 127.0.0.1
       MQTT_PORT: 1883
       DATABASE_URL: sqlite:////app/data/guardian.db
       LLM_MOCK: ${LLM_MOCK:-true}
-    ports:
-      - "8000:8000"
     volumes:
       - ./data:/app/data
       - ./configs:/app/configs:ro
-    networks:
-      guardian-net:
-        ipv4_address: 172.30.0.20
 
   edge-mcp-server:
     build:
@@ -57,24 +50,20 @@ services:
         https_proxy: ${https_proxy:-}
         no_proxy: ${no_proxy:-}
     restart: unless-stopped
+    network_mode: host
     depends_on:
       - mosquitto
     env_file:
       - .env
     environment:
       APP_ENV: production
-      MQTT_HOST: 172.30.0.10
+      MQTT_HOST: 127.0.0.1
       MQTT_PORT: 1883
       DATABASE_URL: sqlite:////app/data/guardian.db
-      ORCHESTRATOR_URL: http://172.30.0.70:8020
-    ports:
-      - "8010:8010"
+      ORCHESTRATOR_URL: http://127.0.0.1:8020
     volumes:
       - ./data:/app/data
       - ./configs:/app/configs:ro
-    networks:
-      guardian-net:
-        ipv4_address: 172.30.0.60
 
   guardian-orchestrator:
     build:
@@ -89,18 +78,16 @@ services:
         https_proxy: ${https_proxy:-}
         no_proxy: ${no_proxy:-}
     restart: unless-stopped
+    network_mode: host
     depends_on:
       - edge-mcp-server
     env_file:
       - .env
     environment:
       APP_ENV: production
-      EDGE_API_BASE: http://172.30.0.60:8010
-    ports:
-      - "8020:8020"
-    networks:
-      guardian-net:
-        ipv4_address: 172.30.0.70
+      EDGE_API_BASE: http://127.0.0.1:8010
+    volumes:
+      - ./configs:/app/configs:ro
 
   web-dashboard:
     build:
@@ -117,13 +104,9 @@ services:
         https_proxy: ${https_proxy:-}
         no_proxy: ${no_proxy:-}
     restart: unless-stopped
+    network_mode: host
     depends_on:
       - guardian-core
-    ports:
-      - "5173:80"
-    networks:
-      guardian-net:
-        ipv4_address: 172.30.0.30
 
   elder-hmi:
     build:
@@ -140,13 +123,9 @@ services:
         https_proxy: ${https_proxy:-}
         no_proxy: ${no_proxy:-}
     restart: unless-stopped
+    network_mode: host
     depends_on:
       - guardian-core
-    ports:
-      - "5174:80"
-    networks:
-      guardian-net:
-        ipv4_address: 172.30.0.31
 
   wechat-adapter:
     build:
@@ -162,14 +141,10 @@ services:
         https_proxy: ${https_proxy:-}
         no_proxy: ${no_proxy:-}
     restart: unless-stopped
+    network_mode: host
     environment:
-      GUARDIAN_CORE_URL: http://172.30.0.20:8000
+      GUARDIAN_CORE_URL: http://127.0.0.1:8000
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8102"]
-    ports:
-      - "8102:8102"
-    networks:
-      guardian-net:
-        ipv4_address: 172.30.0.40
 
   vision-service:
     build:
@@ -185,18 +160,14 @@ services:
         https_proxy: ${https_proxy:-}
         no_proxy: ${no_proxy:-}
     restart: unless-stopped
+    network_mode: host
     depends_on:
       - mosquitto
     environment:
-      MQTT_HOST: 172.30.0.10
+      MQTT_HOST: 127.0.0.1
       MQTT_PORT: 1883
       ELDER_ID: ${ELDER_ID:-elder_001}
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8101"]
-    ports:
-      - "8101:8101"
-    networks:
-      guardian-net:
-        ipv4_address: 172.30.0.50
 
   voice-hmi-service:
     build:
@@ -212,20 +183,11 @@ services:
         https_proxy: ${https_proxy:-}
         no_proxy: ${no_proxy:-}
     restart: unless-stopped
+    network_mode: host
     depends_on:
       - mosquitto
     environment:
-      MQTT_HOST: 172.30.0.10
+      MQTT_HOST: 127.0.0.1
       MQTT_PORT: 1883
       ELDER_ID: ${ELDER_ID:-elder_001}
     command: ["python", "-m", "app.main", "--listen-only"]
-    networks:
-      guardian-net:
-        ipv4_address: 172.30.0.51
-
-networks:
-  guardian-net:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.30.0.0/16
