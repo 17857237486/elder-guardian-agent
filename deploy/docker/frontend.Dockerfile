@@ -23,5 +23,7 @@ FROM nginx:1.27-alpine
 ARG APP_DIR
 COPY deploy/nginx/spa.conf /etc/nginx/conf.d/default.conf
 COPY deploy/nginx/99-runtime-config.sh /docker-entrypoint.d/99-runtime-config.sh
+RUN sed -i 's/\r$//' /docker-entrypoint.d/99-runtime-config.sh \
+    && chmod +x /docker-entrypoint.d/99-runtime-config.sh
 COPY --from=build /app/${APP_DIR}/dist /usr/share/nginx/html
 EXPOSE 80

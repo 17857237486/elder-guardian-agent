@@ -1,80 +1,229 @@
 services:
   mosquitto:
     image: eclipse-mosquitto:2
-    container_name: elder-guardian-mosquitto
+    restart: unless-stopped
     ports:
-      - "1883:1883"
+      - "${MQTT_PUBLIC_PORT:-1883}:1883"
     volumes:
       - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./data/mosquitto:/mosquitto/data
       - ./data/logs:/mosquitto/log
+    healthcheck:
+      test: ["CMD", "mosquitto_pub", "-h", "localhost", "-t", "healthcheck", "-m", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
 
   guardian-core:
     build:
       context: .
       dockerfile: apps/guardian-core/Dockerfile
-    container_name: elder-guardian-core
+    restart: unless-stopped
     depends_on:
-      - mosquitto
+      mosquitto:
+        condition: service_healthy
     env_file:
       - .env.example
+      - path: .env
+        required: false
     environment:
       MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
       DATABASE_URL: sqlite:////app/data/guardian.db
+      LLM_MOCK: ${LLM_MOCK:-true}
     ports:
-      - "8000:8000"
+      - "${CORE_PUBLIC_PORT:-8000}:8000"
     volumes:
       - ./data:/app/data
       - ./configs:/app/configs:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
 
   edge-mcp-server:
     build:
       context: .
       dockerfile: apps/edge-mcp-server/Dockerfile
-    container_name: elder-guardian-edge-mcp
+    restart: unless-stopped
     depends_on:
-      - mosquitto
+      mosquitto:
+        condition: service_healthy
     env_file:
       - .env.example
+      - path: .env
+        required: false
     environment:
       MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
       DATABASE_URL: sqlite:////app/data/guardian.db
       ORCHESTRATOR_URL: http://guardian-orchestrator:8020
     ports:
-      - "8010:8010"
+      - "${EDGE_PUBLIC_PORT:-8010}:8010"
     volumes:
       - ./data:/app/data
       - ./configs:/app/configs:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
 
   guardian-orchestrator:
     build:
       context: .
       dockerfile: apps/guardian-orchestrator/Dockerfile
-    container_name: elder-guardian-orchestrator
+    restart: unless-stopped
+    depends_on:
+      edge-mcp-server:
+        condition: service_healthy
     env_file:
       - .env.example
+      - path: .env
+        required: false
     environment:
       EDGE_API_BASE: http://edge-mcp-server:8010
+      LLM_MOCK: ${LLM_MOCK:-true}
     ports:
-      - "8020:8020"
+      - "${ORCHESTRATOR_PUBLIC_PORT:-8020}:8020"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8020/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
 
   web-dashboard:
-    image: node:24-alpine
-    container_name: elder-guardian-dashboard
-    profiles: ["frontend"]
-    working_dir: /app
-    command: sh -c "corepack enable && pnpm install && pnpm --filter web-dashboard dev --host 0.0.0.0"
+    build:
+      context: .
+      dockerfile: deploy/docker/frontend.Dockerfile
+      args:
+        APP_DIR: apps/web-dashboard
+        VITE_GUARDIAN_API_BASE: ${PUBLIC_EDGE_API_BASE:-http://localhost:8010}
+    restart: unless-stopped
+    depends_on:
+      edge-mcp-server:
+        condition: service_healthy
+    environment:
+      GUARDIAN_API_BASE: ${PUBLIC_EDGE_API_BASE:-http://localhost:8010}
     ports:
-      - "5173:5173"
-    volumes:
-      - .:/app
+      - "${DASHBOARD_PUBLIC_PORT:-5173}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   elder-hmi:
-    image: node:24-alpine
-    container_name: elder-guardian-hmi
-    profiles: ["frontend"]
-    working_dir: /app
-    command: sh -c "corepack enable && pnpm install && pnpm --filter elder-hmi dev --host 0.0.0.0"
+    build:
+      context: .
+      dockerfile: deploy/docker/frontend.Dockerfile
+      args:
+        APP_DIR: apps/elder-hmi
+        VITE_GUARDIAN_API_BASE: ${PUBLIC_EDGE_API_BASE:-http://localhost:8010}
+    restart: unless-stopped
+    depends_on:
+      edge-mcp-server:
+        condition: service_healthy
+    environment:
+      GUARDIAN_API_BASE: ${PUBLIC_EDGE_API_BASE:-http://localhost:8010}
     ports:
-      - "5174:5174"
-    volumes:
-      - .:/app
+      - "${HMI_PUBLIC_PORT:-5174}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  wechat-adapter:
+    build:
+      context: .
+      dockerfile: deploy/docker/python-app.Dockerfile
+      args:
+        APP_DIR: apps/wechat-adapter
+    restart: unless-stopped
+    depends_on:
+      guardian-core:
+        condition: service_healthy
+    environment:
+      GUARDIAN_CORE_URL: http://guardian-core:8000
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8102"]
+    ports:
+      - "${WECHAT_PUBLIC_PORT:-8102}:8102"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8102/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  vision-service:
+    build:
+      context: .
+      dockerfile: deploy/docker/python-app.Dockerfile
+      args:
+        APP_DIR: apps/vision-service
+    restart: unless-stopped
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    environment:
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      ELDER_ID: ${ELDER_ID:-elder_001}
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8101"]
+    ports:
+      - "${VISION_PUBLIC_PORT:-8101}:8101"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8101/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  voice-hmi-service:
+    build:
+      context: .
+      dockerfile: deploy/docker/python-app.Dockerfile
+      args:
+        APP_DIR: apps/voice-hmi-service
+    restart: unless-stopped
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    environment:
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      ELDER_ID: ${ELDER_ID:-elder_001}
+    command: ["python", "-m", "app.main", "--listen-only"]
+
+  background-mqtt:
+    build:
+      context: .
+      dockerfile: deploy/docker/background-mqtt.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      guardian-core:
+        condition: service_healthy
+    environment:
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      GUARDIAN_CORE_URL: http://guardian-core:8000
+      ELDER_ID: ${ELDER_ID:-elder_001}
+      BACKGROUND_MAX_RECORDS: ${BACKGROUND_MAX_RECORDS:-1000}
+    ports:
+      - "${BACKGROUND_PUBLIC_PORT:-8090}:8090"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s

@@ -6,6 +6,7 @@ from typing import Any
 
 import httpx
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from guardian_shared.v2 import ActionRequestV2, AlertRequestV2, HmiPromptV2, HmiResponseV2, NormalizedEventV2, RawObservationV2, WorkflowNoteV2, WorkflowStepV2, WorkflowV2
 
@@ -20,6 +21,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Elder Guardian Edge MCP Server", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 mqtt_bridge = MqttBridge()
 tool_service = EdgeToolService(mqtt_bridge)
 mcp = build_mcp(tool_service)

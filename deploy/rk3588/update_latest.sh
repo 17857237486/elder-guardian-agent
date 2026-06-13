@@ -65,7 +65,7 @@ load_system_proxy() {
   if [ -z "${http_proxy:-}" ] && [ -n "${HTTP_PROXY:-}" ]; then export http_proxy="$HTTP_PROXY"; fi
   if [ -z "${https_proxy:-}" ] && [ -n "${HTTPS_PROXY:-}" ]; then export https_proxy="$HTTPS_PROXY"; fi
 
-  local default_no_proxy="localhost,127.0.0.1,::1,mosquitto,guardian-core,edge-mcp-server,guardian-orchestrator,web-dashboard,elder-hmi,wechat-adapter,vision-service,voice-hmi-service,${PUBLIC_HOST}"
+  local default_no_proxy="localhost,127.0.0.1,::1,mosquitto,guardian-core,edge-mcp-server,guardian-orchestrator,background-mqtt,web-dashboard,elder-hmi,wechat-adapter,vision-service,voice-hmi-service,${PUBLIC_HOST}"
   if [ -z "${NO_PROXY:-}" ] && [ -z "${no_proxy:-}" ]; then
     export NO_PROXY="$default_no_proxy"
     export no_proxy="$default_no_proxy"
@@ -118,6 +118,9 @@ ensure_env_file() {
   if ! grep -q '^PUBLIC_GUARDIAN_API_BASE=' .env; then
     printf '\nPUBLIC_GUARDIAN_API_BASE=http://%s:8000\n' "$PUBLIC_HOST" >> .env
   fi
+  if ! grep -q '^PUBLIC_EDGE_API_BASE=' .env; then
+    printf 'PUBLIC_EDGE_API_BASE=http://%s:8010\n' "$PUBLIC_HOST" >> .env
+  fi
   if [ -n "${IMAGE_PREFIX:-}" ] && ! grep -q '^IMAGE_PREFIX=' .env; then
     printf 'IMAGE_PREFIX=%s\n' "$IMAGE_PREFIX" >> .env
   fi
@@ -161,10 +164,15 @@ main() {
 
   echo
   echo "Elder Guardian Agent is available at:"
-  echo "  Core API:     http://${PUBLIC_HOST}:8000/health"
-  echo "  Dashboard:    http://${PUBLIC_HOST}:5173"
-  echo "  Elder HMI:    http://${PUBLIC_HOST}:5174"
-  echo "  Mosquitto:    mqtt://${PUBLIC_HOST}:1883"
+  echo "  Legacy Core:     http://${PUBLIC_HOST}:8000/health"
+  echo "  Edge MCP/API:    http://${PUBLIC_HOST}:8010/health"
+  echo "  Orchestrator:    http://${PUBLIC_HOST}:8020/health"
+  echo "  MQTT Scenarios:  http://${PUBLIC_HOST}:8090"
+  echo "  Vision Service:  http://${PUBLIC_HOST}:8101/health"
+  echo "  WeChat Adapter:  http://${PUBLIC_HOST}:8102/health"
+  echo "  Dashboard:       http://${PUBLIC_HOST}:5173"
+  echo "  Elder HMI:       http://${PUBLIC_HOST}:5174"
+  echo "  Mosquitto:       mqtt://${PUBLIC_HOST}:1883"
 }
 
 main "$@"

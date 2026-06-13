@@ -25,6 +25,14 @@ jobs:
             dockerfile: apps/guardian-core/Dockerfile
             context: .
             build_args: ""
+          - image: edge-mcp-server
+            dockerfile: apps/edge-mcp-server/Dockerfile
+            context: .
+            build_args: ""
+          - image: guardian-orchestrator
+            dockerfile: apps/guardian-orchestrator/Dockerfile
+            context: .
+            build_args: ""
           - image: web-dashboard
             dockerfile: deploy/docker/frontend.Dockerfile
             context: .
@@ -50,12 +58,8 @@ jobs:
             context: .
             build_args: |
               APP_DIR=apps/voice-hmi-service
-          - image: edge-mcp-server
-            dockerfile: apps/edge-mcp-server/Dockerfile
-            context: .
-            build_args: ""
-          - image: guardian-orchestrator
-            dockerfile: apps/guardian-orchestrator/Dockerfile
+          - image: background-mqtt
+            dockerfile: deploy/docker/background-mqtt.Dockerfile
             context: .
             build_args: ""
 

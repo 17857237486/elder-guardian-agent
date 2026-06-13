@@ -13,6 +13,11 @@ app = FastAPI(title="Mock WeChat Adapter")
 GUARDIAN_CORE_URL = os.getenv("GUARDIAN_CORE_URL", "http://localhost:8000")
 
 
+@app.get("/health")
+async def health() -> dict[str, object]:
+    return {"ok": True, "service": "wechat-adapter", "guardian_core_url": GUARDIAN_CORE_URL}
+
+
 @app.post("/notify")
 async def notify(payload: dict) -> dict:
     logger.warning("[MOCK WECHAT NOTIFY] %s", payload)

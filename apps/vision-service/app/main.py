@@ -16,6 +16,16 @@ app = FastAPI(title="Mock Vision Service")
 ROOT = Path(__file__).resolve().parents[3]
 
 
+@app.get("/health")
+async def health() -> dict[str, object]:
+    return {
+        "ok": True,
+        "service": "vision-service",
+        "mqtt_host": os.getenv("MQTT_HOST", "localhost"),
+        "mqtt_port": int(os.getenv("MQTT_PORT", "1883")),
+    }
+
+
 def publish_event(event_name: str, elder_id: str, room: str = "living_room") -> VisionEvent:
     specs = {
         "suspected_fall": (0.86, "lying_low", "sudden_down"),

@@ -208,6 +208,7 @@ cd /opt/elder-guardian-agent
 IMAGE_PREFIX=ghcr.io/your-org/elder-guardian-agent
 IMAGE_TAG=latest
 PUBLIC_GUARDIAN_API_BASE=http://192.168.10.64:8000
+PUBLIC_EDGE_API_BASE=http://192.168.10.64:8010
 ```
 
 之后在 RK3588 上一键更新：
@@ -218,6 +219,49 @@ cd /opt/elder-guardian-agent
 ```
 
 当 `.env` 中存在 `IMAGE_PREFIX` 时，脚本会自动使用 `docker-compose.images.yml`，只执行 `docker compose pull && docker compose up -d`，不在 RK3588 本机编译镜像。
+
+## 完整 Docker Compose 服务栈
+
+三套 Compose 文件都包含同一组 10 个服务，默认无需 profile 即可全部启动：
+
+| 服务 | 端口 | 用途 |
+| --- | ---: | --- |
+| Mosquitto | `1883` | MQTT broker |
+| guardian-core | `8000` | 旧 MVP API，供微信适配器和场景面板使用 |
+| edge-mcp-server | `8010` | v2 Edge MCP/API，供两个前端使用 |
+| guardian-orchestrator | `8020` | v2 规则与 LLM workflow 编排 |
+| Background MQTT | `8090` | MQTT 数据记录、场景生成和设备面板 |
+| vision-service | `8101` | mock 视觉事件 API |
+| wechat-adapter | `8102` | mock 微信适配 API |
+| web-dashboard | `5173` | 家属/开发者 dashboard |
+| elder-hmi | `5174` | 老人本地 HMI |
+| voice-hmi-service | 无 | MQTT ASR/TTS 监听服务 |
+
+本地完整启动：
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+RK3588 从源码构建：
+
+```bash
+cp .env.example .env
+# 将 PUBLIC_EDGE_API_BASE 改为浏览器可访问的 RK3588 地址，例如 http://192.168.10.64:8010
+docker compose -f docker-compose.rk3588.yml up -d --build
+```
+
+使用 GHCR 预构建镜像：
+
+```bash
+docker compose -f docker-compose.images.yml pull
+docker compose -f docker-compose.images.yml up -d
+```
+
+HTTP 服务和 Mosquitto 都配置了健康检查。`guardian-orchestrator`、前端、微信适配器及场景面板会等待其上游健康后再启动。共享 SQLite 文件位于 `data/guardian.db`，v1 与 v2 使用不同表名。
+
+如同一台机器上已有其他实例，可在 `.env` 中设置 `MQTT_PUBLIC_PORT`、`CORE_PUBLIC_PORT`、`EDGE_PUBLIC_PORT`、`ORCHESTRATOR_PUBLIC_PORT`、`BACKGROUND_PUBLIC_PORT`、`VISION_PUBLIC_PORT`、`WECHAT_PUBLIC_PORT`、`DASHBOARD_PUBLIC_PORT` 和 `HMI_PUBLIC_PORT` 覆盖宿主机端口；容器间通信端口不受影响。
 
 ## 后续扩展
 

@@ -1,5 +1,15 @@
 FROM python:3.11-slim
 
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+ARG http_proxy
+ARG https_proxy
+ARG no_proxy
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 COPY packages/guardian-shared /app/packages/guardian-shared
 COPY apps/edge-mcp-server /app/apps/edge-mcp-server

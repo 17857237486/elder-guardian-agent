@@ -1,45 +1,60 @@
+x-proxy-args: &proxy-args
+  HTTP_PROXY: ${HTTP_PROXY:-}
+  HTTPS_PROXY: ${HTTPS_PROXY:-}
+  NO_PROXY: ${NO_PROXY:-}
+  http_proxy: ${http_proxy:-}
+  https_proxy: ${https_proxy:-}
+  no_proxy: ${no_proxy:-}
+
 services:
   mosquitto:
     image: eclipse-mosquitto:2
     restart: unless-stopped
-    networks:
-      guardian-net:
-        ipv4_address: 172.30.0.10
-    ports:
-      - "1883:1883"
+    ports: ["${MQTT_PUBLIC_PORT:-1883}:1883"]
     volumes:
       - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./data/mosquitto:/mosquitto/data
       - ./data/logs:/mosquitto/log
+    healthcheck:
+      test: ["CMD", "mosquitto_pub", "-h", "localhost", "-t", "healthcheck", "-m", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    networks:
+      guardian-net:
+        ipv4_address: 172.30.0.10
 
   guardian-core:
     build:
       context: .
       dockerfile: apps/guardian-core/Dockerfile
       network: host
-      args:
-        HTTP_PROXY: ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY: ${NO_PROXY:-}
-        http_proxy: ${http_proxy:-}
-        https_proxy: ${https_proxy:-}
-        no_proxy: ${no_proxy:-}
+      args: *proxy-args
     restart: unless-stopped
     depends_on:
-      - mosquitto
+      mosquitto:
+        condition: service_healthy
     env_file:
-      - .env
+      - .env.example
+      - path: .env
+        required: false
     environment:
       APP_ENV: production
-      MQTT_HOST: 172.30.0.10
+      MQTT_HOST: mosquitto
       MQTT_PORT: 1883
       DATABASE_URL: sqlite:////app/data/guardian.db
       LLM_MOCK: ${LLM_MOCK:-true}
-    ports:
-      - "8000:8000"
+    ports: ["${CORE_PUBLIC_PORT:-8000}:8000"]
     volumes:
       - ./data:/app/data
       - ./configs:/app/configs:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
     networks:
       guardian-net:
         ipv4_address: 172.30.0.20
@@ -49,58 +64,62 @@ services:
       context: .
       dockerfile: apps/edge-mcp-server/Dockerfile
       network: host
-      args:
-        HTTP_PROXY: ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY: ${NO_PROXY:-}
-        http_proxy: ${http_proxy:-}
-        https_proxy: ${https_proxy:-}
-        no_proxy: ${no_proxy:-}
+      args: *proxy-args
     restart: unless-stopped
     depends_on:
-      - mosquitto
+      mosquitto:
+        condition: service_healthy
     env_file:
-      - .env
+      - .env.example
+      - path: .env
+        required: false
     environment:
       APP_ENV: production
-      MQTT_HOST: 172.30.0.10
+      MQTT_HOST: mosquitto
       MQTT_PORT: 1883
       DATABASE_URL: sqlite:////app/data/guardian.db
-      ORCHESTRATOR_URL: http://172.30.0.70:8020
-    ports:
-      - "8010:8010"
+      ORCHESTRATOR_URL: http://guardian-orchestrator:8020
+    ports: ["${EDGE_PUBLIC_PORT:-8010}:8010"]
     volumes:
       - ./data:/app/data
       - ./configs:/app/configs:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
     networks:
       guardian-net:
-        ipv4_address: 172.30.0.60
+        ipv4_address: 172.30.0.21
 
   guardian-orchestrator:
     build:
       context: .
       dockerfile: apps/guardian-orchestrator/Dockerfile
       network: host
-      args:
-        HTTP_PROXY: ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY: ${NO_PROXY:-}
-        http_proxy: ${http_proxy:-}
-        https_proxy: ${https_proxy:-}
-        no_proxy: ${no_proxy:-}
+      args: *proxy-args
     restart: unless-stopped
     depends_on:
-      - edge-mcp-server
+      edge-mcp-server:
+        condition: service_healthy
     env_file:
-      - .env
+      - .env.example
+      - path: .env
+        required: false
     environment:
-      APP_ENV: production
-      EDGE_API_BASE: http://172.30.0.60:8010
-    ports:
-      - "8020:8020"
+      EDGE_API_BASE: http://edge-mcp-server:8010
+      LLM_MOCK: ${LLM_MOCK:-true}
+    ports: ["${ORCHESTRATOR_PUBLIC_PORT:-8020}:8020"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8020/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
     networks:
       guardian-net:
-        ipv4_address: 172.30.0.70
+        ipv4_address: 172.30.0.22
 
   web-dashboard:
     build:
@@ -108,19 +127,22 @@ services:
       dockerfile: deploy/docker/frontend.Dockerfile
       network: host
       args:
+        <<: *proxy-args
         APP_DIR: apps/web-dashboard
-        VITE_GUARDIAN_API_BASE: ${PUBLIC_GUARDIAN_API_BASE:-http://192.168.10.64:8000}
-        HTTP_PROXY: ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY: ${NO_PROXY:-}
-        http_proxy: ${http_proxy:-}
-        https_proxy: ${https_proxy:-}
-        no_proxy: ${no_proxy:-}
+        VITE_GUARDIAN_API_BASE: ${PUBLIC_EDGE_API_BASE:-http://192.168.10.64:8010}
     restart: unless-stopped
     depends_on:
-      - guardian-core
-    ports:
-      - "5173:80"
+      edge-mcp-server:
+        condition: service_healthy
+    environment:
+      GUARDIAN_API_BASE: ${PUBLIC_EDGE_API_BASE:-http://192.168.10.64:8010}
+    ports: ["${DASHBOARD_PUBLIC_PORT:-5173}:80"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     networks:
       guardian-net:
         ipv4_address: 172.30.0.30
@@ -131,22 +153,54 @@ services:
       dockerfile: deploy/docker/frontend.Dockerfile
       network: host
       args:
+        <<: *proxy-args
         APP_DIR: apps/elder-hmi
-        VITE_GUARDIAN_API_BASE: ${PUBLIC_GUARDIAN_API_BASE:-http://192.168.10.64:8000}
-        HTTP_PROXY: ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY: ${NO_PROXY:-}
-        http_proxy: ${http_proxy:-}
-        https_proxy: ${https_proxy:-}
-        no_proxy: ${no_proxy:-}
+        VITE_GUARDIAN_API_BASE: ${PUBLIC_EDGE_API_BASE:-http://192.168.10.64:8010}
     restart: unless-stopped
     depends_on:
-      - guardian-core
-    ports:
-      - "5174:80"
+      edge-mcp-server:
+        condition: service_healthy
+    environment:
+      GUARDIAN_API_BASE: ${PUBLIC_EDGE_API_BASE:-http://192.168.10.64:8010}
+    ports: ["${HMI_PUBLIC_PORT:-5174}:80"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     networks:
       guardian-net:
         ipv4_address: 172.30.0.31
+
+  background-mqtt:
+    build:
+      context: .
+      dockerfile: deploy/docker/background-mqtt.Dockerfile
+      network: host
+      args: *proxy-args
+    restart: unless-stopped
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      guardian-core:
+        condition: service_healthy
+    environment:
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      GUARDIAN_CORE_URL: http://guardian-core:8000
+      ELDER_ID: ${ELDER_ID:-elder_001}
+      BACKGROUND_MAX_RECORDS: ${BACKGROUND_MAX_RECORDS:-1000}
+    ports: ["${BACKGROUND_PUBLIC_PORT:-8090}:8090"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks:
+      guardian-net:
+        ipv4_address: 172.30.0.32
 
   wechat-adapter:
     build:
@@ -154,19 +208,22 @@ services:
       dockerfile: deploy/docker/python-app.Dockerfile
       network: host
       args:
+        <<: *proxy-args
         APP_DIR: apps/wechat-adapter
-        HTTP_PROXY: ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY: ${NO_PROXY:-}
-        http_proxy: ${http_proxy:-}
-        https_proxy: ${https_proxy:-}
-        no_proxy: ${no_proxy:-}
     restart: unless-stopped
+    depends_on:
+      guardian-core:
+        condition: service_healthy
     environment:
-      GUARDIAN_CORE_URL: http://172.30.0.20:8000
+      GUARDIAN_CORE_URL: http://guardian-core:8000
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8102"]
-    ports:
-      - "8102:8102"
+    ports: ["${WECHAT_PUBLIC_PORT:-8102}:8102"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8102/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     networks:
       guardian-net:
         ipv4_address: 172.30.0.40
@@ -177,23 +234,24 @@ services:
       dockerfile: deploy/docker/python-app.Dockerfile
       network: host
       args:
+        <<: *proxy-args
         APP_DIR: apps/vision-service
-        HTTP_PROXY: ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY: ${NO_PROXY:-}
-        http_proxy: ${http_proxy:-}
-        https_proxy: ${https_proxy:-}
-        no_proxy: ${no_proxy:-}
     restart: unless-stopped
     depends_on:
-      - mosquitto
+      mosquitto:
+        condition: service_healthy
     environment:
-      MQTT_HOST: 172.30.0.10
+      MQTT_HOST: mosquitto
       MQTT_PORT: 1883
       ELDER_ID: ${ELDER_ID:-elder_001}
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8101"]
-    ports:
-      - "8101:8101"
+    ports: ["${VISION_PUBLIC_PORT:-8101}:8101"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8101/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     networks:
       guardian-net:
         ipv4_address: 172.30.0.50
@@ -204,18 +262,14 @@ services:
       dockerfile: deploy/docker/python-app.Dockerfile
       network: host
       args:
+        <<: *proxy-args
         APP_DIR: apps/voice-hmi-service
-        HTTP_PROXY: ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY: ${NO_PROXY:-}
-        http_proxy: ${http_proxy:-}
-        https_proxy: ${https_proxy:-}
-        no_proxy: ${no_proxy:-}
     restart: unless-stopped
     depends_on:
-      - mosquitto
+      mosquitto:
+        condition: service_healthy
     environment:
-      MQTT_HOST: 172.30.0.10
+      MQTT_HOST: mosquitto
       MQTT_PORT: 1883
       ELDER_ID: ${ELDER_ID:-elder_001}
     command: ["python", "-m", "app.main", "--listen-only"]
