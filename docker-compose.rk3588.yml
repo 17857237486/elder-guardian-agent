@@ -6,6 +6,18 @@ x-proxy-args: &proxy-args
   https_proxy: ${https_proxy:-}
   no_proxy: ${no_proxy:-}
 
+x-service-hosts: &service-hosts
+  - "mosquitto:172.30.0.10"
+  - "guardian-core:172.30.0.20"
+  - "edge-mcp-server:172.30.0.21"
+  - "guardian-orchestrator:172.30.0.22"
+  - "web-dashboard:172.30.0.30"
+  - "elder-hmi:172.30.0.31"
+  - "background-mqtt:172.30.0.32"
+  - "wechat-adapter:172.30.0.40"
+  - "vision-service:172.30.0.50"
+  - "voice-hmi-service:172.30.0.51"
+
 services:
   mosquitto:
     image: eclipse-mosquitto:2
@@ -32,6 +44,7 @@ services:
       network: host
       args: *proxy-args
     restart: unless-stopped
+    extra_hosts: *service-hosts
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -66,6 +79,7 @@ services:
       network: host
       args: *proxy-args
     restart: unless-stopped
+    extra_hosts: *service-hosts
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -100,6 +114,7 @@ services:
       network: host
       args: *proxy-args
     restart: unless-stopped
+    extra_hosts: *service-hosts
     depends_on:
       edge-mcp-server:
         condition: service_healthy
@@ -131,6 +146,7 @@ services:
         APP_DIR: apps/web-dashboard
         VITE_GUARDIAN_API_BASE: ${PUBLIC_EDGE_API_BASE:-http://192.168.10.64:8010}
     restart: unless-stopped
+    extra_hosts: *service-hosts
     depends_on:
       edge-mcp-server:
         condition: service_healthy
@@ -157,6 +173,7 @@ services:
         APP_DIR: apps/elder-hmi
         VITE_GUARDIAN_API_BASE: ${PUBLIC_EDGE_API_BASE:-http://192.168.10.64:8010}
     restart: unless-stopped
+    extra_hosts: *service-hosts
     depends_on:
       edge-mcp-server:
         condition: service_healthy
@@ -180,6 +197,7 @@ services:
       network: host
       args: *proxy-args
     restart: unless-stopped
+    extra_hosts: *service-hosts
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -211,6 +229,7 @@ services:
         <<: *proxy-args
         APP_DIR: apps/wechat-adapter
     restart: unless-stopped
+    extra_hosts: *service-hosts
     depends_on:
       guardian-core:
         condition: service_healthy
@@ -237,6 +256,7 @@ services:
         <<: *proxy-args
         APP_DIR: apps/vision-service
     restart: unless-stopped
+    extra_hosts: *service-hosts
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -265,6 +285,7 @@ services:
         <<: *proxy-args
         APP_DIR: apps/voice-hmi-service
     restart: unless-stopped
+    extra_hosts: *service-hosts
     depends_on:
       mosquitto:
         condition: service_healthy

@@ -1,3 +1,15 @@
+x-service-hosts: &service-hosts
+  - "mosquitto:172.30.0.10"
+  - "guardian-core:172.30.0.20"
+  - "edge-mcp-server:172.30.0.21"
+  - "guardian-orchestrator:172.30.0.22"
+  - "web-dashboard:172.30.0.30"
+  - "elder-hmi:172.30.0.31"
+  - "background-mqtt:172.30.0.32"
+  - "wechat-adapter:172.30.0.40"
+  - "vision-service:172.30.0.50"
+  - "voice-hmi-service:172.30.0.51"
+
 services:
   mosquitto:
     image: eclipse-mosquitto:2
@@ -20,6 +32,7 @@ services:
   guardian-core:
     image: ${IMAGE_PREFIX}/guardian-core:${IMAGE_TAG:-latest}
     restart: unless-stopped
+    extra_hosts: *service-hosts
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -50,6 +63,7 @@ services:
   edge-mcp-server:
     image: ${IMAGE_PREFIX}/edge-mcp-server:${IMAGE_TAG:-latest}
     restart: unless-stopped
+    extra_hosts: *service-hosts
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -80,6 +94,7 @@ services:
   guardian-orchestrator:
     image: ${IMAGE_PREFIX}/guardian-orchestrator:${IMAGE_TAG:-latest}
     restart: unless-stopped
+    extra_hosts: *service-hosts
     depends_on:
       edge-mcp-server:
         condition: service_healthy
@@ -104,6 +119,7 @@ services:
   web-dashboard:
     image: ${IMAGE_PREFIX}/web-dashboard:${IMAGE_TAG:-latest}
     restart: unless-stopped
+    extra_hosts: *service-hosts
     depends_on:
       edge-mcp-server:
         condition: service_healthy
@@ -123,6 +139,7 @@ services:
   elder-hmi:
     image: ${IMAGE_PREFIX}/elder-hmi:${IMAGE_TAG:-latest}
     restart: unless-stopped
+    extra_hosts: *service-hosts
     depends_on:
       edge-mcp-server:
         condition: service_healthy
@@ -142,6 +159,7 @@ services:
   background-mqtt:
     image: ${IMAGE_PREFIX}/background-mqtt:${IMAGE_TAG:-latest}
     restart: unless-stopped
+    extra_hosts: *service-hosts
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -167,6 +185,7 @@ services:
   wechat-adapter:
     image: ${IMAGE_PREFIX}/wechat-adapter:${IMAGE_TAG:-latest}
     restart: unless-stopped
+    extra_hosts: *service-hosts
     depends_on:
       guardian-core:
         condition: service_healthy
@@ -187,6 +206,7 @@ services:
   vision-service:
     image: ${IMAGE_PREFIX}/vision-service:${IMAGE_TAG:-latest}
     restart: unless-stopped
+    extra_hosts: *service-hosts
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -209,6 +229,7 @@ services:
   voice-hmi-service:
     image: ${IMAGE_PREFIX}/voice-hmi-service:${IMAGE_TAG:-latest}
     restart: unless-stopped
+    extra_hosts: *service-hosts
     depends_on:
       mosquitto:
         condition: service_healthy
