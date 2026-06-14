@@ -16,12 +16,17 @@
 支持的插入事件：
 
 - `normal`：正常状态
-- `spo2_low`：血氧异常，低于 88% 触发 P0
+- `spo2_critical`：严重低血氧，低于 88% 触发 P0
+- `spo2_low`：低血氧，88%-91% 触发 P1
 - `heart_rate_abnormal`：心率异常，高于 130 bpm 触发 P1
+- `suspected_fall`：疑似跌倒，发布视觉事件并触发 P1
+- `long_static`：长时间静止，发布视觉事件并触发 P2
+- `night_abnormal_activity`：夜间异常活动，卧室持续无人 5 分钟触发 P2
 - `co2_high`：CO2 偏高，高于 1500 ppm 触发 P3
-- `gas_leak`：燃气泄漏，高于 100 ppm 触发 P0
+- `gas_leak`：燃气异常，高于 100 ppm 触发 P0
 - `temperature_high`：室温过高，达到 30°C 及以上触发 P3
 - `temperature_low`：室温过低，达到 16°C 及以下触发 P3
+- `humidity_abnormal`：湿度低于 25% 或高于 75% 触发 P3
 
 默认采样策略：每 5 秒生成 1 条样本，每个场景 2 分钟共 24 条。每条样本会拆成两条主系统标准 MQTT 消息：
 
@@ -96,6 +101,8 @@ http://localhost:8090
 ```text
 elder/+/sensor/vital
 elder/+/sensor/env
+elder/+/vision/event
+home/bedroom/presence_sensor/state
 ```
 
 所以你运行下面的场景发送脚本后，网页会逐条记录生命体征和环境数据：

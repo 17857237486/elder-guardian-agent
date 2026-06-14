@@ -813,12 +813,17 @@
               <label for="scenario-event">插入事件</label>
               <select id="scenario-event">
                 <option value="normal">正常状态</option>
-                <option value="spo2_low">血氧异常</option>
+                <option value="spo2_critical">严重低血氧</option>
+                <option value="spo2_low">低血氧</option>
                 <option value="heart_rate_abnormal">心率异常</option>
+                <option value="suspected_fall">疑似跌倒</option>
+                <option value="long_static">长时间静止</option>
+                <option value="night_abnormal_activity">夜间异常活动</option>
                 <option value="co2_high">CO2 偏高</option>
-                <option value="gas_leak" selected>燃气泄漏</option>
+                <option value="gas_leak" selected>燃气异常</option>
                 <option value="temperature_high">室温过高</option>
                 <option value="temperature_low">室温过低</option>
+                <option value="humidity_abnormal">湿度异常</option>
               </select>
             </div>
             <div class="timeline-field">
@@ -876,12 +881,17 @@
         <h2>手动输入数据</h2>
         <div class="template-grid" aria-label="事件模板">
           <button class="template-button active" type="button" data-template="normal">正常状态<br />P4 正常记录</button>
-          <button class="template-button" type="button" data-template="spo2_low">血氧异常<br />触发生命体征风险</button>
+          <button class="template-button" type="button" data-template="spo2_critical">严重低血氧<br />触发 P0 紧急风险</button>
+          <button class="template-button" type="button" data-template="spo2_low">低血氧<br />触发 P1 高风险</button>
           <button class="template-button" type="button" data-template="heart_rate_abnormal">心率异常<br />触发本地询问</button>
+          <button class="template-button" type="button" data-template="suspected_fall">疑似跌倒<br />触发 P1 视觉事件</button>
+          <button class="template-button" type="button" data-template="long_static">长时间静止<br />触发 P2 视觉事件</button>
+          <button class="template-button" type="button" data-template="night_abnormal_activity">夜间异常活动<br />卧室无人计时</button>
           <button class="template-button" type="button" data-template="co2_high">CO2 偏高<br />触发通风建议</button>
-          <button class="template-button" type="button" data-template="gas_leak">燃气泄漏<br />触发 P0 告警</button>
+          <button class="template-button" type="button" data-template="gas_leak">燃气异常<br />触发 P0 告警</button>
           <button class="template-button" type="button" data-template="temperature_high">室温过高<br />触发降温建议</button>
           <button class="template-button" type="button" data-template="temperature_low">室温过低<br />触发升温建议</button>
+          <button class="template-button" type="button" data-template="humidity_abnormal">湿度异常<br />触发 P3 环境事件</button>
         </div>
         <div class="template-note">
           <table>
@@ -1150,12 +1160,20 @@
           vital: { heart_rate: 78, spo2: 96, systolic_bp: 128, diastolic_bp: 80, body_temperature: 36.6 },
           env: { room: "living_room", temperature: 25.0, humidity: 50.0, co2_ppm: 900, gas_ppm: 0, smoke_ppm: 0 },
         },
-        spo2_low: {
-          name: "血氧异常",
+        spo2_critical: {
+          name: "严重低血氧",
           event: "spo2_low",
           risk: "P0",
           reason: "血氧低于 88%，guardian-core 的生命体征规则会进入紧急风险。",
           vital: { heart_rate: 88, spo2: 86, systolic_bp: 132, diastolic_bp: 82, body_temperature: 36.7 },
+          env: { room: "bedroom", temperature: 24.8, humidity: 52.0, co2_ppm: 900, gas_ppm: 0, smoke_ppm: 0 },
+        },
+        spo2_low: {
+          name: "低血氧",
+          event: "spo2_low",
+          risk: "P1",
+          reason: "血氧低于 92% 但不低于 88%，触发 P1 高风险确认。",
+          vital: { heart_rate: 88, spo2: 90, systolic_bp: 132, diastolic_bp: 82, body_temperature: 36.7 },
           env: { room: "bedroom", temperature: 24.8, humidity: 52.0, co2_ppm: 900, gas_ppm: 0, smoke_ppm: 0 },
         },
         heart_rate_abnormal: {
@@ -1166,6 +1184,30 @@
           vital: { heart_rate: 138, spo2: 95, systolic_bp: 145, diastolic_bp: 88, body_temperature: 36.8 },
           env: { room: "living_room", temperature: 25.5, humidity: 50.0, co2_ppm: 920, gas_ppm: 0, smoke_ppm: 0 },
         },
+        suspected_fall: {
+          name: "疑似跌倒",
+          event: "suspected_fall",
+          risk: "P1",
+          reason: "发布 suspected_fall 视觉事件；当前用于模拟外部一级视觉检测器的触发结果。",
+          vital: { heart_rate: 96, spo2: 95, systolic_bp: 132, diastolic_bp: 82, body_temperature: 36.7 },
+          env: { room: "living_room", temperature: 25.0, humidity: 50.0, co2_ppm: 900, gas_ppm: 0, smoke_ppm: 0 },
+        },
+        long_static: {
+          name: "长时间静止",
+          event: "long_static",
+          risk: "P2",
+          reason: "发布 long_static 视觉事件；当前用于模拟外部一级视觉检测器的触发结果。",
+          vital: { heart_rate: 78, spo2: 96, systolic_bp: 128, diastolic_bp: 80, body_temperature: 36.6 },
+          env: { room: "living_room", temperature: 25.0, humidity: 50.0, co2_ppm: 900, gas_ppm: 0, smoke_ppm: 0 },
+        },
+        night_abnormal_activity: {
+          name: "夜间异常活动",
+          event: "night_abnormal_activity",
+          risk: "P2",
+          reason: "发布卧室无人状态；仅在北京时间 22:00 至次日 06:00 持续 5 分钟后触发。",
+          vital: { heart_rate: 78, spo2: 96, systolic_bp: 128, diastolic_bp: 80, body_temperature: 36.6 },
+          env: { room: "bedroom", temperature: 24.0, humidity: 50.0, co2_ppm: 820, gas_ppm: 0, smoke_ppm: 0 },
+        },
         co2_high: {
           name: "CO2 偏高",
           event: "co2_high",
@@ -1175,7 +1217,7 @@
           env: { room: "living_room", temperature: 26.0, humidity: 55.0, co2_ppm: 1800, gas_ppm: 0, smoke_ppm: 0 },
         },
         gas_leak: {
-          name: "燃气泄漏",
+          name: "燃气异常",
           event: "gas_leak",
           risk: "P0",
           reason: "燃气浓度高于 100 ppm，安全红线会触发 P0；只允许开窗、关燃气阀、报警和通知家属。",
@@ -1197,6 +1239,14 @@
           reason: "室温达到 16°C 及以下，环境规则会触发 P3 并建议升温。",
           vital: { heart_rate: 76, spo2: 96, systolic_bp: 126, diastolic_bp: 78, body_temperature: 36.4 },
           env: { room: "bedroom", temperature: 15.0, humidity: 46.0, co2_ppm: 850, gas_ppm: 0, smoke_ppm: 0 },
+        },
+        humidity_abnormal: {
+          name: "湿度异常",
+          event: "humidity_abnormal",
+          risk: "P3",
+          reason: "湿度低于 25% 或高于 75%，触发 P3 环境风险事件。",
+          vital: { heart_rate: 78, spo2: 96, systolic_bp: 128, diastolic_bp: 80, body_temperature: 36.6 },
+          env: { room: "living_room", temperature: 25.0, humidity: 82.0, co2_ppm: 900, gas_ppm: 0, smoke_ppm: 0 },
         },
       };
 
@@ -1224,12 +1274,17 @@
 
       const eventExpectations = {
         normal: "保持基础场景曲线，预期为 P4 正常记录。",
-        spo2_low: "血氧在触发点前后平滑下降，低于 88% 后触发 spo2_low P0。",
+        spo2_critical: "血氧平滑下降到 88% 以下，触发 spo2_low P0。",
+        spo2_low: "血氧平滑下降到 88%-91%，触发 spo2_low P1。",
         heart_rate_abnormal: "心率在触发点前后升高，高于 130 bpm 后触发 heart_rate_abnormal P1。",
+        suspected_fall: "在触发点发布 suspected_fall 视觉事件，触发 P1；无关键帧时本地视觉模型会安全降级。",
+        long_static: "在触发点发布 long_static 视觉事件，触发 P2；用于模拟一级视觉检测器上报。",
+        night_abnormal_activity: "在触发点发布卧室无人状态；北京时间夜间持续 5 分钟后触发 P2。",
         co2_high: "CO2 在触发点前后升高，超过 1500 ppm 后触发 co2_high P3。",
         gas_leak: "燃气在触发点前后平滑升高，超过 100 ppm 后触发 gas_leak P0。",
         temperature_high: "室温在触发点前后升高，达到 30°C 及以上后触发 temperature_high P3。",
         temperature_low: "室温在触发点前后降低，达到 16°C 及以下后触发 temperature_low P3。",
+        humidity_abnormal: "湿度在触发点前后升高，超过 75% 后触发 humidity_abnormal P3。",
       };
 
       const $ = (id) => document.getElementById(id);
@@ -1523,6 +1578,9 @@
       function updateScenarioPreview() {
         const scene = $("scenario-scene").value;
         const eventType = $("scenario-event").value;
+        if (eventType === "night_abnormal_activity" && $("scenario-event-room").value !== "bedroom") {
+          $("scenario-event-room").value = "bedroom";
+        }
         const eventRoom = $("scenario-event-room").value;
         const triggerSecond = Number($("scenario-trigger").value);
         $("scenario-trigger-label").textContent = `第 ${triggerSecond} 秒`;
@@ -1537,13 +1595,14 @@
       }
 
       function buildScenarioPayload() {
+        const eventType = $("scenario-event").value;
         return {
           scene: $("scenario-scene").value,
-          event_type: $("scenario-event").value,
+          event_type: eventType,
           event_room: $("scenario-event-room").value,
           trigger_second: Number($("scenario-trigger").value),
           elder_id: $("scenario-elder").value.trim(),
-          duration_sec: 120,
+          duration_sec: eventType === "night_abnormal_activity" ? 360 : 120,
           interval_sec: 5,
           realtime: $("scenario-realtime").checked,
         };
@@ -1824,8 +1883,12 @@
         button.disabled = true;
         setSubmitStatus("template-submit-status", "提交中");
         try {
-          await postJson("/api/manual/vital", buildVitalPayload());
-          await postJson("/api/manual/env", buildEnvPayload());
+          const template = scenarioTemplates[state.activeTemplate];
+          await postJson("/api/manual/risk-event", {
+            event_type: state.activeTemplate,
+            elder_id: $("manual-vital-elder").value.trim(),
+            room: template.env.room,
+          });
           setSubmitStatus("template-submit-status", "已发送，等待 MQTT 回流", "ok");
           setSubmitStatus("vital-submit-status", "已发送，等待 MQTT 回流", "ok");
           setSubmitStatus("env-submit-status", "已发送，等待 MQTT 回流", "ok");

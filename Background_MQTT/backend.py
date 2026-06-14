@@ -22,12 +22,12 @@ sys.path.insert(0, str(ROOT / "packages" / "guardian-shared"))
 
 from Background_MQTT.generate_scenario_data import EVENT_LABELS, SCENE_LABELS, build_event_samples, to_standard_samples
 from guardian_shared.schemas import HomeDeviceState, SensorEnvSample, SensorVitalSample
-from guardian_shared.topics import elder_sensor_env, elder_sensor_vital, home_device_ack, home_device_state
+from guardian_shared.topics import elder_sensor_env, elder_sensor_vital, elder_vision_event, home_device_ack, home_device_state
 from guardian_shared.utils import model_to_json
 
 MQTT_HOST = os.getenv("BACKGROUND_MQTT_HOST", os.getenv("MQTT_HOST", "localhost"))
 MQTT_PORT = int(os.getenv("BACKGROUND_MQTT_PORT", os.getenv("MQTT_PORT", "1883")))
-MQTT_TOPICS = ("elder/+/sensor/vital", "elder/+/sensor/env", "home/+/+/set", "home/+/+/state", "home/+/+/ack")
+MQTT_TOPICS = ("elder/+/sensor/vital", "elder/+/sensor/env", "elder/+/vision/event", "home/+/+/set", "home/+/+/state", "home/+/+/ack")
 GUARDIAN_CORE_URL = os.getenv("GUARDIAN_CORE_URL", "http://localhost:8000").rstrip("/")
 ELDER_ID = os.getenv("ELDER_ID", "elder_001")
 MAX_RECORDS = int(os.getenv("BACKGROUND_MAX_RECORDS", "1000"))
@@ -99,6 +99,12 @@ class DeviceCommandRequest(BaseModel):
     reason: str = "Background MQTT dashboard control"
 
 
+class ManualRiskEventRequest(BaseModel):
+    event_type: str
+    elder_id: str = "elder_001"
+    room: str = "living_room"
+
+
 DEFAULT_DEVICES: list[dict[str, Any]] = [
     {"room": "bedroom", "device": "air_conditioner", "state": "off", "value": None},
     {"room": "bedroom", "device": "fan", "state": "off", "value": None},
@@ -130,6 +136,8 @@ def topic_kind(topic: str) -> str:
         return "vital"
     if topic.endswith("/sensor/env"):
         return "env"
+    if topic.endswith("/vision/event"):
+        return "vision"
     if topic.endswith("/set"):
         return "device_set"
     if topic.endswith("/state"):
@@ -450,6 +458,75 @@ def publish_sample_pair(sample: dict[str, Any]) -> int:
     return 2
 
 
+def publish_risk_signal(event_type: str, elder_id: str, room: str) -> int:
+    ensure_mqtt_connected()
+    if event_type == "normal":
+        publish_json(
+            home_device_state("bedroom", "presence_sensor"),
+            {
+                "elder_id": elder_id,
+                "room": "bedroom",
+                "device": "presence_sensor",
+                "present": True,
+                "state": "present",
+                "online": True,
+                "timestamp": utc_now(),
+            },
+        )
+        return 1
+    if event_type in {"suspected_fall", "long_static"}:
+        publish_json(
+            elder_vision_event(elder_id),
+            {
+                "elder_id": elder_id,
+                "room": room,
+                "event_type": event_type,
+                "confidence": 0.92 if event_type == "suspected_fall" else 0.78,
+                "posture": "lying" if event_type == "suspected_fall" else "unknown",
+                "motion_state": "static",
+                "timestamp": utc_now(),
+            },
+        )
+        return 1
+    if event_type == "night_abnormal_activity":
+        publish_json(
+            home_device_state("bedroom", "presence_sensor"),
+            {
+                "elder_id": elder_id,
+                "room": "bedroom",
+                "device": "presence_sensor",
+                "present": False,
+                "state": "absent",
+                "online": True,
+                "timestamp": utc_now(),
+            },
+        )
+        return 1
+    return 0
+
+
+def manual_risk_samples(event_type: str, elder_id: str, room: str) -> tuple[SensorVitalSample, SensorEnvSample]:
+    vital = {"heart_rate": 78, "spo2": 96, "systolic_bp": 128, "diastolic_bp": 80, "body_temperature": 36.6}
+    env = {"temperature": 25.0, "humidity": 50.0, "co2_ppm": 900, "gas_ppm": 0, "smoke_ppm": 0}
+    if event_type == "spo2_critical":
+        vital.update(heart_rate=88, spo2=86)
+    elif event_type == "spo2_low":
+        vital.update(heart_rate=88, spo2=90)
+    elif event_type == "heart_rate_abnormal":
+        vital.update(heart_rate=138)
+    elif event_type == "co2_high":
+        env.update(co2_ppm=1800)
+    elif event_type == "gas_leak":
+        env.update(gas_ppm=180)
+    elif event_type == "temperature_high":
+        env.update(temperature=31.0)
+    elif event_type == "temperature_low":
+        env.update(temperature=15.0)
+    elif event_type == "humidity_abnormal":
+        env.update(humidity=82.0)
+    return SensorVitalSample(elder_id=elder_id, **vital), SensorEnvSample(elder_id=elder_id, room=room, **env)
+
+
 def scenario_status_snapshot() -> dict[str, Any]:
     return dict(scenario_job)
 
@@ -585,6 +662,7 @@ async def sleep_until_next_sample(interval_sec: int) -> None:
 
 
 async def run_scenario_job(request: ScenarioPublishRequest, samples: list[dict[str, Any]]) -> None:
+    signal_published = False
     try:
         for index, sample in enumerate(samples):
             if scenario_job["stop_requested"]:
@@ -592,6 +670,9 @@ async def run_scenario_job(request: ScenarioPublishRequest, samples: list[dict[s
                 break
             adjust_scenario_temperature(sample)
             scenario_job["published_messages"] += publish_sample_pair(sample)
+            if not signal_published and int(sample.get("time_offset_sec", 0)) >= request.trigger_second:
+                scenario_job["published_messages"] += publish_risk_signal(request.event_type, request.elder_id, request.event_room)
+                signal_published = True
             scenario_job["sent_samples"] += 1
             if request.realtime and index < len(samples) - 1:
                 await sleep_until_next_sample(request.interval_sec)
@@ -793,6 +874,19 @@ async def submit_manual_vital(sample: SensorVitalSample) -> dict[str, Any]:
 async def submit_manual_env(sample: SensorEnvSample) -> dict[str, Any]:
     publish_model(elder_sensor_env(sample.elder_id), sample)
     return {"ok": True, "kind": "env", "elder_id": sample.elder_id}
+
+
+@app.post("/api/manual/risk-event")
+async def submit_manual_risk_event(request: ManualRiskEventRequest) -> dict[str, Any]:
+    if request.event_type not in EVENT_LABELS:
+        raise HTTPException(status_code=422, detail=f"unknown event_type: {request.event_type}")
+    if request.room not in ROOM_KEYS:
+        raise HTTPException(status_code=422, detail=f"unknown room: {request.room}")
+    vital, env = manual_risk_samples(request.event_type, request.elder_id, request.room)
+    publish_model(elder_sensor_vital(request.elder_id), vital)
+    publish_model(elder_sensor_env(request.elder_id), env)
+    messages = 2 + publish_risk_signal(request.event_type, request.elder_id, request.room)
+    return {"ok": True, "event_type": request.event_type, "elder_id": request.elder_id, "messages": messages}
 
 
 @app.websocket("/ws")

@@ -31,12 +31,17 @@ SCENE_LABELS = {
 
 EVENT_LABELS = {
     "normal": "正常状态",
-    "spo2_low": "血氧异常",
+    "spo2_critical": "严重低血氧",
+    "spo2_low": "低血氧",
     "heart_rate_abnormal": "心率异常",
+    "suspected_fall": "疑似跌倒",
+    "long_static": "长时间静止",
+    "night_abnormal_activity": "夜间异常活动",
     "co2_high": "CO2 偏高",
-    "gas_leak": "燃气泄漏",
+    "gas_leak": "燃气异常",
     "temperature_high": "室温过高",
     "temperature_low": "室温过低",
+    "humidity_abnormal": "湿度异常",
 }
 
 ROOM_KEYS = ("bedroom", "kitchen", "living_room", "bathroom")
@@ -284,8 +289,6 @@ def scenario_sample(
 def classify_hint(scene: str, heart_rate: int, spo2: int, env: dict[str, Any], motion_state: str) -> dict[str, str]:
     if env["gas_ppm"] >= 100:
         return {"level": "P0", "reason": "燃气浓度达到紧急阈值。"}
-    if env.get("smoke_ppm", 0) >= 80:
-        return {"level": "P0", "reason": "烟雾浓度达到紧急阈值。"}
     if spo2 < 88:
         return {"level": "P0", "reason": "血氧低于 88%，属于紧急风险。"}
     if spo2 < 92:
@@ -341,9 +344,11 @@ def inject_event(
         env.setdefault("occupant_room", env.get("room"))
         env.setdefault("life_scene", sample["scene"])
         env["room"] = event_room
-        if event_type == "spo2_low":
+        if event_type == "spo2_critical":
             vital["spo2"] = round(lerp(vital["spo2"], 86, intensity))
             vital["heart_rate"] = round(lerp(vital["heart_rate"], max(vital["heart_rate"], 92), intensity))
+        elif event_type == "spo2_low":
+            vital["spo2"] = round(lerp(vital["spo2"], 90, intensity))
         elif event_type == "heart_rate_abnormal":
             vital["heart_rate"] = round(lerp(vital["heart_rate"], 138, intensity))
             vital["systolic_bp"] = round(lerp(vital["systolic_bp"], 145, intensity))
@@ -360,6 +365,8 @@ def inject_event(
             env["co2_ppm"] = round(lerp(env["co2_ppm"], max(env["co2_ppm"], 1000), intensity))
         elif event_type == "temperature_low":
             env["temperature"] = round(lerp(env["temperature"], 15.0, intensity), 1)
+        elif event_type == "humidity_abnormal":
+            env["humidity"] = round(lerp(env["humidity"], 82.0, intensity), 1)
 
         sample["risk_hint"] = classify_hint(
             sample["scene"],

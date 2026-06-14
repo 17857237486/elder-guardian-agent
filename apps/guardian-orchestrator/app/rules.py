@@ -15,14 +15,13 @@ def classify_observation(observation: dict[str, Any]) -> NormalizedEventV2 | Non
         return None
     if kind == "environment":
         gas_ppm = int(payload.get("gas_ppm") or 0)
-        smoke_ppm = int(payload.get("smoke_ppm") or 0)
         co2_ppm = int(payload.get("co2_ppm") or 0)
         temperature_raw = payload.get("temperature")
         temperature = float(temperature_raw) if temperature_raw is not None else None
         humidity = float(payload.get("humidity") or 0)
         room = payload.get("room") or "living_room"
         trace = {"payload": payload, "observation_id": observation_id}
-        if gas_ppm >= 100 or smoke_ppm >= 80:
+        if gas_ppm >= 100:
             return NormalizedEventV2(
                 elder_id=elder_id,
                 event_type=EventType.GAS_LEAK,
@@ -30,7 +29,7 @@ def classify_observation(observation: dict[str, Any]) -> NormalizedEventV2 | Non
                 risk_score=1.0,
                 state=EventState.RULE_CLASSIFIED,
                 room=room,
-                summary=f"{room} 检测到燃气/烟雾异常，直接进入 P0。",
+                summary=f"{room} 检测到燃气异常，直接进入 P0。",
                 trigger_observation_ids=[observation_id] if observation_id else [],
                 rule_trace=trace,
             )

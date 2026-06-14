@@ -188,7 +188,7 @@
 | 血氧异常 `spo2_low` | 模拟血氧持续下降，同时心率因不适略升高 | `spo2 -> 86%`，`heart_rate -> 至少 92 bpm` | 血氧 `<88%`，触发 P0 |
 | 心率异常 `heart_rate_abnormal` | 模拟明显心率升高，并带动血压升高 | `heart_rate -> 138 bpm`，`systolic_bp -> 145`，`diastolic_bp -> 88` | 心率 `>130 bpm`，触发 P1 |
 | CO2 偏高 `co2_high` | 模拟室内通风不足，CO2 平滑升高 | `co2_ppm -> 1800 ppm`，湿度至少 55% | CO2 `>=1500 ppm`，触发 P3 |
-| 燃气泄漏 `gas_leak` | 模拟厨房燃气浓度持续升高 | `room -> kitchen`，`gas_ppm -> 180 ppm`，`heart_rate -> 至少 92 bpm` | 燃气 `>=100 ppm`，触发 P0 |
+| 燃气异常 `gas_leak` | 模拟厨房燃气浓度持续升高 | `room -> kitchen`，`gas_ppm -> 180 ppm`，`heart_rate -> 至少 92 bpm` | 燃气 `>=100 ppm`，触发 P0 |
 | 室温过高 `temperature_high` | 模拟室温持续升高 | `temperature -> 31.0°C`，CO2 至少 1000 ppm | 温度 `>=30°C`，触发 P3 |
 | 室温过低 `temperature_low` | 模拟室温持续下降 | `temperature -> 15.0°C` | 温度 `<=16°C`，触发 P3 |
 

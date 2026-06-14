@@ -40,6 +40,17 @@ class RuleTests(unittest.TestCase):
             observation.update({"observation_id": f"obs-{index}", "elder_id": "elder_001"})
             self.assertIsNone(rules.classify_observation(observation))
 
+    def test_smoke_alone_does_not_trigger_gas_event(self) -> None:
+        event = rules.classify_observation(
+            {
+                "observation_id": "obs-smoke",
+                "elder_id": "elder_001",
+                "kind": "environment",
+                "payload": {"room": "kitchen", "gas_ppm": 0, "smoke_ppm": 120},
+            }
+        )
+        self.assertIsNone(event)
+
 
 if __name__ == "__main__":
     unittest.main()
