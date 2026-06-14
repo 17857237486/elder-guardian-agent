@@ -74,6 +74,25 @@ class LLMClientParserTests(unittest.TestCase):
         with self.assertRaises(LLMOutputError):
             _normalize_multimodal_output({"event": {"risk_level": "P1"}}, output)
 
+    def test_multimodal_template_echo_is_unwrapped(self) -> None:
+        nested = {
+            "event_semantics": "fall detected",
+            "risk_level": "P1",
+            "confidence": 0.8,
+            "temporal_changes": ["standing to lying"],
+            "supporting_evidence": ["horizontal posture"],
+            "contradictions": [],
+            "missing_information": [],
+            "recommended_followup": ["check elder"],
+            "family_summary": "possible fall",
+        }
+        normalized = _normalize_multimodal_output(
+            {"event": {"risk_level": "P1"}},
+            {"event": {"event_type": "suspected_fall"}, "output_template": nested},
+        )
+        self.assertEqual(normalized["event_semantics"], "fall detected")
+        self.assertEqual(normalized["confidence"], 0.8)
+
     def test_local_uses_one_contact_sheet_and_cloud_uses_individual_frames(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -90,7 +109,7 @@ class LLMClientParserTests(unittest.TestCase):
 
             self.assertEqual(sum(item["type"] == "image_url" for item in local_content), 1)
             self.assertEqual(sum(item["type"] == "image_url" for item in cloud_content), 5)
-            self.assertIn('"confidence": 0.8', local_content[0]["text"])
+            self.assertIn('"confidence":0.8', local_content[0]["text"])
             self.assertIn("confidence must be a number", local_content[0]["text"])
 
 

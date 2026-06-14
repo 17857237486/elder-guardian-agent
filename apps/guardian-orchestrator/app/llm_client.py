@@ -292,6 +292,9 @@ def _image_data_url(path: Path) -> str:
 
 
 def _normalize_multimodal_output(payload: dict[str, Any], output: dict[str, Any]) -> dict[str, Any]:
+    nested = output.get("output_template")
+    if isinstance(nested, dict) and MULTIMODAL_REQUIRED_FIELDS.issubset(nested):
+        output = nested
     missing = sorted(MULTIMODAL_REQUIRED_FIELDS - output.keys())
     if missing:
         raise LLMOutputError(f"multimodal output missing required fields: {', '.join(missing)}")
@@ -310,6 +313,53 @@ def _normalize_multimodal_output(payload: dict[str, Any], output: dict[str, Any]
         value = normalized.get(field)
         normalized[field] = value if isinstance(value, list) else ([] if value is None else [str(value)])
     return normalized
+
+
+def _compact_local_case(event: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    rule_payload = event.get("rule_trace", {}).get("payload", {}) if isinstance(event.get("rule_trace"), dict) else {}
+    compact_event = {
+        "event_type": event.get("event_type"),
+        "rule_risk_level": event.get("rule_risk_level") or event.get("risk_level"),
+        "room": event.get("room"),
+        "summary": event.get("summary"),
+        "detector_confidence": event.get("confidence"),
+        "posture": rule_payload.get("posture"),
+        "motion_state": rule_payload.get("motion_state"),
+    }
+    sensor_keys = {
+        "heart_rate",
+        "spo2",
+        "temperature",
+        "humidity",
+        "co2_ppm",
+        "gas_ppm",
+        "smoke_ppm",
+        "room",
+        "present",
+        "device",
+        "state",
+    }
+    sensor_wrapper = context.get("sensors", {})
+    observations = sensor_wrapper.get("observations", []) if isinstance(sensor_wrapper, dict) else []
+    sensor_evidence = []
+    for observation in observations[:5]:
+        if not isinstance(observation, dict):
+            continue
+        raw_payload = observation.get("payload", {})
+        compact_payload = (
+            {key: raw_payload[key] for key in sensor_keys if key in raw_payload}
+            if isinstance(raw_payload, dict)
+            else {}
+        )
+        sensor_evidence.append({"kind": observation.get("kind"), "payload": compact_payload})
+    device_wrapper = context.get("devices", {})
+    devices = device_wrapper.get("devices", []) if isinstance(device_wrapper, dict) else []
+    device_states = [
+        {key: device.get(key) for key in ("room", "device", "state", "value") if key in device}
+        for device in devices[:8]
+        if isinstance(device, dict)
+    ]
+    return {"event": compact_event, "sensor_evidence": sensor_evidence, "device_states": device_states}
 
 
 def build_local_multimodal_content(
@@ -334,9 +384,10 @@ def build_local_multimodal_content(
         "event_semantics and family_summary must be strings; confidence must be a number from 0 to 1; "
         "the other evidence fields must be arrays of short strings. Use at most two items per array.\n"
         + json.dumps(
-            {"output_template": output_template, "event": event, "context": _compact_value(context)},
+            {"output_template": output_template, **_compact_local_case(event, context)},
             ensure_ascii=False,
             default=str,
+            separators=(",", ":"),
         )
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
