@@ -26,6 +26,19 @@ async def handle_observation(observation: dict[str, Any]) -> dict[str, Any]:
     event = classify_observation(observation)
     if event is None:
         return {"ok": True, "triggered": False}
+    payload = observation.get("payload") if isinstance(observation.get("payload"), dict) else {}
+    evidence = [{"kind": observation.get("kind"), "observation_id": observation.get("observation_id"), "payload": payload}]
+    event = event.model_copy(
+        update={
+            "source_kind": observation.get("kind"),
+            "evidence": evidence,
+            "frame_set_id": payload.get("frame_set_id"),
+            "rule_risk_level": event.risk_level,
+            "local_risk_level": event.risk_level,
+            "final_risk_level": event.risk_level,
+            "confidence": max(event.confidence, event.risk_score, float(payload.get("confidence") or 0)),
+        }
+    )
     result = await runner.run(event)
     return {"ok": True, "triggered": True, **result}
 

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from datetime import datetime, timezone
+from time import perf_counter
+from pathlib import Path
 from typing import Any
 
 from guardian_shared.enums import DeviceAction, DeviceType, EventType, RiskLevel
@@ -19,16 +23,22 @@ from guardian_shared.v2 import (
 
 from app.config import settings
 from app.edge_client import EdgeClient
-from app.llm_client import StepLLMClient
+from app.llm_client import CloudLLMClient, LocalMultimodalClient
 
 
 logger = logging.getLogger(__name__)
+RISK_ORDER = {"P4": 0, "P3": 1, "P2": 2, "P1": 3, "P0": 4}
+
+
+def risk_text(value: Any) -> str:
+    return str(value).split(".")[-1].upper()
 
 
 class WorkflowRunner:
     def __init__(self) -> None:
         self.edge = EdgeClient()
-        self.llm = StepLLMClient()
+        self.local_llm = LocalMultimodalClient()
+        self.cloud_llm = CloudLLMClient()
         self.llm_semaphore = asyncio.Semaphore(settings.llm_max_concurrent_workflows)
 
     async def run(self, event: NormalizedEventV2) -> dict[str, Any]:
@@ -43,130 +53,199 @@ class WorkflowRunner:
         await self.edge.create_workflow(workflow)
         await self._record_step(workflow, event, "rule_gate", {"event": saved_event}, {"accepted": True})
 
-        if event.risk_level == RiskLevel.P0:
-            execution = await self._execute_p0(workflow, event)
-            return {"event": saved_event, "workflow_id": workflow.workflow_id, "execution": execution}
+        if risk_text(event.risk_level) == "P0":
+            baseline = await self._execute_p0(workflow, event)
+        else:
+            baseline = await self._execute_policy(workflow, event, {"source": "rule_first_baseline"})
 
-        baseline_execution = await self._execute_non_p0(
-            workflow,
-            event,
-            {
-                "summary": event.summary,
-                "source": "rule_first_baseline",
-                "reason": "Qwen3.5-4B 延迟和结构化输出稳定性不足，非 P0 先按规则/HMI 完成安全闭环。",
-            },
-        )
-        self._schedule_llm_chain(workflow, event, saved_event, baseline_execution)
+        task = asyncio.create_task(self._run_analysis(workflow, event, saved_event, baseline))
+        task.add_done_callback(self._log_background_task_result)
         return {
             "event": saved_event,
             "workflow_id": workflow.workflow_id,
-            "execution": baseline_execution,
-            "llm_chain": {"status": "queued"},
+            "execution": baseline,
+            "analysis": {"status": "queued"},
         }
-
-    def _schedule_llm_chain(
-        self,
-        workflow: WorkflowV2,
-        event: NormalizedEventV2,
-        saved_event: dict[str, Any],
-        baseline_execution: dict[str, Any],
-    ) -> None:
-        task = asyncio.create_task(self._run_llm_chain(workflow, event, saved_event, baseline_execution))
-        task.add_done_callback(self._log_background_task_result)
 
     def _log_background_task_result(self, task: asyncio.Task[Any]) -> None:
         try:
             task.result()
         except asyncio.CancelledError:
-            logger.info("LLM chain task cancelled")
+            logger.info("analysis task cancelled")
         except Exception:
-            logger.exception("LLM chain task failed")
+            logger.exception("three-level analysis failed")
 
-    async def _run_llm_chain(
+    async def _run_analysis(
         self,
         workflow: WorkflowV2,
         event: NormalizedEventV2,
         saved_event: dict[str, Any],
-        baseline_execution: dict[str, Any],
+        baseline: dict[str, Any],
     ) -> None:
         async with self.llm_semaphore:
             try:
                 await asyncio.wait_for(
-                    self._run_llm_chain_inner(workflow, event, saved_event, baseline_execution),
+                    self._run_analysis_inner(workflow, event, saved_event, baseline),
                     timeout=settings.llm_chain_timeout_sec,
                 )
             except TimeoutError:
                 await self._record_step(
                     workflow,
                     event,
-                    "llm_chain_timeout",
+                    "analysis_timeout",
                     {"event": saved_event},
-                    {
-                        "fallback": True,
-                        "summary": f"LLM 多步分析链超过 {settings.llm_chain_timeout_sec} 秒，安全闭环已由规则完成。",
-                        "error": "llm_chain_timeout",
-                    },
+                    {"fallback": True, "final_risk_level": risk_text(event.risk_level)},
                 )
 
-    async def _run_llm_chain_inner(
+    async def _run_analysis_inner(
         self,
         workflow: WorkflowV2,
         event: NormalizedEventV2,
         saved_event: dict[str, Any],
-        baseline_execution: dict[str, Any],
+        baseline: dict[str, Any],
     ) -> None:
-        context = await self.edge.get_recent_sensor_context(event.elder_id, limit=8)
+        manifest, contact_sheet, image_paths = await self._collect_frames(event)
+        await self._record_step(
+            workflow,
+            event,
+            "frame_collection",
+            {"frame_set_id": event.frame_set_id},
+            manifest or {"status": "not_applicable"},
+        )
+
+        sensors = await self.edge.get_recent_sensor_context(event.elder_id, limit=30)
         devices = await self.edge.get_home_device_snapshot(event.elder_id)
-        context_output = await self._llm_step(
-            step_name="context_fetch_conversation",
-            instruction="只整理当前事件需要的传感器、历史和设备上下文，不做风险决策，不生成动作。",
-            payload={"event": saved_event, "context": context, "devices": devices},
-        )
-        await self._record_step(workflow, event, "context_fetch_conversation", {"event": saved_event}, context_output)
+        context = {"sensors": sensors, "devices": devices}
+        await self._record_step(workflow, event, "local_context_fusion", {"event": saved_event}, context)
 
-        fusion_output = await self._llm_step(
-            step_name="sensor_fusion_conversation",
-            instruction="把当前事件和上下文整理为事实摘要，只列出支持/矛盾/缺失信息，不生成动作。",
-            payload={"event": saved_event, "context": context_output},
+        local_started = perf_counter()
+        try:
+            local = await self.local_llm.analyze(event=saved_event, context=context, contact_sheet=contact_sheet)
+        except Exception as exc:
+            local = self._fallback_result(event, str(exc))
+        local["latency_ms"] = round((perf_counter() - local_started) * 1000, 1)
+        await self._record_step(
+            workflow,
+            event,
+            "local_multiframe_analysis",
+            {"event": saved_event, "manifest": manifest},
+            local,
         )
-        await self._record_step(workflow, event, "sensor_fusion_conversation", context_output, fusion_output)
 
-        decision_output = await self._llm_step(
-            step_name="risk_decision_conversation",
-            instruction="只做风险复盘和后续观察建议。不得降低规则风险等级，不得输出设备控制命令或 MQTT 指令。",
-            payload={"event": saved_event, "fusion": fusion_output, "baseline_execution": baseline_execution},
-        )
-        await self._record_step(workflow, event, "risk_decision_conversation", fusion_output, decision_output)
+        rule_risk = risk_text(event.risk_level)
+        local_risk = self._higher_risk(rule_risk, risk_text(local.get("risk_level", rule_risk)))
+        local_execution: dict[str, Any] = {"status": "baseline_retained", "baseline": baseline}
+        if RISK_ORDER[local_risk] > RISK_ORDER[rule_risk]:
+            escalated = event.model_copy(
+                update={"risk_level": local_risk, "summary": local.get("event_semantics", event.summary)}
+            )
+            local_execution = await self._execute_policy(workflow, escalated, local)
+        await self._record_step(workflow, event, "local_policy_execution", local, local_execution)
 
-        advisory_output = await self._llm_step(
-            step_name="advisory_conversation",
-            instruction=(
-                "只基于已完成的规则处置生成复盘解释、家属可读摘要和后续观察建议。"
-                "不得修改风险等级，不得新增设备控制命令，不得取消已触发的 HMI 或告警。"
-            ),
-            payload={"event": saved_event, "decision": decision_output, "baseline_execution": baseline_execution},
+        cloud: dict[str, Any] = {"status": "not_required"}
+        if local_risk in {"P0", "P1", "P2"}:
+            cloud_started = perf_counter()
+            cloud = await self.cloud_llm.review(
+                event={**saved_event, "risk_level": local_risk},
+                local_result=local,
+                context=context,
+                image_paths=image_paths if risk_text(event.source_kind) == "VISION" and len(image_paths) >= 3 else [],
+            )
+            cloud["latency_ms"] = round((perf_counter() - cloud_started) * 1000, 1)
+        await self._record_step(workflow, event, "cloud_review", local, cloud)
+
+        cloud_risk = risk_text(cloud["risk_level"]) if cloud.get("status") == "completed" else None
+        final_risk = self._higher_risk(local_risk, cloud_risk) if cloud_risk else local_risk
+        if cloud_risk and RISK_ORDER[final_risk] > RISK_ORDER[local_risk]:
+            escalated = event.model_copy(
+                update={"risk_level": final_risk, "summary": cloud.get("event_semantics", event.summary)}
+            )
+            await self._execute_policy(workflow, escalated, cloud)
+
+        image_refs = manifest.get("image_refs", []) if manifest else []
+        summary = cloud.get("family_summary") or local.get("family_summary") or event.summary
+        await self.edge.update_event_analysis(
+            event.event_id,
+            {
+                "local_risk_level": local_risk,
+                "cloud_risk_level": cloud_risk,
+                "final_risk_level": final_risk,
+                "decision_source": (
+                    "cloud" if cloud_risk and final_risk == cloud_risk else "local" if local_risk != rule_risk else "rule"
+                ),
+                "confidence": max(event.confidence, float(local.get("confidence", 0))),
+                "image_refs": image_refs,
+                "frame_set_id": event.frame_set_id,
+                "summary": summary,
+            },
         )
         await self._record_step(
             workflow,
             event,
-            "advisory_conversation",
-            {"event": saved_event, "decision": decision_output, "baseline_execution": baseline_execution},
-            advisory_output,
+            "final_advisory",
+            {"local": local, "cloud": cloud},
+            {"final_risk_level": final_risk, "family_summary": summary},
         )
 
+    async def _collect_frames(
+        self, event: NormalizedEventV2
+    ) -> tuple[dict[str, Any] | None, Path | None, list[Path]]:
+        if risk_text(event.source_kind) != "VISION" or not event.frame_set_id:
+            return None, None, []
+        root = Path(settings.snapshot_root)
+        deadline = asyncio.get_running_loop().time() + settings.vision_frame_wait_sec
+        manifest_path: Path | None = None
+        while asyncio.get_running_loop().time() < deadline:
+            matches = list(root.glob(f"*/*/*/*/{event.frame_set_id}/manifest.json"))
+            if matches:
+                manifest_path = matches[0]
+                break
+            await asyncio.sleep(0.25)
+        if manifest_path is None:
+            return {"frame_set_id": event.frame_set_id, "status": "timeout", "frames": []}, None, []
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        contact_sheet = root / manifest["contact_sheet_path"]
+        image_paths = [
+            root / frame["relative_path"]
+            for frame in manifest.get("frames", [])
+            if not frame.get("missing") and frame.get("relative_path")
+        ]
+        return manifest, contact_sheet, image_paths
+
+    @staticmethod
+    def _higher_risk(first: str, second: str | None) -> str:
+        if not second or second not in RISK_ORDER:
+            return first
+        return second if RISK_ORDER[second] > RISK_ORDER[first] else first
+
+    @staticmethod
+    def _fallback_result(event: NormalizedEventV2, error: str) -> dict[str, Any]:
+        return {
+            "fallback": True,
+            "error": error,
+            "event_semantics": event.summary,
+            "risk_level": risk_text(event.risk_level),
+            "confidence": event.confidence,
+            "temporal_changes": [],
+            "supporting_evidence": [],
+            "contradictions": [],
+            "missing_information": ["local model unavailable"],
+            "recommended_followup": [],
+            "family_summary": event.summary,
+        }
+
     async def _execute_p0(self, workflow: WorkflowV2, event: NormalizedEventV2) -> dict[str, Any]:
-        commands: list[ActionCommandV2] = []
         if str(event.event_type) == EventType.GAS_LEAK.value:
             commands = [
                 ActionCommandV2(room="living_room", device=DeviceType.WINDOW, action=DeviceAction.OPEN, reason="燃气泄漏，打开窗户。"),
-                ActionCommandV2(room="kitchen", device=DeviceType.GAS_VALVE, action=DeviceAction.CLOSE, reason="燃气泄漏，关闭燃气阀门。"),
+                ActionCommandV2(room="kitchen", device=DeviceType.GAS_VALVE, action=DeviceAction.CLOSE, reason="燃气泄漏，关闭燃气阀。"),
                 ActionCommandV2(room="local", device=DeviceType.LOCAL_ALARM, action=DeviceAction.ALARM_ON, reason="燃气泄漏，启动本地报警。"),
             ]
         else:
             commands = [
-                ActionCommandV2(room="local", device=DeviceType.LOCAL_ALARM, action=DeviceAction.ALARM_ON, reason="P0 紧急风险，启动本地报警。")
+                ActionCommandV2(room="local", device=DeviceType.LOCAL_ALARM, action=DeviceAction.ALARM_ON, reason="P0 紧急风险。")
             ]
-        action_result = await self.edge.request_home_action(
+        action = await self.edge.request_home_action(
             ActionRequestV2(
                 workflow_id=workflow.workflow_id,
                 event_id=event.event_id,
@@ -176,7 +255,7 @@ class WorkflowRunner:
                 priority=RiskLevel.P0,
             )
         )
-        alert_result = await self.edge.raise_family_alert(
+        alert = await self.edge.raise_family_alert(
             AlertRequestV2(
                 workflow_id=workflow.workflow_id,
                 event_id=event.event_id,
@@ -185,85 +264,60 @@ class WorkflowRunner:
                 message=f"紧急告警：{event.summary}",
             )
         )
-        await self._record_step(workflow, event, "action_request_conversation", {"event": event.model_dump(mode="json")}, {"action": action_result, "alert": alert_result})
-        return {"action": action_result, "alert": alert_result}
+        return {"action": action, "alert": alert}
 
-    async def _llm_step(self, *, step_name: str, instruction: str, payload: dict[str, Any]) -> dict[str, Any]:
-        try:
-            return await self.llm.run_step(step_name=step_name, instruction=instruction, payload=payload)
-        except Exception as exc:
-            return {
-                "step_name": step_name,
-                "fallback": True,
-                "error": str(exc),
-                "summary": f"{step_name} 失败，按规则保守降级继续闭环。",
-            }
-
-    async def _execute_non_p0(self, workflow: WorkflowV2, event: NormalizedEventV2, decision: dict[str, Any]) -> dict[str, Any]:
-        if event.risk_level == RiskLevel.P3 and str(event.event_type) == EventType.CO2_HIGH.value:
+    async def _execute_policy(
+        self, workflow: WorkflowV2, event: NormalizedEventV2, decision: dict[str, Any]
+    ) -> dict[str, Any]:
+        risk = risk_text(event.risk_level)
+        if risk == "P0":
+            return await self._execute_p0(workflow, event)
+        if risk == "P3" and str(event.event_type) == EventType.CO2_HIGH.value:
             request = ActionRequestV2(
                 workflow_id=workflow.workflow_id,
                 event_id=event.event_id,
                 elder_id=event.elder_id,
-                commands=[
-                    ActionCommandV2(room=event.room or "living_room", device=DeviceType.WINDOW, action=DeviceAction.OPEN, reason="CO2 偏高，自动通风。")
-                ],
+                commands=[ActionCommandV2(room=event.room or "living_room", device=DeviceType.WINDOW, action=DeviceAction.OPEN, reason="CO2 偏高，自动通风。")],
                 reason=event.summary,
                 priority=RiskLevel.P3,
             )
-            result = await self.edge.request_home_action(request)
-            await self._record_step(workflow, event, "action_request_conversation", decision, result)
-            return result
-        if event.risk_level == RiskLevel.P3 and str(event.event_type) in {EventType.TEMPERATURE_HIGH.value, EventType.TEMPERATURE_LOW.value}:
+            return await self.edge.request_home_action(request)
+        if risk == "P3" and str(event.event_type) in {EventType.TEMPERATURE_HIGH.value, EventType.TEMPERATURE_LOW.value}:
             target = 26 if str(event.event_type) == EventType.TEMPERATURE_HIGH.value else 24
             request = ActionRequestV2(
                 workflow_id=workflow.workflow_id,
                 event_id=event.event_id,
                 elder_id=event.elder_id,
-                commands=[
-                    ActionCommandV2(
-                        room=event.room or "living_room",
-                        device=DeviceType.AIR_CONDITIONER,
-                        action=DeviceAction.SET_TEMPERATURE,
-                        value=target,
-                        reason="室温异常，自动调整空调目标温度。",
-                    )
-                ],
+                commands=[ActionCommandV2(room=event.room or "living_room", device=DeviceType.AIR_CONDITIONER, action=DeviceAction.SET_TEMPERATURE, value=target, reason="室温异常。")],
                 reason=event.summary,
                 priority=RiskLevel.P3,
             )
-            result = await self.edge.request_home_action(request)
-            await self._record_step(workflow, event, "action_request_conversation", decision, result)
-            return result
-        if event.risk_level in {RiskLevel.P1, RiskLevel.P2}:
+            return await self.edge.request_home_action(request)
+        if risk in {"P1", "P2"}:
             prompt = await self.edge.create_hmi_prompt(
                 HmiPromptV2(
                     workflow_id=workflow.workflow_id,
                     event_id=event.event_id,
                     elder_id=event.elder_id,
-                    risk_level=event.risk_level,
+                    risk_level=risk,
                     event_type=str(event.event_type),
                     message=f"{event.summary} 您现在安全吗？",
                     timeout_sec=30,
                 )
             )
             alert = None
-            if event.risk_level == RiskLevel.P1:
+            if risk == "P1":
                 alert = await self.edge.raise_family_alert(
                     AlertRequestV2(
                         workflow_id=workflow.workflow_id,
                         event_id=event.event_id,
                         elder_id=event.elder_id,
                         alert_level=RiskLevel.P1,
-                        message=f"高风险事件已本地询问老人：{event.summary}",
+                        message=f"高风险事件：{event.summary}",
                     )
                 )
-            result = {"status": "waiting_hmi", "prompt": prompt, "alert": alert}
-            await self._record_step(workflow, event, "hmi_followup", decision, result)
-            return result
-        result = {"status": "record_only", "message": "无需自动动作。"}
-        await self._record_step(workflow, event, "action_request_conversation", decision, result)
-        return result
+            return {"status": "waiting_hmi", "prompt": prompt, "alert": alert}
+        return {"status": "record_only", "decision": decision}
 
     async def _record_step(
         self,
@@ -283,5 +337,6 @@ class WorkflowRunner:
                 model=settings.llm_model,
                 input=input_payload,
                 output=output_payload,
+                completed_at=datetime.now(timezone.utc),
             )
         )

@@ -1,5 +1,7 @@
 # RK3588 居家老人健康守护与环境协同 Agent
 
+v2 三级 AI、多关键帧接口和 RK3588 本地视觉模型配置见 [V2_Three_Level_AI_Architecture.md](V2_Three_Level_AI_Architecture.md)。
+
 这是一个面向 RK3588 Ubuntu 22 Desktop 的 monorepo。v2 架构把系统拆成三层：`edge-mcp-server` 负责传感器/执行器/MQTT/SQLite/MCP 桥接，`guardian-orchestrator` 负责规则触发和多轮小模型 workflow，前端负责老人 HMI 和家属 dashboard 展示。默认 `LLM_MOCK=true`，无需真实模型即可跑通核心链路骨架。
 
 后续使用 Agent 修 bug、加功能或重构前，请先阅读 `AGENTS.md`，它定义了本项目的分层职责、安全红线和统一开发风格。

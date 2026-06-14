@@ -26,6 +26,9 @@ class EdgeClient:
     async def get_current_event(self, event_id: str) -> dict[str, Any]:
         return await self._get(f"/api/v2/events/{event_id}")
 
+    async def update_event_analysis(self, event_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._patch(f"/api/v2/events/{event_id}/analysis", payload)
+
     async def get_recent_sensor_context(self, elder_id: str, limit: int = 30) -> dict[str, Any]:
         return await self._get(f"/api/v2/tools/recent-sensor-context/{elder_id}?limit={limit}")
 
@@ -50,5 +53,11 @@ class EdgeClient:
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.post(self.base + path, json=payload)
+            response.raise_for_status()
+            return response.json()
+
+    async def _patch(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.patch(self.base + path, json=payload)
             response.raise_for_status()
             return response.json()

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import desc
@@ -46,6 +46,8 @@ def row_to_dict(row: Any) -> dict[str, Any]:
         "payload_json",
         "trigger_observation_ids_json",
         "rule_trace_json",
+        "evidence_json",
+        "image_refs_json",
         "input_json",
         "output_json",
         "arguments_json",
@@ -55,7 +57,7 @@ def row_to_dict(row: Any) -> dict[str, Any]:
     ]:
         if key in data:
             base = key.replace("_json", "")
-            default: Any = [] if key in {"trigger_observation_ids_json", "options_json"} else {}
+            default: Any = [] if key in {"trigger_observation_ids_json", "options_json", "evidence_json", "image_refs_json"} else {}
             data[base] = _loads(data.pop(key), default)
     return data
 
@@ -103,6 +105,16 @@ def create_event(db: Session, event: NormalizedEventV2) -> dict[str, Any]:
         summary=event.summary,
         trigger_observation_ids_json=_json(event.trigger_observation_ids),
         rule_trace_json=_json(event.rule_trace),
+        source_kind=str(event.source_kind) if event.source_kind else None,
+        evidence_json=_json(event.evidence),
+        frame_set_id=event.frame_set_id,
+        image_refs_json=_json(event.image_refs),
+        rule_risk_level=str(event.rule_risk_level or event.risk_level),
+        local_risk_level=str(event.local_risk_level or event.risk_level),
+        cloud_risk_level=str(event.cloud_risk_level) if event.cloud_risk_level else None,
+        final_risk_level=str(event.final_risk_level or event.risk_level),
+        decision_source=event.decision_source,
+        confidence=event.confidence,
         created_at=event.created_at,
         updated_at=event.updated_at,
     )
@@ -137,6 +149,36 @@ def update_event_state(
 def get_event(db: Session, event_id: str) -> dict[str, Any] | None:
     row = db.query(models.NormalizedEventModel).filter(models.NormalizedEventModel.event_id == event_id).first()
     return row_to_dict(row) if row else None
+
+
+def update_event_analysis(db: Session, event_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    obj = db.query(models.NormalizedEventModel).filter(models.NormalizedEventModel.event_id == event_id).first()
+    if obj is None:
+        return None
+    scalar_fields = [
+        "local_risk_level",
+        "cloud_risk_level",
+        "final_risk_level",
+        "decision_source",
+        "confidence",
+        "frame_set_id",
+        "source_kind",
+    ]
+    for field in scalar_fields:
+        if field in payload:
+            setattr(obj, field, payload[field])
+    if "image_refs" in payload:
+        obj.image_refs_json = _json(payload["image_refs"])
+    if "evidence" in payload:
+        obj.evidence_json = _json(payload["evidence"])
+    if "summary" in payload:
+        obj.summary = str(payload["summary"])
+    if "final_risk_level" in payload:
+        obj.risk_level = str(payload["final_risk_level"])
+    obj.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(obj)
+    return row_to_dict(obj)
 
 
 def list_events(db: Session, elder_id: str, limit: int = 50) -> list[dict[str, Any]]:

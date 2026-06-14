@@ -31,7 +31,7 @@ services:
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
       DATABASE_URL: sqlite:////app/data/guardian.db
-      LLM_MOCK: ${LLM_MOCK:-true}
+      LLM_MOCK: ${LLM_MOCK:-false}
     ports:
       - "${CORE_PUBLIC_PORT:-8000}:8000"
     volumes:
@@ -87,9 +87,19 @@ services:
         required: false
     environment:
       EDGE_API_BASE: http://edge-mcp-server:8010
-      LLM_MOCK: ${LLM_MOCK:-true}
+      LLM_MOCK: ${LLM_MOCK:-false}
+      SNAPSHOT_ROOT: /app/data/snapshots
+      VISION_API_BASE: http://vision-service:8101
+      VISION_FRAME_WAIT_SEC: ${VISION_FRAME_WAIT_SEC:-5}
+      CLOUD_LLM_ENABLED: ${CLOUD_LLM_ENABLED:-false}
+      CLOUD_LLM_BASE_URL: ${CLOUD_LLM_BASE_URL:-}
+      CLOUD_LLM_API_KEY: ${CLOUD_LLM_API_KEY:-}
+      CLOUD_LLM_MODEL: ${CLOUD_LLM_MODEL:-}
+      CLOUD_LLM_TIMEOUT_SEC: ${CLOUD_LLM_TIMEOUT_SEC:-60}
     ports:
       - "${ORCHESTRATOR_PUBLIC_PORT:-8020}:8020"
+    volumes:
+      - ./data/snapshots:/app/data/snapshots:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8020/health', timeout=3)"]
       interval: 10s
@@ -173,13 +183,24 @@ services:
     depends_on:
       mosquitto:
         condition: service_healthy
+      edge-mcp-server:
+        condition: service_healthy
     environment:
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
       ELDER_ID: ${ELDER_ID:-elder_001}
+      EDGE_API_BASE: http://edge-mcp-server:8010
+      SNAPSHOT_ROOT: /app/data/snapshots
+      VISION_RETENTION_DAYS: ${VISION_RETENTION_DAYS:-7}
+      VISION_BUFFER_SECONDS: ${VISION_BUFFER_SECONDS:-12}
+      VISION_MAX_IMAGE_BYTES: ${VISION_MAX_IMAGE_BYTES:-5242880}
+      VISION_MAX_IMAGE_EDGE: ${VISION_MAX_IMAGE_EDGE:-1280}
+      VISION_JPEG_QUALITY: ${VISION_JPEG_QUALITY:-80}
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8101"]
     ports:
       - "${VISION_PUBLIC_PORT:-8101}:8101"
+    volumes:
+      - ./data/snapshots:/app/data/snapshots
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8101/health', timeout=3)"]
       interval: 10s

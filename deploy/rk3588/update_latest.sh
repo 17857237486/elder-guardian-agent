@@ -115,17 +115,29 @@ ensure_env_file() {
     cp .env.example .env
   fi
 
-  if ! grep -q '^PUBLIC_GUARDIAN_API_BASE=' .env; then
-    printf '\nPUBLIC_GUARDIAN_API_BASE=http://%s:8000\n' "$PUBLIC_HOST" >> .env
+  set_env_value() {
+    local key="$1"
+    local value="$2"
+    if grep -q "^${key}=" .env; then
+      sed -i "s|^${key}=.*|${key}=${value}|" .env
+    else
+      printf '%s=%s\n' "$key" "$value" >> .env
+    fi
+  }
+
+  set_env_value PUBLIC_GUARDIAN_API_BASE "http://${PUBLIC_HOST}:8000"
+  set_env_value PUBLIC_EDGE_API_BASE "http://${PUBLIC_HOST}:8010"
+  set_env_value LLM_MOCK "false"
+  set_env_value LLM_BASE_URL "${LLM_BASE_URL:-http://172.30.0.1:8001/v1}"
+  set_env_value LLM_API_KEY "${LLM_API_KEY:-local-rk3588}"
+  set_env_value LLM_MODEL "${LLM_MODEL:-internvl3.5-4b-rk3588}"
+  set_env_value LLM_CHAIN_TIMEOUT_SEC "${LLM_CHAIN_TIMEOUT_SEC:-300}"
+
+  if [ -n "${IMAGE_PREFIX:-}" ]; then
+    set_env_value IMAGE_PREFIX "$IMAGE_PREFIX"
   fi
-  if ! grep -q '^PUBLIC_EDGE_API_BASE=' .env; then
-    printf 'PUBLIC_EDGE_API_BASE=http://%s:8010\n' "$PUBLIC_HOST" >> .env
-  fi
-  if [ -n "${IMAGE_PREFIX:-}" ] && ! grep -q '^IMAGE_PREFIX=' .env; then
-    printf 'IMAGE_PREFIX=%s\n' "$IMAGE_PREFIX" >> .env
-  fi
-  if [ -n "${IMAGE_TAG:-}" ] && ! grep -q '^IMAGE_TAG=' .env; then
-    printf 'IMAGE_TAG=%s\n' "$IMAGE_TAG" >> .env
+  if grep -q '^IMAGE_PREFIX=' .env; then
+    set_env_value IMAGE_TAG "${IMAGE_TAG:-latest}"
   fi
 }
 

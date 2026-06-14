@@ -130,6 +130,11 @@ async def get_event(event_id: str) -> dict[str, Any]:
     return tool_service.get_current_event(event_id)
 
 
+@app.patch("/api/v2/events/{event_id}/analysis")
+async def update_event_analysis(event_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return tool_service.update_event_analysis(event_id, payload)
+
+
 @app.post("/api/v2/workflows")
 async def create_workflow(workflow: WorkflowV2) -> dict[str, Any]:
     return tool_service.create_workflow(workflow)

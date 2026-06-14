@@ -71,6 +71,16 @@ class NormalizedEventV2(GuardianModel):
     summary: str = ""
     trigger_observation_ids: list[str] = Field(default_factory=list)
     rule_trace: dict[str, Any] = Field(default_factory=dict)
+    source_kind: ObservationKind | str | None = None
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    frame_set_id: str | None = None
+    image_refs: list[str] = Field(default_factory=list)
+    rule_risk_level: RiskLevel | None = None
+    local_risk_level: RiskLevel | None = None
+    cloud_risk_level: RiskLevel | None = None
+    final_risk_level: RiskLevel | None = None
+    decision_source: str = "rule"
+    confidence: float = 0.0
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 

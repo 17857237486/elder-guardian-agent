@@ -59,6 +59,11 @@ class EdgeToolService:
             record = repository.create_event(db, event)
         return record
 
+    def update_event_analysis(self, event_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        with SessionLocal() as db:
+            record = repository.update_event_analysis(db, event_id, payload)
+        return record or {"event_id": event_id, "status": "not_found"}
+
     def create_workflow(self, workflow: WorkflowV2) -> dict[str, Any]:
         with SessionLocal() as db:
             return repository.create_workflow(db, workflow)

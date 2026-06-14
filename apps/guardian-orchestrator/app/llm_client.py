@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import base64
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -32,6 +34,18 @@ FORBIDDEN_DECISION_KEYS = {
     "device_actions",
     "action_request",
     "action_commands",
+}
+
+MULTIMODAL_REQUIRED_FIELDS = {
+    "event_semantics",
+    "risk_level",
+    "confidence",
+    "temporal_changes",
+    "supporting_evidence",
+    "contradictions",
+    "missing_information",
+    "recommended_followup",
+    "family_summary",
 }
 
 
@@ -270,3 +284,137 @@ class StepLLMClient:
             content = message.get("content") or ""
         parsed = _extract_json_object(content)
         return _normalize_output(step_name, payload, parsed)
+
+
+def _image_data_url(path: Path) -> str:
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:image/jpeg;base64,{encoded}"
+
+
+def _normalize_multimodal_output(payload: dict[str, Any], output: dict[str, Any]) -> dict[str, Any]:
+    missing = sorted(MULTIMODAL_REQUIRED_FIELDS - output.keys())
+    if missing:
+        raise LLMOutputError(f"multimodal output missing required fields: {', '.join(missing)}")
+    if _contains_forbidden_action_key(output):
+        raise LLMOutputError("multimodal output contains forbidden device control fields")
+    original = _event_risk_level(payload) or "P4"
+    reviewed = str(output.get("risk_level", original)).split(".")[-1].upper()
+    if reviewed not in RISK_ORDER:
+        raise LLMOutputError(f"invalid risk level: {reviewed}")
+    if RISK_ORDER[reviewed] < RISK_ORDER[original]:
+        raise LLMOutputError(f"model attempted to downgrade risk from {original} to {reviewed}")
+    normalized = dict(output)
+    normalized["risk_level"] = reviewed
+    normalized["confidence"] = max(0.0, min(float(output.get("confidence", 0.0)), 1.0))
+    for field in ["temporal_changes", "supporting_evidence", "contradictions", "missing_information", "recommended_followup"]:
+        value = normalized.get(field)
+        normalized[field] = value if isinstance(value, list) else ([] if value is None else [str(value)])
+    return normalized
+
+
+def build_local_multimodal_content(
+    event: dict[str, Any], context: dict[str, Any], contact_sheet: Path | None
+) -> list[dict[str, Any]]:
+    schema = {field: "required" for field in sorted(MULTIMODAL_REQUIRED_FIELDS)}
+    prompt = (
+        "Analyze this elder-care event by comparing posture, position, and motion across "
+        "T-4s, T-2s, T, T+2s, and T+4s. Cross-check the visual sequence against sensor "
+        "and device evidence. Risk may only stay unchanged or increase. Do not output device "
+        "control commands. Return only one JSON object.\n"
+        + json.dumps({"schema": schema, "event": event, "context": _compact_value(context)}, ensure_ascii=False, default=str)
+    )
+    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+    if contact_sheet and contact_sheet.is_file():
+        content.append({"type": "image_url", "image_url": {"url": _image_data_url(contact_sheet)}})
+    return content
+
+
+def build_cloud_multimodal_content(
+    event: dict[str, Any], local_result: dict[str, Any], context: dict[str, Any], image_paths: list[Path]
+) -> list[dict[str, Any]]:
+    prompt = (
+        "Review this elder-care risk after local handling. Risk may only stay unchanged or "
+        "increase. Do not output device control commands. Return only the strict multimodal "
+        "JSON fields. Images are ordered by event-relative time.\n"
+        + json.dumps(
+            {"event": event, "local_result": local_result, "context": _compact_value(context)},
+            ensure_ascii=False,
+            default=str,
+        )
+    )
+    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+    for path in image_paths[:5]:
+        if path.is_file():
+            content.append({"type": "image_url", "image_url": {"url": _image_data_url(path)}})
+    return content
+
+
+class LocalMultimodalClient:
+    async def analyze(self, *, event: dict[str, Any], context: dict[str, Any], contact_sheet: Path | None) -> dict[str, Any]:
+        if settings.llm_mock:
+            return {
+                "event_semantics": event.get("summary", "mock visual analysis"),
+                "risk_level": event.get("risk_level", "P4"),
+                "confidence": 0.5,
+                "temporal_changes": [],
+                "supporting_evidence": [],
+                "contradictions": [],
+                "missing_information": [],
+                "recommended_followup": [],
+                "family_summary": event.get("summary", ""),
+                "mock": True,
+            }
+        content = build_local_multimodal_content(event, context, contact_sheet)
+        body = {
+            "model": settings.llm_model,
+            "messages": [{"role": "user", "content": content}],
+            "temperature": 0.1,
+            "max_tokens": settings.llm_max_tokens,
+            "response_format": {"type": "json_object"},
+            "enable_thinking": False,
+        }
+        async with httpx.AsyncClient(timeout=settings.llm_timeout_sec) as client:
+            response = await client.post(
+                settings.llm_base_url.rstrip("/") + "/chat/completions",
+                headers={"Authorization": f"Bearer {settings.llm_api_key}"},
+                json=body,
+            )
+            response.raise_for_status()
+        output = _extract_json_object(response.json()["choices"][0]["message"].get("content") or "")
+        return _normalize_multimodal_output({"event": event}, output)
+
+
+class CloudLLMClient:
+    async def review(
+        self,
+        *,
+        event: dict[str, Any],
+        local_result: dict[str, Any],
+        context: dict[str, Any],
+        image_paths: list[Path],
+    ) -> dict[str, Any]:
+        if not settings.cloud_llm_enabled:
+            return {"status": "disabled"}
+        if not settings.cloud_llm_base_url or not settings.cloud_llm_model:
+            return {"status": "misconfigured"}
+        content = build_cloud_multimodal_content(event, local_result, context, image_paths)
+        body = {
+            "model": settings.cloud_llm_model,
+            "messages": [{"role": "user", "content": content}],
+            "temperature": 0.1,
+            "max_tokens": settings.llm_max_tokens,
+            "response_format": {"type": "json_object"},
+        }
+        try:
+            async with httpx.AsyncClient(timeout=settings.cloud_llm_timeout_sec) as client:
+                response = await client.post(
+                    settings.cloud_llm_base_url.rstrip("/") + "/chat/completions",
+                    headers={"Authorization": f"Bearer {settings.cloud_llm_api_key}"},
+                    json=body,
+                )
+                response.raise_for_status()
+            output = _extract_json_object(response.json()["choices"][0]["message"].get("content") or "")
+            normalized = _normalize_multimodal_output({"event": {**event, "risk_level": local_result.get("risk_level", event.get("risk_level"))}}, output)
+            return {"status": "completed", **normalized}
+        except Exception as exc:
+            return {"status": "failed", "error": str(exc)}
