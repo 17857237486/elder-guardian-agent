@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import sys
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,20 +13,7 @@ sys.path.insert(0, str(ROOT / "apps" / "guardian-orchestrator"))
 from app import rules
 
 
-class FixedDateTime(datetime):
-    fixed_now = datetime(2026, 6, 14, 23, 30, tzinfo=timezone.utc)
-
-    @classmethod
-    def now(cls, tz=None):
-        value = cls.fixed_now
-        return value.astimezone(tz) if tz else value.replace(tzinfo=None)
-
-
 class RuleTests(unittest.TestCase):
-    def setUp(self) -> None:
-        rules.HISTORY.clear()
-        rules.LAST_COMPOSITE_EVENT.clear()
-
     def test_abnormal_humidity_is_screened_at_level_one(self) -> None:
         event = rules.classify_observation(
             {
@@ -35,37 +21,24 @@ class RuleTests(unittest.TestCase):
                 "elder_id": "elder_001",
                 "kind": "environment",
                 "payload": {"room": "living_room", "humidity": 82},
-                "observed_at": FixedDateTime.fixed_now.isoformat(),
+                "observed_at": datetime(2026, 6, 14, 15, 30, tzinfo=timezone.utc).isoformat(),
             }
         )
         self.assertIsNotNone(event)
         self.assertEqual(str(event.event_type), "humidity_abnormal")
         self.assertEqual(str(event.risk_level), "P3")
 
-    @patch("app.rules.datetime", FixedDateTime)
-    def test_night_bathroom_composite_requires_sustained_state(self) -> None:
-        now = FixedDateTime.fixed_now
+    def test_old_night_composites_and_direct_visual_event_are_removed(self) -> None:
         observations = [
-            ("device_state", {"room": "bedroom", "present": False}, now - timedelta(minutes=19)),
-            ("device_state", {"room": "bathroom", "present": True}, now - timedelta(minutes=17)),
-            ("device_state", {"room": "bathroom", "device": "light", "state": "on"}, now - timedelta(minutes=11)),
-            ("vital", {"heart_rate": 110}, now),
+            {"kind": "device_state", "payload": {"room": "bathroom", "present": True}},
+            {"kind": "device_state", "payload": {"room": "bathroom", "device": "light", "state": "on"}},
+            {"kind": "device_state", "payload": {"room": "hall", "device": "door", "state": "open"}},
+            {"kind": "vital", "payload": {"heart_rate": 110, "spo2": 96}},
+            {"kind": "vision", "payload": {"room": "bedroom", "event_type": "night_abnormal_activity"}},
         ]
-        event = None
-        for index, (kind, payload, observed_at) in enumerate(observations):
-            event = rules.classify_observation(
-                {
-                    "observation_id": f"obs-{index}",
-                    "elder_id": "elder_001",
-                    "kind": kind,
-                    "payload": payload,
-                    "observed_at": observed_at.isoformat(),
-                }
-            )
-
-        self.assertIsNotNone(event)
-        self.assertEqual(str(event.event_type), "night_bathroom_not_returned")
-        self.assertEqual(str(event.risk_level), "P2")
+        for index, observation in enumerate(observations):
+            observation.update({"observation_id": f"obs-{index}", "elder_id": "elder_001"})
+            self.assertIsNone(rules.classify_observation(observation))
 
 
 if __name__ == "__main__":

@@ -35,6 +35,11 @@ class EdgeClient:
     async def get_home_device_snapshot(self, elder_id: str) -> dict[str, Any]:
         return await self._get(f"/api/v2/tools/device-snapshot/{elder_id}")
 
+    async def get_observations(self, elder_id: str, limit: int = 1000) -> list[dict[str, Any]]:
+        response = await self._get(f"/api/v2/observations?elder_id={elder_id}&limit={limit}")
+        observations = response.get("observations")
+        return observations if isinstance(observations, list) else []
+
     async def request_home_action(self, request: ActionRequestV2) -> dict[str, Any]:
         return await self._post("/api/v2/tools/request-home-action", model_to_dict(request))
 

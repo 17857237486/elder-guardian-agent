@@ -1,19 +1,38 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI
 
 from guardian_shared.v2 import NormalizedEventV2
 
+from app.config import settings
+from app.night_activity import NightActivityMonitor
 from app.rules import classify_observation
 from app.workflow import WorkflowRunner
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
-app = FastAPI(title="Elder Guardian Orchestrator", version="0.1.0")
 runner = WorkflowRunner()
+night_monitor = NightActivityMonitor(runner.run)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    try:
+        observations = await runner.edge.get_observations(settings.elder_id)
+        await night_monitor.restore(observations)
+    except Exception:
+        logging.getLogger(__name__).exception("failed to restore night activity state")
+    try:
+        yield
+    finally:
+        await night_monitor.close()
+
+
+app = FastAPI(title="Elder Guardian Orchestrator", version="0.1.0", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -23,6 +42,7 @@ async def health() -> dict[str, Any]:
 
 @app.post("/api/v2/orchestrator/observations")
 async def handle_observation(observation: dict[str, Any]) -> dict[str, Any]:
+    await night_monitor.observe(observation)
     event = classify_observation(observation)
     if event is None:
         return {"ok": True, "triggered": False}
