@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -31,6 +32,29 @@ VALID_OUTPUT = {
 class LLMClientParserTests(unittest.TestCase):
     def test_extracts_json_from_wrapped_text(self) -> None:
         self.assertEqual(_extract_json_object("prefix {\"summary\":\"ok\"} suffix"), {"summary": "ok"})
+
+    def test_extracts_complete_template_from_truncated_outer_object(self) -> None:
+        content = '{"output_template":{"risk_level":"P1","family_summary":"ok"},"event":{"summary":"truncated'
+        self.assertEqual(
+            _extract_json_object(content),
+            {"output_template": {"risk_level": "P1", "family_summary": "ok"}},
+        )
+
+    def test_extracts_complete_multimodal_prefix_before_truncated_echo(self) -> None:
+        conclusion = {
+            "event_semantics": "elderly fall suspected",
+            "risk_level": "P1",
+            "confidence": 0.8,
+            "temporal_changes": ["standing to floor"],
+            "supporting_evidence": ["five ordered frames"],
+            "contradictions": [],
+            "missing_information": [],
+            "recommended_followup": ["check immediately"],
+            "family_summary": "possible fall",
+        }
+        content = json.dumps(conclusion)[:-1] + ',"event":{"summary":"truncated'
+
+        self.assertEqual(_extract_json_object(content), conclusion)
 
     def test_empty_content_is_rejected(self) -> None:
         with self.assertRaises(LLMOutputError):

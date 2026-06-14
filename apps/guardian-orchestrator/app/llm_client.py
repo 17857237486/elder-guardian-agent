@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import base64
+import re
 from pathlib import Path
 from typing import Any
 
@@ -53,12 +54,66 @@ class LLMOutputError(ValueError):
     pass
 
 
+def _extract_named_json_object(content: str, field: str) -> dict[str, Any] | None:
+    marker = f'"{field}"'
+    marker_index = content.find(marker)
+    if marker_index < 0:
+        return None
+    start = content.find("{", marker_index + len(marker))
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(content)):
+        char = content[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    parsed = json.loads(content[start : index + 1])
+                except json.JSONDecodeError:
+                    return None
+                return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+def _extract_completed_multimodal_prefix(content: str) -> dict[str, Any] | None:
+    """Recover a complete result followed by a truncated echo of the input."""
+    for match in re.finditer(r',\s*"(?:event|sensor_evidence|device_states)"\s*:', content):
+        try:
+            parsed = json.loads(content[: match.start()] + "}")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and MULTIMODAL_REQUIRED_FIELDS.issubset(parsed):
+            return parsed
+    return None
+
+
 def _extract_json_object(content: str) -> dict[str, Any]:
     if not content.strip():
         raise LLMOutputError("LLM returned empty content")
     try:
         parsed = json.loads(content)
     except json.JSONDecodeError:
+        nested = _extract_named_json_object(content, "output_template")
+        if nested is not None:
+            return {"output_template": nested}
+        completed_prefix = _extract_completed_multimodal_prefix(content)
+        if completed_prefix is not None:
+            return completed_prefix
         start = content.find("{")
         end = content.rfind("}")
         if start < 0 or end <= start:
@@ -377,7 +432,10 @@ def build_local_multimodal_content(
         "family_summary": "short string",
     }
     prompt = (
-        "Analyze this elder-care event by comparing posture, position, and motion across "
+        "STRICT LENGTH: event_semantics and family_summary must each be at most 12 Chinese characters. "
+        "Every array must contain at most one item of at most 8 Chinese characters. Complete all JSON "
+        "fields before the token limit and do not repeat facts. Analyze this elder-care event by comparing "
+        "posture, position, and motion across "
         "T-4s, T-2s, T, T+2s, and T+4s. Cross-check the visual sequence against sensor "
         "and device evidence. Risk may only stay unchanged or increase. Do not output device "
         "control commands. Return only one compact JSON object matching output_template exactly. "
