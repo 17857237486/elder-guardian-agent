@@ -176,7 +176,8 @@ async def send_observation(trigger: VisionTrigger, frame_set_id: str) -> None:
 async def finalize_frame_set(trigger: VisionTrigger, frame_set_id: str) -> None:
     active_frame_sets.add(frame_set_id)
     try:
-        remaining = (trigger.triggered_at + timedelta(seconds=4) - utc_now()).total_seconds()
+        # Allow the T+4 upload request to finish before taking the buffer snapshot.
+        remaining = (trigger.triggered_at + timedelta(seconds=4.75) - utc_now()).total_seconds()
         if remaining > 0:
             await asyncio.sleep(min(remaining, 5))
         directory = event_directory(trigger, frame_set_id)

@@ -315,13 +315,29 @@ def _normalize_multimodal_output(payload: dict[str, Any], output: dict[str, Any]
 def build_local_multimodal_content(
     event: dict[str, Any], context: dict[str, Any], contact_sheet: Path | None
 ) -> list[dict[str, Any]]:
-    schema = {field: "required" for field in sorted(MULTIMODAL_REQUIRED_FIELDS)}
+    output_template = {
+        "event_semantics": "short string",
+        "risk_level": "P0, P1, P2, P3, or P4",
+        "confidence": 0.8,
+        "temporal_changes": ["short string"],
+        "supporting_evidence": ["short string"],
+        "contradictions": ["short string"],
+        "missing_information": ["short string"],
+        "recommended_followup": ["short string"],
+        "family_summary": "short string",
+    }
     prompt = (
         "Analyze this elder-care event by comparing posture, position, and motion across "
         "T-4s, T-2s, T, T+2s, and T+4s. Cross-check the visual sequence against sensor "
         "and device evidence. Risk may only stay unchanged or increase. Do not output device "
-        "control commands. Return only one JSON object.\n"
-        + json.dumps({"schema": schema, "event": event, "context": _compact_value(context)}, ensure_ascii=False, default=str)
+        "control commands. Return only one compact JSON object matching output_template exactly. "
+        "event_semantics and family_summary must be strings; confidence must be a number from 0 to 1; "
+        "the other evidence fields must be arrays of short strings. Use at most two items per array.\n"
+        + json.dumps(
+            {"output_template": output_template, "event": event, "context": _compact_value(context)},
+            ensure_ascii=False,
+            default=str,
+        )
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
     if contact_sheet and contact_sheet.is_file():
@@ -332,12 +348,28 @@ def build_local_multimodal_content(
 def build_cloud_multimodal_content(
     event: dict[str, Any], local_result: dict[str, Any], context: dict[str, Any], image_paths: list[Path]
 ) -> list[dict[str, Any]]:
+    output_template = {
+        "event_semantics": "short string",
+        "risk_level": "P0, P1, P2, P3, or P4",
+        "confidence": 0.8,
+        "temporal_changes": ["short string"],
+        "supporting_evidence": ["short string"],
+        "contradictions": ["short string"],
+        "missing_information": ["short string"],
+        "recommended_followup": ["short string"],
+        "family_summary": "short string",
+    }
     prompt = (
         "Review this elder-care risk after local handling. Risk may only stay unchanged or "
-        "increase. Do not output device control commands. Return only the strict multimodal "
-        "JSON fields. Images are ordered by event-relative time.\n"
+        "increase. Do not output device control commands. Return only one compact JSON object "
+        "matching output_template exactly. Images are ordered by event-relative time.\n"
         + json.dumps(
-            {"event": event, "local_result": local_result, "context": _compact_value(context)},
+            {
+                "output_template": output_template,
+                "event": event,
+                "local_result": local_result,
+                "context": _compact_value(context),
+            },
             ensure_ascii=False,
             default=str,
         )

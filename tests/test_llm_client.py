@@ -90,6 +90,8 @@ class LLMClientParserTests(unittest.TestCase):
 
             self.assertEqual(sum(item["type"] == "image_url" for item in local_content), 1)
             self.assertEqual(sum(item["type"] == "image_url" for item in cloud_content), 5)
+            self.assertIn('"confidence": 0.8', local_content[0]["text"])
+            self.assertIn("confidence must be a number", local_content[0]["text"])
 
 
 if __name__ == "__main__":
