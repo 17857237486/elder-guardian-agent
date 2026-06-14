@@ -43,6 +43,18 @@ class VisionFrameTests(unittest.TestCase):
         self.assertEqual(len(selected_ids), len(set(selected_ids)))
         self.assertEqual(sum(frame is None for frame in selected), 3)
 
+    def test_one_second_frames_select_third_image_as_trigger(self) -> None:
+        triggered_at = datetime.now(timezone.utc)
+        frames = [
+            Frame(f"image-{index + 1}", triggered_at + timedelta(seconds=offset))
+            for index, offset in enumerate((-2, -1, 0, 1, 2))
+        ]
+
+        selected = select_keyframes(frames, triggered_at, (-2000, -1000, 0, 1000, 2000))
+
+        self.assertEqual([frame.frame_id for frame in selected], ["image-1", "image-2", "image-3", "image-4", "image-5"])
+        self.assertEqual(selected[2].captured_at, triggered_at)
+
 
 if __name__ == "__main__":
     unittest.main()

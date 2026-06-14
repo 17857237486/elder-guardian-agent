@@ -21,6 +21,21 @@ const lastUpdated = ref("");
 const latestEvent = computed(() => state.events?.[0] ?? null);
 const latestObservation = computed(() => state.observations?.[0] ?? null);
 const latestWorkflow = computed(() => state.workflows?.[0] ?? null);
+const latestLocalAnalysis = computed(() =>
+  state.workflow_steps?.find(
+    (step: AnyRecord) =>
+      step.event_id === latestEvent.value?.event_id && step.step_name === "local_multiframe_analysis"
+  ) ?? null
+);
+const localSemanticStatus = computed(() => {
+  if (latestLocalAnalysis.value?.status === "failed" || latestLocalAnalysis.value?.output?.fallback) {
+    return { state: "fallback", text: "本地模型分析未完成，规则判断和安全动作仍然有效。" };
+  }
+  if (latestEvent.value?.local_semantics) {
+    return { state: "completed", text: latestEvent.value.local_semantics };
+  }
+  return { state: "pending", text: "等待 RK3588 本地模型分析" };
+});
 
 async function loadState() {
   loading.value = true;
@@ -56,7 +71,18 @@ onMounted(async () => {
       <article><span>云端复核</span><b>{{ latestEvent?.cloud_risk_level ?? "--" }}</b></article>
       <article><span>最终风险</span><b>{{ latestEvent?.final_risk_level ?? state.current_risk_level }}</b></article>
       <article><span>决策来源</span><b>{{ latestEvent?.decision_source ?? "rule" }}</b></article>
-      <article><span>本地语义</span><b>{{ latestEvent?.local_semantics ?? "--" }}</b></article>
+    </section>
+
+    <section class="local-semantics" :class="localSemanticStatus.state">
+      <div>
+        <span>第二级：RK3588 本地模型事件语义</span>
+        <strong>{{ localSemanticStatus.text }}</strong>
+      </div>
+      <p>
+        {{ latestEvent?.event_type ?? "暂无事件" }} ·
+        本地风险 {{ latestEvent?.local_risk_level ?? "--" }} ·
+        {{ latestLocalAnalysis?.model ?? "internvl3.5-4b-rk3588" }}
+      </p>
     </section>
 
     <section class="grid">

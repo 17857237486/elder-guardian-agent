@@ -90,6 +90,49 @@ header strong.P3 {
   font-size: 28px;
 }
 
+.local-semantics {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 18px;
+  padding: 20px 22px;
+  border: 1px solid #9cc7e8;
+  border-left: 6px solid #1976b9;
+  border-radius: 8px;
+  background: #eef7fd;
+}
+
+.local-semantics span {
+  display: block;
+  margin-bottom: 7px;
+  color: #3f647f;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.local-semantics strong {
+  color: #123f60;
+  font-size: 24px;
+}
+
+.local-semantics p {
+  color: #4d6577;
+  text-align: right;
+}
+
+.local-semantics.fallback {
+  border-color: #e8c27a;
+  border-left-color: #b7791f;
+  background: #fff8e8;
+}
+
+.local-semantics.pending {
+  border-color: #c9d2dc;
+  border-left-color: #758397;
+  background: #f7f9fb;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -209,6 +252,15 @@ li p {
     align-items: flex-start;
     gap: 14px;
     flex-direction: column;
+  }
+
+  .local-semantics {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .local-semantics p {
+    text-align: left;
   }
 
   .metrics,
