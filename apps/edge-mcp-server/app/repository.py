@@ -157,6 +157,7 @@ def update_event_analysis(db: Session, event_id: str, payload: dict[str, Any]) -
         return None
     scalar_fields = [
         "local_risk_level",
+        "local_semantics",
         "cloud_risk_level",
         "final_risk_level",
         "decision_source",

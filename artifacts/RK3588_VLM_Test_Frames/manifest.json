@@ -1,0 +1,85 @@
+{
+  "frame_set_id": "frames_d88ecd66771a41e1",
+  "elder_id": "elder_001",
+  "camera_id": "rk3588-vlm-success-validation",
+  "room": "living_room",
+  "event_type": "suspected_fall",
+  "triggered_at": "2026-06-14T08:29:25.849036+00:00",
+  "status": "complete",
+  "frames": [
+    {
+      "snapshot_id": "snap_e44a327681874b92",
+      "offset_ms": -4000,
+      "filename": "frame_m4000.jpg",
+      "relative_path": "2026/06/14/elder_001/frames_d88ecd66771a41e1/frame_m4000.jpg",
+      "captured_at": "2026-06-14T08:29:21.849036+00:00",
+      "target_at": "2026-06-14T08:29:21.849036+00:00",
+      "sha256": "4916d0646d9f2c82e10d35146f56857799d734fef47963883a6b6914e59ad770",
+      "width": 960,
+      "height": 640,
+      "camera_id": "rk3588-vlm-success-validation",
+      "missing": false
+    },
+    {
+      "snapshot_id": "snap_c4f95d9053d2485b",
+      "offset_ms": -2000,
+      "filename": "frame_m2000.jpg",
+      "relative_path": "2026/06/14/elder_001/frames_d88ecd66771a41e1/frame_m2000.jpg",
+      "captured_at": "2026-06-14T08:29:23.849036+00:00",
+      "target_at": "2026-06-14T08:29:23.849036+00:00",
+      "sha256": "0dce501267263b7cdf0a55b59d7167b1fa8a184c8a417c0fad32e2925f1fc322",
+      "width": 960,
+      "height": 640,
+      "camera_id": "rk3588-vlm-success-validation",
+      "missing": false
+    },
+    {
+      "snapshot_id": "snap_a4601900664e4e67",
+      "offset_ms": 0,
+      "filename": "frame_0000.jpg",
+      "relative_path": "2026/06/14/elder_001/frames_d88ecd66771a41e1/frame_0000.jpg",
+      "captured_at": "2026-06-14T08:29:25.849036+00:00",
+      "target_at": "2026-06-14T08:29:25.849036+00:00",
+      "sha256": "158d4c9c9e6183087cb4c4c0d95c08565eff5adb9feb6318380d61e10be999ff",
+      "width": 960,
+      "height": 640,
+      "camera_id": "rk3588-vlm-success-validation",
+      "missing": false
+    },
+    {
+      "snapshot_id": "snap_b3f6eb1c895f4480",
+      "offset_ms": 2000,
+      "filename": "frame_p2000.jpg",
+      "relative_path": "2026/06/14/elder_001/frames_d88ecd66771a41e1/frame_p2000.jpg",
+      "captured_at": "2026-06-14T08:29:27.849036+00:00",
+      "target_at": "2026-06-14T08:29:27.849036+00:00",
+      "sha256": "774d47877baccd8010f9669b9c16003b9a47ab1d8e1b7cb3a5c351cd100d782a",
+      "width": 960,
+      "height": 640,
+      "camera_id": "rk3588-vlm-success-validation",
+      "missing": false
+    },
+    {
+      "snapshot_id": "snap_3897d8513b784698",
+      "offset_ms": 4000,
+      "filename": "frame_p4000.jpg",
+      "relative_path": "2026/06/14/elder_001/frames_d88ecd66771a41e1/frame_p4000.jpg",
+      "captured_at": "2026-06-14T08:29:29.849036+00:00",
+      "target_at": "2026-06-14T08:29:29.849036+00:00",
+      "sha256": "939c4e30378f857cc05663d934d66ff33480a4296314b792a5d53bce558d9035",
+      "width": 960,
+      "height": 640,
+      "camera_id": "rk3588-vlm-success-validation",
+      "missing": false
+    }
+  ],
+  "image_refs": [
+    "2026/06/14/elder_001/frames_d88ecd66771a41e1/frame_m4000.jpg",
+    "2026/06/14/elder_001/frames_d88ecd66771a41e1/frame_m2000.jpg",
+    "2026/06/14/elder_001/frames_d88ecd66771a41e1/frame_0000.jpg",
+    "2026/06/14/elder_001/frames_d88ecd66771a41e1/frame_p2000.jpg",
+    "2026/06/14/elder_001/frames_d88ecd66771a41e1/frame_p4000.jpg"
+  ],
+  "contact_sheet_path": "2026/06/14/elder_001/frames_d88ecd66771a41e1/contact_sheet.jpg",
+  "completed_at": "2026-06-14T08:29:30.700011+00:00"
+}

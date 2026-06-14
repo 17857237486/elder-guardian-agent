@@ -31,7 +31,7 @@ MAX_IMAGE_EDGE = int(os.getenv("VISION_MAX_IMAGE_EDGE", "1280"))
 JPEG_QUALITY = int(os.getenv("VISION_JPEG_QUALITY", "80"))
 BUFFER_SECONDS = int(os.getenv("VISION_BUFFER_SECONDS", "12"))
 RETENTION_DAYS = int(os.getenv("VISION_RETENTION_DAYS", "7"))
-FRAME_OFFSETS_MS = (-4000, -2000, 0, 2000, 4000)
+FRAME_OFFSETS_MS = (-2000, -1000, 0, 1000, 2000)
 
 
 def utc_now() -> datetime:
@@ -177,7 +177,7 @@ async def finalize_frame_set(trigger: VisionTrigger, frame_set_id: str) -> None:
     active_frame_sets.add(frame_set_id)
     try:
         # Allow the T+4 upload request to finish before taking the buffer snapshot.
-        remaining = (trigger.triggered_at + timedelta(seconds=4.75) - utc_now()).total_seconds()
+        remaining = (trigger.triggered_at + timedelta(seconds=2.75) - utc_now()).total_seconds()
         if remaining > 0:
             await asyncio.sleep(min(remaining, 5))
         directory = event_directory(trigger, frame_set_id)

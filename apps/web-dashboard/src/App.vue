@@ -56,6 +56,7 @@ onMounted(async () => {
       <article><span>云端复核</span><b>{{ latestEvent?.cloud_risk_level ?? "--" }}</b></article>
       <article><span>最终风险</span><b>{{ latestEvent?.final_risk_level ?? state.current_risk_level }}</b></article>
       <article><span>决策来源</span><b>{{ latestEvent?.decision_source ?? "rule" }}</b></article>
+      <article><span>本地语义</span><b>{{ latestEvent?.local_semantics ?? "--" }}</b></article>
     </section>
 
     <section class="grid">
@@ -71,6 +72,7 @@ onMounted(async () => {
               本地 {{ event.local_risk_level ?? "--" }} →
               云端 {{ event.cloud_risk_level ?? "--" }}
             </p>
+            <p v-if="event.local_semantics">本地语义：{{ event.local_semantics }}</p>
             <p v-if="event.image_refs?.length">关键帧：{{ event.image_refs.join(" · ") }}</p>
           </li>
         </ul>

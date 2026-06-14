@@ -168,6 +168,7 @@ class WorkflowRunner:
             event.event_id,
             {
                 "local_risk_level": local_risk,
+                "local_semantics": local.get("event_semantics"),
                 "cloud_risk_level": cloud_risk,
                 "final_risk_level": final_risk,
                 "decision_source": (

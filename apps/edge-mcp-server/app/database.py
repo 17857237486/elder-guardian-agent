@@ -31,6 +31,7 @@ def init_db() -> None:
         "final_risk_level": "VARCHAR(8)",
         "decision_source": "VARCHAR(32) DEFAULT 'rule'",
         "confidence": "FLOAT DEFAULT 0",
+        "local_semantics": "VARCHAR(256)",
     }
     with engine.begin() as connection:
         for name, ddl in additions.items():

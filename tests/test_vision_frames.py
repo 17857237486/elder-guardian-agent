@@ -33,10 +33,10 @@ class VisionFrameTests(unittest.TestCase):
     def test_keyframe_selection_is_ordered_unique_and_marks_missing(self) -> None:
         triggered_at = datetime.now(timezone.utc)
         frames = [
-            Frame("before", triggered_at - timedelta(seconds=4)),
+            Frame("before", triggered_at - timedelta(seconds=2)),
             Frame("trigger", triggered_at),
         ]
-        selected = select_keyframes(frames, triggered_at, (-4000, -2000, 0, 2000, 4000))
+        selected = select_keyframes(frames, triggered_at, (-2000, -1000, 0, 1000, 2000))
         selected_ids = [frame.frame_id for frame in selected if frame is not None]
 
         self.assertEqual(selected_ids, ["before", "trigger"])

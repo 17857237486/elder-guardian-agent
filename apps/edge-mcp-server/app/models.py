@@ -45,6 +45,7 @@ class NormalizedEventModel(Base):
     image_refs_json: Mapped[str] = mapped_column(Text, default="[]")
     rule_risk_level: Mapped[str | None] = mapped_column(String(8), nullable=True)
     local_risk_level: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    local_semantics: Mapped[str | None] = mapped_column(String(256), nullable=True)
     cloud_risk_level: Mapped[str | None] = mapped_column(String(8), nullable=True)
     final_risk_level: Mapped[str | None] = mapped_column(String(8), nullable=True)
     decision_source: Mapped[str] = mapped_column(String(32), default="rule")
