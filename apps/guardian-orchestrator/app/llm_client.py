@@ -52,6 +52,13 @@ OUTPUT_CONSTRAINTS_PROMPT = (
     "只输出一个合法JSON对象，不输出Markdown、思维过程、解释、工具调用或设备控制命令。"
     "event_semantics最多20个中文字符，family_summary最多30个中文字符；"
     "所有数组最多2项，每项最多20个中文字符。confidence是0到1之间的数字。"
+    "risk_level必须且只能是P0、P1、P2、P3、P4中的一个精确字符串；"
+    "禁止输出P1,P2、P1/P2、等级数组、等级范围或附加解释。"
+)
+MULTIMODAL_SYSTEM_PROMPT = (
+    "你是居家老人安全系统的结构化分析器。必须先分析输入证据，再生成结论。"
+    "只返回包含规定结果字段的顶层JSON对象。不要返回required_fields、output_template、schema或输入数据。"
+    "不要照抄事件类型、检测器姿态或运动状态；它们只是需要与图片和传感器交叉验证的线索。"
 )
 FORBIDDEN_DECISION_KEYS = {
     "commands",
@@ -412,10 +419,30 @@ def _normalize_multimodal_output(payload: dict[str, Any], output: dict[str, Any]
         raise LLMOutputError(f"model attempted to downgrade risk from {original} to {reviewed}")
     normalized = dict(output)
     normalized["risk_level"] = reviewed
-    normalized["confidence"] = max(0.0, min(float(output.get("confidence", 0.0)), 1.0))
+    try:
+        normalized["confidence"] = max(0.0, min(float(output.get("confidence", 0.0)), 1.0))
+    except (TypeError, ValueError) as exc:
+        raise LLMOutputError("multimodal confidence must be a number") from exc
+    repaired_fields: list[str] = []
     for field in ["temporal_changes", "supporting_evidence", "contradictions", "missing_information", "recommended_followup"]:
         value = normalized.get(field)
-        normalized[field] = value if isinstance(value, list) else ([] if value is None else [str(value)])
+        if isinstance(value, str):
+            normalized[field] = [value] if value.strip() else []
+            repaired_fields.append(field)
+        elif value is None:
+            normalized[field] = []
+            repaired_fields.append(field)
+        elif isinstance(value, list):
+            if len(value) > 2:
+                raise LLMOutputError(f"multimodal field {field} contains more than 2 items")
+            normalized[field] = [str(item) for item in value if str(item).strip()]
+        else:
+            raise LLMOutputError(f"multimodal field {field} must be an array of strings")
+    for field in ["event_semantics", "family_summary"]:
+        if not isinstance(normalized.get(field), str):
+            raise LLMOutputError(f"multimodal field {field} must be a string")
+    if repaired_fields:
+        normalized["schema_repaired_fields"] = repaired_fields
     return normalized
 
 
@@ -479,24 +506,35 @@ def _compact_local_case(event: dict[str, Any], context: dict[str, Any]) -> dict[
     return {"event": compact_event, "sensor_evidence": sensor_evidence, "device_states": device_states}
 
 
+def _multimodal_schema() -> dict[str, Any]:
+    return {
+        "required_fields": {
+            "event_semantics": "string",
+            "risk_level": {
+                "type": "string",
+                "allowed_values": ["P0", "P1", "P2", "P3", "P4"],
+                "exactly_one": True,
+            },
+            "confidence": "number between 0 and 1",
+            "temporal_changes": "array of strings",
+            "supporting_evidence": "array of strings",
+            "contradictions": "array of strings",
+            "missing_information": "array of strings",
+            "recommended_followup": "array of strings",
+            "family_summary": "string",
+        }
+    }
+
+
 def build_local_multimodal_content(
     event: dict[str, Any], context: dict[str, Any], contact_sheet: Path | None
 ) -> list[dict[str, Any]]:
-    output_template = {
-        "event_semantics": "short string",
-        "risk_level": "P0, P1, P2, P3, or P4",
-        "confidence": 0.8,
-        "temporal_changes": ["short string"],
-        "supporting_evidence": ["short string"],
-        "contradictions": ["short string"],
-        "missing_information": ["short string"],
-        "recommended_followup": ["short string"],
-        "family_summary": "short string",
-    }
     if contact_sheet and contact_sheet.is_file():
         analysis_instruction = (
             "这是视觉事件。按时间顺序比较联系表中的T-2、T-1、T、T+1、T+2五个位置，重点分析人体姿态、"
-            "身体高度、画面位置和运动变化。区分突然倒地与正常坐下、主动躺卧、弯腰。"
+            "身体高度、画面位置、支撑物和运动连续性。区分突然倒地、正常坐下、主动躺卧、弯腰、遮挡和静止。"
+            "不得仅根据event_type、posture或motion_state重复结论，必须与图片和传感器交叉验证。"
+            "图像与触发线索矛盾时写入contradictions，不得通过输出多个风险等级表达不确定性。"
             "若无法确认，将疑点写入contradictions或missing_information，但必须保留事件最低风险等级。"
             "结合传感器和设备证据判断，不要仅凭单帧姿态下结论。"
         )
@@ -510,9 +548,9 @@ def build_local_multimodal_content(
         + RISK_POLICY_PROMPT
         + analysis_instruction
         + OUTPUT_CONSTRAINTS_PROMPT
-        + "必须完整输出output_template中的全部字段，不重复事实。\n"
+        + "必须完整输出required_fields列出的结果字段，但不要输出required_fields本身，不重复事实。\n"
         + json.dumps(
-            {"output_template": output_template, **_compact_local_case(event, context)},
+            {**_multimodal_schema(), **_compact_local_case(event, context)},
             ensure_ascii=False,
             default=str,
             separators=(",", ":"),
@@ -530,17 +568,6 @@ def build_cloud_multimodal_content(
     context: dict[str, Any],
     image_frames: list[tuple[int, Path]],
 ) -> list[dict[str, Any]]:
-    output_template = {
-        "event_semantics": "short string",
-        "risk_level": "P0, P1, P2, P3, or P4",
-        "confidence": 0.8,
-        "temporal_changes": ["short string"],
-        "supporting_evidence": ["short string"],
-        "contradictions": ["short string"],
-        "missing_information": ["short string"],
-        "recommended_followup": ["short string"],
-        "family_summary": "short string",
-    }
     has_images = any(path.is_file() for _, path in image_frames[:5])
     modality_instruction = (
         "这是视觉事件。独立复核各张原始关键帧；每张图片前的文字是相对触发时刻的真实标签，缺失时间点不会补图。"
@@ -554,10 +581,10 @@ def build_cloud_multimodal_content(
         + RISK_POLICY_PROMPT
         + modality_instruction
         + OUTPUT_CONSTRAINTS_PROMPT
-        + "必须完整输出output_template中的全部字段。\n"
+        + "必须完整输出required_fields列出的结果字段，但不要输出required_fields本身。\n"
         + json.dumps(
             {
-                "output_template": output_template,
+                **_multimodal_schema(),
                 "event": event,
                 "local_result": local_result,
                 "context": _compact_value(context),
@@ -594,7 +621,10 @@ class LocalMultimodalClient:
         content = build_local_multimodal_content(event, context, contact_sheet)
         body = {
             "model": settings.llm_model,
-            "messages": [{"role": "user", "content": content}],
+            "messages": [
+                {"role": "system", "content": MULTIMODAL_SYSTEM_PROMPT},
+                {"role": "user", "content": content},
+            ],
             "temperature": 0.1,
             "max_tokens": settings.llm_max_tokens,
             "response_format": {"type": "json_object"},
@@ -627,11 +657,17 @@ class CloudLLMClient:
         content = build_cloud_multimodal_content(event, local_result, context, image_frames)
         body = {
             "model": settings.cloud_llm_model,
-            "messages": [{"role": "user", "content": content}],
+            "messages": [
+                {"role": "system", "content": MULTIMODAL_SYSTEM_PROMPT},
+                {"role": "user", "content": content},
+            ],
             "temperature": 0.1,
             "max_tokens": settings.llm_max_tokens,
             "response_format": {"type": "json_object"},
+            "enable_thinking": False,
         }
+        raw_content = ""
+        parsed_output: dict[str, Any] | None = None
         try:
             async with httpx.AsyncClient(timeout=settings.cloud_llm_timeout_sec) as client:
                 response = await client.post(
@@ -640,8 +676,20 @@ class CloudLLMClient:
                     json=body,
                 )
                 response.raise_for_status()
-            output = _extract_json_object(response.json()["choices"][0]["message"].get("content") or "")
-            normalized = _normalize_multimodal_output({"event": {**event, "risk_level": local_result.get("risk_level", event.get("risk_level"))}}, output)
+            message = response.json()["choices"][0]["message"]
+            raw_content = message.get("content") or message.get("reasoning_content") or ""
+            parsed_output = _extract_json_object(raw_content)
+            normalized = _normalize_multimodal_output(
+                {"event": {**event, "risk_level": local_result.get("risk_level", event.get("risk_level"))}},
+                parsed_output,
+            )
             return {"status": "completed", **normalized}
         except Exception as exc:
-            return {"status": "failed", "error": str(exc)}
+            result: dict[str, Any] = {"status": "failed", "error": str(exc)}
+            error_raw = getattr(exc, "raw_model_content", None) or raw_content
+            error_parsed = getattr(exc, "parsed_model_output", None) or parsed_output
+            if error_raw:
+                result["rejected_model_content"] = error_raw
+            if error_parsed is not None:
+                result["rejected_model_output"] = error_parsed
+            return result
