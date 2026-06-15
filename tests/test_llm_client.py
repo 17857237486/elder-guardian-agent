@@ -14,10 +14,14 @@ from app.llm_client import (
     LLMOutputError,
     _extract_json_object,
     _normalize_multimodal_output,
+    _normalize_multimodal_response,
     _normalize_output,
     build_cloud_multimodal_content,
     build_local_multimodal_content,
 )
+from app.workflow import WorkflowRunner
+from guardian_shared.enums import EventType, RiskLevel
+from guardian_shared.v2 import NormalizedEventV2
 
 
 VALID_OUTPUT = {
@@ -135,6 +139,95 @@ class LLMClientParserTests(unittest.TestCase):
             self.assertEqual(sum(item["type"] == "image_url" for item in cloud_content), 5)
             self.assertIn('"confidence":0.8', local_content[0]["text"])
             self.assertIn("confidence must be a number", local_content[0]["text"])
+            self.assertIn("T-2s, T-1s, T, T+1s, and T+2s", local_content[0]["text"])
+            self.assertNotIn("T-4s, T-2s, T, T+2s, and T+4s", local_content[0]["text"])
+
+    def test_llm_output_error_carries_rejected_model_diagnostics(self) -> None:
+        parsed = {"event_semantics": "possible fall", "risk_level": "P3"}
+        error = LLMOutputError(
+            "model attempted to downgrade risk from P1 to P3",
+            raw_model_content=json.dumps(parsed),
+            parsed_model_output=parsed,
+        )
+
+        self.assertEqual(error.raw_model_content, json.dumps(parsed))
+        self.assertEqual(error.parsed_model_output, parsed)
+
+    def test_workflow_fallback_records_rejected_model_diagnostics(self) -> None:
+        parsed = {
+            "event_semantics": "老人跌倒后坐地",
+            "risk_level": "P3",
+            "confidence": 0.81,
+        }
+        error = LLMOutputError(
+            "model attempted to downgrade risk from P1 to P3",
+            raw_model_content=json.dumps(parsed, ensure_ascii=False),
+            parsed_model_output=parsed,
+        )
+        event = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type=EventType.SUSPECTED_FALL,
+            risk_level=RiskLevel.P1,
+            summary="发现疑似跌倒。",
+            confidence=0.92,
+        )
+
+        fallback = WorkflowRunner._fallback_result(event, error)
+
+        self.assertTrue(fallback["fallback"])
+        self.assertEqual(fallback["risk_level"], "P1")
+        self.assertEqual(fallback["rejected_model_output"], parsed)
+        self.assertEqual(fallback["rejected_model_content"], json.dumps(parsed, ensure_ascii=False))
+
+    def test_multimodal_response_records_downgrade_output(self) -> None:
+        output = {
+            "event_semantics": "老人跌倒后坐地",
+            "risk_level": "P3",
+            "confidence": 0.81,
+            "temporal_changes": ["站立变为坐地"],
+            "supporting_evidence": ["连续姿态下降"],
+            "contradictions": [],
+            "missing_information": [],
+            "recommended_followup": [],
+            "family_summary": "疑似跌倒",
+        }
+        raw = json.dumps(output, ensure_ascii=False)
+
+        with self.assertRaises(LLMOutputError) as captured:
+            _normalize_multimodal_response({"event": {"risk_level": "P1"}}, raw)
+
+        self.assertEqual(captured.exception.raw_model_content, raw)
+        self.assertEqual(captured.exception.parsed_model_output, output)
+
+    def test_multimodal_response_records_invalid_json_content(self) -> None:
+        raw = "not valid JSON"
+
+        with self.assertRaises(LLMOutputError) as captured:
+            _normalize_multimodal_response({"event": {"risk_level": "P1"}}, raw)
+
+        self.assertEqual(captured.exception.raw_model_content, raw)
+        self.assertIsNone(captured.exception.parsed_model_output)
+
+    def test_multimodal_response_records_forbidden_action_output(self) -> None:
+        output = {
+            "event_semantics": "疑似跌倒",
+            "risk_level": "P1",
+            "confidence": 0.9,
+            "temporal_changes": [],
+            "supporting_evidence": [],
+            "contradictions": [],
+            "missing_information": [],
+            "recommended_followup": [],
+            "family_summary": "疑似跌倒",
+            "commands": [{"device": "alarm", "action": "on"}],
+        }
+        raw = json.dumps(output, ensure_ascii=False)
+
+        with self.assertRaises(LLMOutputError) as captured:
+            _normalize_multimodal_response({"event": {"risk_level": "P1"}}, raw)
+
+        self.assertEqual(captured.exception.raw_model_content, raw)
+        self.assertEqual(captured.exception.parsed_model_output, output)
 
 
 if __name__ == "__main__":

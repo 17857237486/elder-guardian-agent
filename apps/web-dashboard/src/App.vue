@@ -27,9 +27,22 @@ const latestLocalAnalysis = computed(() =>
       step.event_id === latestEvent.value?.event_id && step.step_name === "local_multiframe_analysis"
   ) ?? null
 );
+const localDiagnostic = computed(() => {
+  const output = latestLocalAnalysis.value?.output;
+  if (!output?.fallback) return null;
+  const rejected = output.rejected_model_output ?? null;
+  return {
+    reason: output.error ?? "本地模型输出未通过安全校验",
+    semantics: rejected?.event_semantics ?? "--",
+    riskLevel: rejected?.risk_level ?? "--",
+    confidence: rejected?.confidence ?? "--",
+    parsed: rejected,
+    raw: output.rejected_model_content ?? ""
+  };
+});
 const localSemanticStatus = computed(() => {
   if (latestLocalAnalysis.value?.status === "failed" || latestLocalAnalysis.value?.output?.fallback) {
-    return { state: "fallback", text: "本地模型分析未完成，规则判断和安全动作仍然有效。" };
+    return { state: "fallback", text: "模型输出已被安全策略拒绝，最终采用规则结果。" };
   }
   if (latestEvent.value?.local_semantics) {
     return { state: "completed", text: latestEvent.value.local_semantics };
@@ -83,6 +96,25 @@ onMounted(async () => {
         本地风险 {{ latestEvent?.local_risk_level ?? "--" }} ·
         {{ latestLocalAnalysis?.model ?? "internvl3.5-4b-rk3588" }}
       </p>
+    </section>
+
+    <section v-if="localDiagnostic" class="model-diagnostic">
+      <h2>本地模型拒绝诊断</h2>
+      <p class="diagnostic-warning">该输出已被安全策略拒绝，最终风险和处置采用一级规则结果。</p>
+      <div class="diagnostic-summary">
+        <p><span>拒绝原因</span><strong>{{ localDiagnostic.reason }}</strong></p>
+        <p><span>原始事件语义</span><strong>{{ localDiagnostic.semantics }}</strong></p>
+        <p><span>原始风险</span><strong>{{ localDiagnostic.riskLevel }}</strong></p>
+        <p><span>原始置信度</span><strong>{{ localDiagnostic.confidence }}</strong></p>
+      </div>
+      <details v-if="localDiagnostic.parsed">
+        <summary>查看解析后的模型 JSON</summary>
+        <pre>{{ JSON.stringify(localDiagnostic.parsed, null, 2) }}</pre>
+      </details>
+      <details v-if="localDiagnostic.raw">
+        <summary>查看模型原始回复</summary>
+        <pre>{{ localDiagnostic.raw }}</pre>
+      </details>
     </section>
 
     <section class="grid">

@@ -51,7 +51,16 @@ MULTIMODAL_REQUIRED_FIELDS = {
 
 
 class LLMOutputError(ValueError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        raw_model_content: str | None = None,
+        parsed_model_output: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.raw_model_content = raw_model_content
+        self.parsed_model_output = parsed_model_output
 
 
 def _extract_named_json_object(content: str, field: str) -> dict[str, Any] | None:
@@ -370,6 +379,19 @@ def _normalize_multimodal_output(payload: dict[str, Any], output: dict[str, Any]
     return normalized
 
 
+def _normalize_multimodal_response(payload: dict[str, Any], raw_content: str) -> dict[str, Any]:
+    parsed_output: dict[str, Any] | None = None
+    try:
+        parsed_output = _extract_json_object(raw_content)
+        return _normalize_multimodal_output(payload, parsed_output)
+    except LLMOutputError as exc:
+        raise LLMOutputError(
+            str(exc),
+            raw_model_content=raw_content,
+            parsed_model_output=parsed_output,
+        ) from exc
+
+
 def _compact_local_case(event: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     rule_payload = event.get("rule_trace", {}).get("payload", {}) if isinstance(event.get("rule_trace"), dict) else {}
     compact_event = {
@@ -436,7 +458,7 @@ def build_local_multimodal_content(
         "Every array must contain at most one item of at most 8 Chinese characters. Complete all JSON "
         "fields before the token limit and do not repeat facts. Analyze this elder-care event by comparing "
         "posture, position, and motion across "
-        "T-4s, T-2s, T, T+2s, and T+4s. Cross-check the visual sequence against sensor "
+        "T-2s, T-1s, T, T+1s, and T+2s. Cross-check the visual sequence against sensor "
         "and device evidence. Risk may only stay unchanged or increase. Do not output device "
         "control commands. Return only one compact JSON object matching output_template exactly. "
         "event_semantics and family_summary must be strings; confidence must be a number from 0 to 1; "
@@ -521,8 +543,8 @@ class LocalMultimodalClient:
                 json=body,
             )
             response.raise_for_status()
-        output = _extract_json_object(response.json()["choices"][0]["message"].get("content") or "")
-        return _normalize_multimodal_output({"event": event}, output)
+        raw_content = response.json()["choices"][0]["message"].get("content") or ""
+        return _normalize_multimodal_response({"event": event}, raw_content)
 
 
 class CloudLLMClient:

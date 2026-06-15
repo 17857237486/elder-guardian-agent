@@ -122,7 +122,7 @@ class WorkflowRunner:
         try:
             local = await self.local_llm.analyze(event=saved_event, context=context, contact_sheet=contact_sheet)
         except Exception as exc:
-            local = self._fallback_result(event, str(exc))
+            local = self._fallback_result(event, exc)
         local["latency_ms"] = round((perf_counter() - local_started) * 1000, 1)
         await self._record_step(
             workflow,
@@ -220,10 +220,10 @@ class WorkflowRunner:
         return second if RISK_ORDER[second] > RISK_ORDER[first] else first
 
     @staticmethod
-    def _fallback_result(event: NormalizedEventV2, error: str) -> dict[str, Any]:
-        return {
+    def _fallback_result(event: NormalizedEventV2, error: Exception | str) -> dict[str, Any]:
+        result = {
             "fallback": True,
-            "error": error,
+            "error": str(error),
             "event_semantics": event.summary,
             "risk_level": risk_text(event.risk_level),
             "confidence": event.confidence,
@@ -234,6 +234,13 @@ class WorkflowRunner:
             "recommended_followup": [],
             "family_summary": event.summary,
         }
+        raw_content = getattr(error, "raw_model_content", None)
+        parsed_output = getattr(error, "parsed_model_output", None)
+        if raw_content is not None:
+            result["rejected_model_content"] = raw_content
+        if parsed_output is not None:
+            result["rejected_model_output"] = parsed_output
+        return result
 
     async def _execute_p0(self, workflow: WorkflowV2, event: NormalizedEventV2) -> dict[str, Any]:
         if str(event.event_type) == EventType.GAS_LEAK.value:
