@@ -8,6 +8,8 @@ from time import perf_counter
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from guardian_shared.enums import DeviceAction, DeviceType, EventType, RiskLevel
 from guardian_shared.v2 import (
     ActionCommandV2,
@@ -28,6 +30,12 @@ from app.llm_client import CloudLLMClient, LocalMultimodalClient
 
 logger = logging.getLogger(__name__)
 RISK_ORDER = {"P4": 0, "P3": 1, "P2": 2, "P1": 3, "P0": 4}
+DETERMINISTIC_P3_EVENTS = {
+    EventType.CO2_HIGH.value,
+    EventType.TEMPERATURE_HIGH.value,
+    EventType.TEMPERATURE_LOW.value,
+    "humidity_abnormal",
+}
 
 
 def risk_text(value: Any) -> str:
@@ -82,6 +90,9 @@ class WorkflowRunner:
         saved_event: dict[str, Any],
         baseline: dict[str, Any],
     ) -> None:
+        if self._is_deterministic_p3(event):
+            await self._complete_deterministic_p3(workflow, event, saved_event, baseline)
+            return
         async with self.llm_semaphore:
             try:
                 await asyncio.wait_for(
@@ -221,9 +232,90 @@ class WorkflowRunner:
         return second if RISK_ORDER[second] > RISK_ORDER[first] else first
 
     @staticmethod
+    def _is_deterministic_p3(event: NormalizedEventV2) -> bool:
+        return risk_text(event.risk_level) == "P3" and str(event.event_type) in DETERMINISTIC_P3_EVENTS
+
+    async def _complete_deterministic_p3(
+        self,
+        workflow: WorkflowV2,
+        event: NormalizedEventV2,
+        saved_event: dict[str, Any],
+        baseline: dict[str, Any],
+    ) -> None:
+        rule_risk = risk_text(event.risk_level)
+        skipped = {
+            "status": "skipped",
+            "reason": "deterministic_p3_rule",
+            "event_semantics": event.summary,
+            "risk_level": rule_risk,
+            "confidence": event.confidence,
+            "fallback": False,
+        }
+        await self._record_step(
+            workflow,
+            event,
+            "local_multiframe_analysis",
+            {"event": saved_event},
+            skipped,
+            status=StepStatus.SKIPPED,
+            model=None,
+        )
+        await self._record_step(
+            workflow,
+            event,
+            "local_policy_execution",
+            skipped,
+            {"status": "baseline_retained", "baseline": baseline},
+        )
+        cloud = {"status": "not_required", "reason": "deterministic_p3_rule"}
+        await self._record_step(
+            workflow,
+            event,
+            "cloud_review",
+            skipped,
+            cloud,
+            status=StepStatus.SKIPPED,
+            model=None,
+        )
+        await self.edge.update_event_analysis(
+            event.event_id,
+            {
+                "local_risk_level": None,
+                "local_semantics": None,
+                "cloud_risk_level": None,
+                "final_risk_level": rule_risk,
+                "decision_source": "rule",
+                "confidence": event.confidence,
+                "summary": event.summary,
+            },
+        )
+        await self._record_step(
+            workflow,
+            event,
+            "final_advisory",
+            {"local": skipped, "cloud": cloud},
+            {
+                "final_risk_level": rule_risk,
+                "family_summary": event.summary,
+                "decision_source": "rule",
+            },
+            model=None,
+        )
+
+    @staticmethod
     def _fallback_result(event: NormalizedEventV2, error: Exception | str) -> dict[str, Any]:
+        fallback_type = "request_failed"
+        if isinstance(error, httpx.HTTPStatusError) and error.response.status_code == 503:
+            fallback_type = "service_unavailable"
+        elif isinstance(error, (httpx.TimeoutException, TimeoutError, asyncio.TimeoutError)):
+            fallback_type = "timeout"
+        elif getattr(error, "raw_model_content", None) is not None or getattr(error, "parsed_model_output", None) is not None:
+            fallback_type = "safety_rejected"
+        elif error.__class__.__name__ == "LLMOutputError":
+            fallback_type = "safety_rejected"
         result = {
             "fallback": True,
+            "fallback_type": fallback_type,
             "error": str(error),
             "event_semantics": event.summary,
             "risk_level": risk_text(event.risk_level),
@@ -335,6 +427,9 @@ class WorkflowRunner:
         step_name: str,
         input_payload: dict[str, Any],
         output_payload: dict[str, Any],
+        *,
+        status: StepStatus = StepStatus.COMPLETED,
+        model: str | None = settings.llm_model,
     ) -> None:
         await self.edge.record_step(
             WorkflowStepV2(
@@ -342,8 +437,8 @@ class WorkflowRunner:
                 event_id=event.event_id,
                 elder_id=event.elder_id,
                 step_name=step_name,
-                status=StepStatus.COMPLETED,
-                model=settings.llm_model,
+                status=status,
+                model=model,
                 input=input_payload,
                 output=output_payload,
                 completed_at=datetime.now(timezone.utc),

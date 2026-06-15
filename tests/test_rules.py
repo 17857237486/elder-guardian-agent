@@ -14,6 +14,20 @@ from app import rules
 
 
 class RuleTests(unittest.TestCase):
+    def test_abnormal_heart_rate_is_p1(self) -> None:
+        event = rules.classify_observation(
+            {
+                "observation_id": "obs-heart-rate",
+                "elder_id": "elder_001",
+                "kind": "vital",
+                "payload": {"room": "living_room", "heart_rate": 138, "spo2": 96},
+                "observed_at": datetime(2026, 6, 14, 15, 30, tzinfo=timezone.utc).isoformat(),
+            }
+        )
+        self.assertIsNotNone(event)
+        self.assertEqual(str(event.event_type), "heart_rate_abnormal")
+        self.assertEqual(str(event.risk_level), "P1")
+
     def test_abnormal_humidity_is_screened_at_level_one(self) -> None:
         event = rules.classify_observation(
             {

@@ -9,6 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import httpx
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "apps" / "guardian-orchestrator"))
@@ -388,6 +390,24 @@ class LLMClientParserTests(unittest.TestCase):
                 {**output, "commands": [{"device": "alarm", "action": "on"}]},
             )
 
+    def test_heart_rate_local_output_accepts_p1_or_p0_and_rejects_downgrades(self) -> None:
+        output = {
+            "event_semantics": "心率明显偏高",
+            "risk_level": "P1",
+            "confidence": 0.9,
+            "supporting_evidence": ["心率138次每分钟"],
+            "family_summary": "老人心率异常需确认",
+        }
+        payload = {"event": {"event_type": "heart_rate_abnormal", "risk_level": "P1"}}
+
+        for accepted in ("P1", "P0"):
+            normalized = _normalize_local_multimodal_output(payload, {**output, "risk_level": accepted})
+            self.assertEqual(normalized["risk_level"], accepted)
+
+        for rejected in ("P2", "P3", "P4"):
+            with self.subTest(risk_level=rejected), self.assertRaises(LLMOutputError):
+                _normalize_local_multimodal_output(payload, {**output, "risk_level": rejected})
+
     def test_cloud_request_disables_thinking_and_preserves_invalid_response(self) -> None:
         captured: dict[str, object] = {}
 
@@ -618,9 +638,72 @@ class LLMClientParserTests(unittest.TestCase):
         fallback = WorkflowRunner._fallback_result(event, error)
 
         self.assertTrue(fallback["fallback"])
+        self.assertEqual(fallback["fallback_type"], "safety_rejected")
         self.assertEqual(fallback["risk_level"], "P1")
         self.assertEqual(fallback["rejected_model_output"], parsed)
         self.assertEqual(fallback["rejected_model_content"], json.dumps(parsed, ensure_ascii=False))
+
+    def test_workflow_fallback_classifies_503_and_timeout(self) -> None:
+        event = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type=EventType.HEART_RATE_ABNORMAL,
+            risk_level=RiskLevel.P1,
+            summary="心率异常",
+            confidence=0.95,
+        )
+        request = httpx.Request("POST", "http://172.30.0.1:8001/v1/chat/completions")
+        response = httpx.Response(503, request=request)
+        unavailable = WorkflowRunner._fallback_result(
+            event,
+            httpx.HTTPStatusError("service unavailable", request=request, response=response),
+        )
+        timed_out = WorkflowRunner._fallback_result(event, httpx.ReadTimeout("timed out", request=request))
+
+        self.assertEqual(unavailable["fallback_type"], "service_unavailable")
+        self.assertEqual(timed_out["fallback_type"], "timeout")
+        self.assertEqual(unavailable["risk_level"], "P1")
+        self.assertEqual(timed_out["risk_level"], "P1")
+
+    def test_deterministic_p3_events_skip_local_and_cloud_models(self) -> None:
+        for event_type in (
+            EventType.CO2_HIGH,
+            EventType.TEMPERATURE_HIGH,
+            EventType.TEMPERATURE_LOW,
+            "humidity_abnormal",
+        ):
+            with self.subTest(event_type=str(event_type)):
+                runner = WorkflowRunner()
+                runner.local_llm.analyze = AsyncMock(side_effect=AssertionError("local model must not run"))
+                runner.cloud_llm.review = AsyncMock(side_effect=AssertionError("cloud model must not run"))
+                runner._record_step = AsyncMock()
+                runner.edge.update_event_analysis = AsyncMock(return_value={})
+                event = NormalizedEventV2(
+                    elder_id="elder_001",
+                    event_type=event_type,
+                    risk_level=RiskLevel.P3,
+                    summary="确定性环境异常",
+                    confidence=1.0,
+                    source_kind="environment",
+                )
+
+                asyncio.run(
+                    runner._run_analysis(
+                        SimpleNamespace(workflow_id="wf_p3"),
+                        event,
+                        {"event_type": str(event_type), "risk_level": "P3"},
+                        {"status": "executed", "actions": ["policy-gated"]},
+                    )
+                )
+
+                runner.local_llm.analyze.assert_not_awaited()
+                runner.cloud_llm.review.assert_not_awaited()
+                update_payload = runner.edge.update_event_analysis.await_args.args[1]
+                self.assertEqual(update_payload["final_risk_level"], "P3")
+                self.assertEqual(update_payload["decision_source"], "rule")
+                steps = {call.args[2]: call.args[4] for call in runner._record_step.await_args_list}
+                self.assertEqual(steps["local_multiframe_analysis"]["status"], "skipped")
+                self.assertEqual(steps["cloud_review"]["status"], "not_required")
+                self.assertEqual(steps["final_advisory"]["final_risk_level"], "P3")
 
     def test_final_advisory_prefers_completed_cloud_summary(self) -> None:
         class FakeLocalClient:

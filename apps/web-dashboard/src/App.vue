@@ -38,8 +38,16 @@ const latestLocalAnalysis = computed(() =>
   ) ?? null
 );
 const localSemanticStatus = computed(() => {
-  if (latestLocalAnalysis.value?.status === "failed" || latestLocalAnalysis.value?.output?.fallback) {
-    return { state: "fallback", text: "本地模型不可用，已采用规则结果" };
+  const analysis = latestLocalAnalysis.value;
+  if (analysis?.output?.reason === "deterministic_p3_rule") {
+    return { state: "completed", text: "确定性规则处置，无需本地模型" };
+  }
+  if (analysis?.status === "failed" || analysis?.output?.fallback) {
+    const fallbackType = analysis?.output?.fallback_type;
+    if (fallbackType === "service_unavailable") return { state: "fallback", text: "本地模型服务暂不可用，已采用规则结果" };
+    if (fallbackType === "timeout") return { state: "fallback", text: "本地模型分析超时，已采用规则结果" };
+    if (fallbackType === "safety_rejected") return { state: "fallback", text: "模型输出未通过安全校验，已采用规则结果" };
+    return { state: "fallback", text: "本地模型请求失败，已采用规则结果" };
   }
   if (latestEvent.value?.local_semantics) {
     return { state: "completed", text: latestEvent.value.local_semantics };
@@ -81,10 +89,18 @@ function workflowSummary(step: AnyRecord): string {
     return `${output.status ?? "已完成"}${count !== undefined ? ` · ${count}/5 帧` : ""}`;
   }
   if (step.step_name === "local_multiframe_analysis") {
-    return clip(`${output.event_semantics ?? "本地分析"} · ${output.risk_level ?? "--"}${output.fallback ? " · 规则回退" : ""}`);
+    if (output.reason === "deterministic_p3_rule") return "确定性规则处置，无需本地模型";
+    const fallbackLabel: Record<string, string> = {
+      service_unavailable: "模型服务暂不可用",
+      timeout: "模型分析超时",
+      safety_rejected: "输出未通过安全校验",
+      request_failed: "模型请求失败"
+    };
+    return clip(`${output.event_semantics ?? "本地分析"} · ${output.risk_level ?? "--"}${output.fallback ? ` · ${fallbackLabel[output.fallback_type] ?? "规则回退"}` : ""}`);
   }
   if (step.step_name === "local_policy_execution") return clip(output.status ?? "本地策略已执行");
   if (step.step_name === "cloud_review") {
+    if (output.reason === "deterministic_p3_rule") return "确定性规则处置，无需云端复核";
     return clip(`${output.status ?? step.status}${output.risk_level ? ` · ${output.risk_level}` : ""}${output.family_summary ? ` · ${output.family_summary}` : ""}`);
   }
   if (step.step_name === "final_advisory") return clip(`${output.final_risk_level ?? "--"} · ${output.family_summary ?? "最终建议已生成"}`);

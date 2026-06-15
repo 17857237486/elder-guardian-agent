@@ -53,6 +53,12 @@ class BackgroundEventTests(unittest.TestCase):
         sample = build_event_samples("dinner", "humidity_abnormal", 0, 10, 5, "elder_001")[-1]
         self.assertGreater(sample["environment"]["humidity"], 75)
 
+    def test_heart_rate_scenario_crosses_p1_threshold_with_normal_spo2(self) -> None:
+        sample = build_event_samples("dinner", "heart_rate_abnormal", 0, 10, 5, "elder_001")[-1]
+        self.assertEqual(sample["vital"]["heart_rate"], 138)
+        self.assertGreaterEqual(sample["vital"]["spo2"], 92)
+        self.assertEqual(sample["risk_hint"]["level"], "P1")
+
 
 if __name__ == "__main__":
     unittest.main()
