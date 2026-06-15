@@ -133,14 +133,98 @@ class LLMClientParserTests(unittest.TestCase):
                 frames.append(frame)
 
             local_content = build_local_multimodal_content({"risk_level": "P2"}, {}, contact_sheet)
-            cloud_content = build_cloud_multimodal_content({"risk_level": "P2"}, {}, {}, frames)
+            cloud_content = build_cloud_multimodal_content(
+                {"event_type": "long_static", "risk_level": "P2"},
+                {},
+                {},
+                list(zip([-2000, -1000, 0, 1000, 2000], frames, strict=True)),
+            )
 
             self.assertEqual(sum(item["type"] == "image_url" for item in local_content), 1)
             self.assertEqual(sum(item["type"] == "image_url" for item in cloud_content), 5)
             self.assertIn('"confidence":0.8', local_content[0]["text"])
-            self.assertIn("confidence must be a number", local_content[0]["text"])
-            self.assertIn("T-2s, T-1s, T, T+1s, and T+2s", local_content[0]["text"])
-            self.assertNotIn("T-4s, T-2s, T, T+2s, and T+4s", local_content[0]["text"])
+            self.assertIn("T-2、T-1、T、T+1、T+2", local_content[0]["text"])
+            self.assertIn("suspected_fall只能输出P1或P0", local_content[0]["text"])
+            labels = [item["text"] for item in cloud_content if item["type"] == "text"][1:]
+            self.assertEqual(
+                labels,
+                [
+                    "关键帧时间标签：T-2s（offset_ms=-2000）",
+                    "关键帧时间标签：T-1s（offset_ms=-1000）",
+                    "关键帧时间标签：T（offset_ms=0）",
+                    "关键帧时间标签：T+1s（offset_ms=1000）",
+                    "关键帧时间标签：T+2s（offset_ms=2000）",
+                ],
+            )
+
+    def test_nonvisual_prompt_does_not_claim_visual_evidence(self) -> None:
+        content = build_local_multimodal_content(
+            {"event_type": "heart_rate_abnormal", "risk_level": "P1"}, {}, None
+        )
+
+        self.assertEqual(len(content), 1)
+        self.assertIn("这是非视觉事件，没有图片", content[0]["text"])
+        self.assertNotIn("比较联系表", content[0]["text"])
+
+    def test_cloud_frame_labels_preserve_missing_offsets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            before = root / "before.jpg"
+            trigger = root / "trigger.jpg"
+            after = root / "after.jpg"
+            for path in (before, trigger, after):
+                path.write_bytes(b"frame")
+
+            content = build_cloud_multimodal_content(
+                {"event_type": "suspected_fall", "risk_level": "P1"},
+                {},
+                {},
+                [(-2000, before), (0, trigger), (2000, after)],
+            )
+            labels = [item["text"] for item in content if item["type"] == "text"][1:]
+
+            self.assertEqual(
+                labels,
+                [
+                    "关键帧时间标签：T-2s（offset_ms=-2000）",
+                    "关键帧时间标签：T（offset_ms=0）",
+                    "关键帧时间标签：T+2s（offset_ms=2000）",
+                ],
+            )
+
+    def test_event_minimum_risk_is_enforced(self) -> None:
+        valid = {
+            "event_semantics": "疑似跌倒",
+            "risk_level": "P2",
+            "confidence": 0.8,
+            "temporal_changes": [],
+            "supporting_evidence": [],
+            "contradictions": [],
+            "missing_information": [],
+            "recommended_followup": [],
+            "family_summary": "疑似跌倒",
+        }
+        cases = [
+            ("suspected_fall", "P4", "P2"),
+            ("long_static", "P4", "P3"),
+            ("night_abnormal_activity", "P4", "P3"),
+            ("co2_high", "P4", "P4"),
+            ("gas_leak", "P4", "P1"),
+        ]
+        for event_type, rule_risk, model_risk in cases:
+            with self.subTest(event_type=event_type):
+                output = {**valid, "risk_level": model_risk}
+                with self.assertRaises(LLMOutputError):
+                    _normalize_multimodal_output(
+                        {"event": {"event_type": event_type, "risk_level": rule_risk}}, output
+                    )
+
+        for accepted in ("P1", "P0"):
+            output = {**valid, "risk_level": accepted}
+            normalized = _normalize_multimodal_output(
+                {"event": {"event_type": "suspected_fall", "risk_level": "P4"}}, output
+            )
+            self.assertEqual(normalized["risk_level"], accepted)
 
     def test_llm_output_error_carries_rejected_model_diagnostics(self) -> None:
         parsed = {"event_semantics": "possible fall", "risk_level": "P3"}

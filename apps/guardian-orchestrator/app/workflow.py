@@ -104,7 +104,7 @@ class WorkflowRunner:
         saved_event: dict[str, Any],
         baseline: dict[str, Any],
     ) -> None:
-        manifest, contact_sheet, image_paths = await self._collect_frames(event)
+        manifest, contact_sheet, image_frames = await self._collect_frames(event)
         await self._record_step(
             workflow,
             event,
@@ -149,7 +149,7 @@ class WorkflowRunner:
                 event={**saved_event, "risk_level": local_risk},
                 local_result=local,
                 context=context,
-                image_paths=image_paths if risk_text(event.source_kind) == "VISION" and len(image_paths) >= 3 else [],
+                image_frames=image_frames if risk_text(event.source_kind) == "VISION" and len(image_frames) >= 3 else [],
             )
             cloud["latency_ms"] = round((perf_counter() - cloud_started) * 1000, 1)
         await self._record_step(workflow, event, "cloud_review", local, cloud)
@@ -190,7 +190,7 @@ class WorkflowRunner:
 
     async def _collect_frames(
         self, event: NormalizedEventV2
-    ) -> tuple[dict[str, Any] | None, Path | None, list[Path]]:
+    ) -> tuple[dict[str, Any] | None, Path | None, list[tuple[int, Path]]]:
         if risk_text(event.source_kind) != "VISION" or not event.frame_set_id:
             return None, None, []
         root = Path(settings.snapshot_root)
@@ -206,12 +206,12 @@ class WorkflowRunner:
             return {"frame_set_id": event.frame_set_id, "status": "timeout", "frames": []}, None, []
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         contact_sheet = root / manifest["contact_sheet_path"]
-        image_paths = [
-            root / frame["relative_path"]
+        image_frames = [
+            (int(frame["offset_ms"]), root / frame["relative_path"])
             for frame in manifest.get("frames", [])
-            if not frame.get("missing") and frame.get("relative_path")
+            if not frame.get("missing") and frame.get("relative_path") and frame.get("offset_ms") is not None
         ]
-        return manifest, contact_sheet, image_paths
+        return manifest, contact_sheet, image_frames
 
     @staticmethod
     def _higher_risk(first: str, second: str | None) -> str:

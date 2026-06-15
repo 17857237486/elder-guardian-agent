@@ -26,6 +26,33 @@ STEP_TIMEOUT_BUDGETS = {
     "advisory_conversation": 45,
 }
 RISK_ORDER = {"P4": 0, "P3": 1, "P2": 2, "P1": 3, "P0": 4}
+EVENT_MINIMUM_RISK = {
+    "gas_leak": "P0",
+    "spo2_low": "P1",
+    "heart_rate_abnormal": "P1",
+    "suspected_fall": "P1",
+    "long_static": "P2",
+    "night_abnormal_activity": "P2",
+    "co2_high": "P3",
+    "temperature_high": "P3",
+    "temperature_low": "P3",
+    "humidity_abnormal": "P3",
+    "normal": "P4",
+}
+RISK_POLICY_PROMPT = (
+    "风险等级政策：P0=紧急危险，包括燃气异常、血氧低于88%或有明确证据的即时生命危险；"
+    "P1=高风险，包括疑似跌倒、血氧88%至91%、心率低于45或高于130；"
+    "P2=中风险，包括长时间静止、北京时间22:00至次日06:00卧室持续无人5分钟的夜间异常活动；"
+    "P3=低风险，包括CO2、温度、湿度等环境异常；P4=未发现风险，仅记录。"
+    "输入事件的rule_risk_level以及上述事件类型等级都是最低风险等级。模型只能保持或升级，不能因画面模糊、"
+    "证据矛盾、置信度较低或老人之后起身而降级。suspected_fall只能输出P1或P0；"
+    "只有存在明确即时生命危险证据时才升级到P0，不能因一般担忧升级。"
+)
+OUTPUT_CONSTRAINTS_PROMPT = (
+    "只输出一个合法JSON对象，不输出Markdown、思维过程、解释、工具调用或设备控制命令。"
+    "event_semantics最多20个中文字符，family_summary最多30个中文字符；"
+    "所有数组最多2项，每项最多20个中文字符。confidence是0到1之间的数字。"
+)
 FORBIDDEN_DECISION_KEYS = {
     "commands",
     "command",
@@ -150,6 +177,19 @@ def _event_risk_level(payload: dict[str, Any]) -> str | None:
         if value is not None:
             return str(value).split(".")[-1].upper()
     return None
+
+
+def _event_type(payload: dict[str, Any]) -> str | None:
+    event = payload.get("event")
+    if not isinstance(event, dict) or event.get("event_type") is None:
+        return None
+    return str(event["event_type"]).split(".")[-1].lower()
+
+
+def _minimum_allowed_risk(payload: dict[str, Any]) -> str:
+    rule_risk = _event_risk_level(payload) or "P4"
+    event_floor = EVENT_MINIMUM_RISK.get(_event_type(payload) or "", "P4")
+    return event_floor if RISK_ORDER[event_floor] > RISK_ORDER.get(rule_risk, 0) else rule_risk
 
 
 def _contains_forbidden_action_key(value: Any) -> bool:
@@ -364,7 +404,7 @@ def _normalize_multimodal_output(payload: dict[str, Any], output: dict[str, Any]
         raise LLMOutputError(f"multimodal output missing required fields: {', '.join(missing)}")
     if _contains_forbidden_action_key(output):
         raise LLMOutputError("multimodal output contains forbidden device control fields")
-    original = _event_risk_level(payload) or "P4"
+    original = _minimum_allowed_risk(payload)
     reviewed = str(output.get("risk_level", original)).split(".")[-1].upper()
     if reviewed not in RISK_ORDER:
         raise LLMOutputError(f"invalid risk level: {reviewed}")
@@ -453,16 +493,24 @@ def build_local_multimodal_content(
         "recommended_followup": ["short string"],
         "family_summary": "short string",
     }
+    if contact_sheet and contact_sheet.is_file():
+        analysis_instruction = (
+            "这是视觉事件。按时间顺序比较联系表中的T-2、T-1、T、T+1、T+2五个位置，重点分析人体姿态、"
+            "身体高度、画面位置和运动变化。区分突然倒地与正常坐下、主动躺卧、弯腰。"
+            "若无法确认，将疑点写入contradictions或missing_information，但必须保留事件最低风险等级。"
+            "结合传感器和设备证据判断，不要仅凭单帧姿态下结论。"
+        )
+    else:
+        analysis_instruction = (
+            "这是非视觉事件，没有图片。只分析事件、传感器和设备上下文，不要声称看到了画面、姿态或连续动作。"
+            "证据不足时写入missing_information，但必须保留事件最低风险等级。"
+        )
     prompt = (
-        "STRICT LENGTH: event_semantics and family_summary must each be at most 12 Chinese characters. "
-        "Every array must contain at most one item of at most 8 Chinese characters. Complete all JSON "
-        "fields before the token limit and do not repeat facts. Analyze this elder-care event by comparing "
-        "posture, position, and motion across "
-        "T-2s, T-1s, T, T+1s, and T+2s. Cross-check the visual sequence against sensor "
-        "and device evidence. Risk may only stay unchanged or increase. Do not output device "
-        "control commands. Return only one compact JSON object matching output_template exactly. "
-        "event_semantics and family_summary must be strings; confidence must be a number from 0 to 1; "
-        "the other evidence fields must be arrays of short strings. Use at most two items per array.\n"
+        "你是RK3588本地老人安全事件分析器。先遵守确定性规则，再进行语义分析。"
+        + RISK_POLICY_PROMPT
+        + analysis_instruction
+        + OUTPUT_CONSTRAINTS_PROMPT
+        + "必须完整输出output_template中的全部字段，不重复事实。\n"
         + json.dumps(
             {"output_template": output_template, **_compact_local_case(event, context)},
             ensure_ascii=False,
@@ -477,7 +525,10 @@ def build_local_multimodal_content(
 
 
 def build_cloud_multimodal_content(
-    event: dict[str, Any], local_result: dict[str, Any], context: dict[str, Any], image_paths: list[Path]
+    event: dict[str, Any],
+    local_result: dict[str, Any],
+    context: dict[str, Any],
+    image_frames: list[tuple[int, Path]],
 ) -> list[dict[str, Any]]:
     output_template = {
         "event_semantics": "short string",
@@ -490,10 +541,20 @@ def build_cloud_multimodal_content(
         "recommended_followup": ["short string"],
         "family_summary": "short string",
     }
+    has_images = any(path.is_file() for _, path in image_frames[:5])
+    modality_instruction = (
+        "这是视觉事件。独立复核各张原始关键帧；每张图片前的文字是相对触发时刻的真实标签，缺失时间点不会补图。"
+        "比较姿态、身体高度、位置和动作变化，区分突然倒地与正常坐下、主动躺卧、弯腰。"
+        if has_images
+        else "这是非视觉事件，没有图片。仅复核结构化传感器证据、规则结果和本地模型摘要。"
+    )
     prompt = (
-        "Review this elder-care risk after local handling. Risk may only stay unchanged or "
-        "increase. Do not output device control commands. Return only one compact JSON object "
-        "matching output_template exactly. Images are ordered by event-relative time.\n"
+        "你是云端老人安全风险复核模型。规则处置和本地处置已经执行；你只能独立复核、升级风险、补充证据和家属说明，"
+        "不能降级风险、撤销既有动作或直接控制设备。"
+        + RISK_POLICY_PROMPT
+        + modality_instruction
+        + OUTPUT_CONSTRAINTS_PROMPT
+        + "必须完整输出output_template中的全部字段。\n"
         + json.dumps(
             {
                 "output_template": output_template,
@@ -506,8 +567,11 @@ def build_cloud_multimodal_content(
         )
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-    for path in image_paths[:5]:
+    for offset_ms, path in image_frames[:5]:
         if path.is_file():
+            seconds = offset_ms / 1000
+            label = "T" if offset_ms == 0 else f"T{seconds:+g}s"
+            content.append({"type": "text", "text": f"关键帧时间标签：{label}（offset_ms={offset_ms}）"})
             content.append({"type": "image_url", "image_url": {"url": _image_data_url(path)}})
     return content
 
@@ -554,13 +618,13 @@ class CloudLLMClient:
         event: dict[str, Any],
         local_result: dict[str, Any],
         context: dict[str, Any],
-        image_paths: list[Path],
+        image_frames: list[tuple[int, Path]],
     ) -> dict[str, Any]:
         if not settings.cloud_llm_enabled:
             return {"status": "disabled"}
         if not settings.cloud_llm_base_url or not settings.cloud_llm_model:
             return {"status": "misconfigured"}
-        content = build_cloud_multimodal_content(event, local_result, context, image_paths)
+        content = build_cloud_multimodal_content(event, local_result, context, image_frames)
         body = {
             "model": settings.cloud_llm_model,
             "messages": [{"role": "user", "content": content}],

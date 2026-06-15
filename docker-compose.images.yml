@@ -95,6 +95,9 @@ services:
     image: ${IMAGE_PREFIX}/guardian-orchestrator:${IMAGE_TAG:-latest}
     restart: unless-stopped
     extra_hosts: *service-hosts
+    dns:
+      - 223.5.5.5
+      - 223.6.6.6
     depends_on:
       edge-mcp-server:
         condition: service_healthy
@@ -115,6 +118,7 @@ services:
       CLOUD_LLM_TIMEOUT_SEC: ${CLOUD_LLM_TIMEOUT_SEC:-60}
     ports: ["${ORCHESTRATOR_PUBLIC_PORT:-8020}:8020"]
     volumes:
+      - ./deploy/rk3588/orchestrator-resolv.conf:/etc/resolv.conf:ro
       - ./data/snapshots:/app/data/snapshots:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8020/health', timeout=3)"]
