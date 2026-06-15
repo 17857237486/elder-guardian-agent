@@ -48,12 +48,24 @@ RISK_POLICY_PROMPT = (
     "证据矛盾、置信度较低或老人之后起身而降级。suspected_fall只能输出P1或P0；"
     "只有存在明确即时生命危险证据时才升级到P0，不能因一般担忧升级。"
 )
-OUTPUT_CONSTRAINTS_PROMPT = (
-    "只输出一个合法JSON对象，不输出Markdown、思维过程、解释、工具调用或设备控制命令。"
-    "event_semantics最多20个中文字符，family_summary最多30个中文字符；"
-    "所有数组最多2项，每项最多20个中文字符。confidence是0到1之间的数字。"
-    "risk_level必须且只能是P0、P1、P2、P3、P4中的一个精确字符串；"
-    "禁止输出P1,P2、P1/P2、等级数组、等级范围或附加解释。"
+LOCAL_RISK_POLICY_PROMPT = (
+    "风险含义：P0即时生命危险，P1严重人身风险，P2需关注，P3环境轻度异常，P4无风险。"
+    "风险只能保持或升级minimum_risk_level；仅有明确即时生命危险证据才可升级到P0。"
+)
+LOCAL_OUTPUT_CONTRACT = (
+    "只输出顶层JSON，不输出Markdown、解释、输入数据或控制命令。字段："
+    "event_semantics:string,risk_level:P0|P1|P2|P3|P4,confidence:0..1,"
+    "temporal_changes:string[<=2],supporting_evidence:string[<=2],"
+    "contradictions:string[<=2],missing_information:string[<=2],"
+    "recommended_followup:string[<=2],family_summary:string。risk_level必须是单一值。"
+)
+LOCAL_VISUAL_INSTRUCTION = (
+    "视觉：比较T-2、T-1、T、T+1、T+2的姿态、高度、位置、支撑和动作连续性；"
+    "区分跌倒、坐下、主动躺卧、弯腰、遮挡和静止。触发参数仅是线索，须与图像和传感器交叉验证；"
+    "矛盾或缺失写入对应字段。"
+)
+LOCAL_TEXT_INSTRUCTION = (
+    "非视觉：只分析事件、传感器和设备上下文，不得声称看到图像；证据不足写入missing_information。"
 )
 MULTIMODAL_SYSTEM_PROMPT = (
     "你是居家老人安全系统的结构化分析器。必须先分析输入证据，再生成结论。"
@@ -402,7 +414,12 @@ def _image_data_url(path: Path) -> str:
     return f"data:image/jpeg;base64,{encoded}"
 
 
-def _normalize_multimodal_output(payload: dict[str, Any], output: dict[str, Any]) -> dict[str, Any]:
+def _normalize_multimodal_output(
+    payload: dict[str, Any],
+    output: dict[str, Any],
+    *,
+    array_limits: dict[str, int] | None = None,
+) -> dict[str, Any]:
     nested = output.get("output_template")
     if isinstance(nested, dict) and MULTIMODAL_REQUIRED_FIELDS.issubset(nested):
         output = nested
@@ -423,6 +440,15 @@ def _normalize_multimodal_output(payload: dict[str, Any], output: dict[str, Any]
         normalized["confidence"] = max(0.0, min(float(output.get("confidence", 0.0)), 1.0))
     except (TypeError, ValueError) as exc:
         raise LLMOutputError("multimodal confidence must be a number") from exc
+    limits = {
+        "temporal_changes": 2,
+        "supporting_evidence": 2,
+        "contradictions": 2,
+        "missing_information": 2,
+        "recommended_followup": 2,
+    }
+    if array_limits:
+        limits.update(array_limits)
     repaired_fields: list[str] = []
     for field in ["temporal_changes", "supporting_evidence", "contradictions", "missing_information", "recommended_followup"]:
         value = normalized.get(field)
@@ -433,8 +459,9 @@ def _normalize_multimodal_output(payload: dict[str, Any], output: dict[str, Any]
             normalized[field] = []
             repaired_fields.append(field)
         elif isinstance(value, list):
-            if len(value) > 2:
-                raise LLMOutputError(f"multimodal field {field} contains more than 2 items")
+            limit = limits[field]
+            if len(value) > limit:
+                raise LLMOutputError(f"multimodal field {field} contains more than {limit} items")
             normalized[field] = [str(item) for item in value if str(item).strip()]
         else:
             raise LLMOutputError(f"multimodal field {field} must be an array of strings")
@@ -526,31 +553,31 @@ def _multimodal_schema() -> dict[str, Any]:
     }
 
 
+def _cloud_output_constraints(temporal_limit: int) -> str:
+    return (
+        "只输出一个合法JSON对象，不输出Markdown、思维过程、解释、工具调用或设备控制命令。"
+        "event_semantics最多20个中文字符，family_summary最多30个中文字符；"
+        f"temporal_changes最多{temporal_limit}项，其他数组最多2项，每项最多20个中文字符。"
+        "confidence是0到1之间的数字。risk_level必须且只能是P0、P1、P2、P3、P4中的一个精确字符串；"
+        "禁止输出P1,P2、P1/P2、等级数组、等级范围或附加解释。"
+    )
+
+
 def build_local_multimodal_content(
     event: dict[str, Any], context: dict[str, Any], contact_sheet: Path | None
 ) -> list[dict[str, Any]]:
-    if contact_sheet and contact_sheet.is_file():
-        analysis_instruction = (
-            "这是视觉事件。按时间顺序比较联系表中的T-2、T-1、T、T+1、T+2五个位置，重点分析人体姿态、"
-            "身体高度、画面位置、支撑物和运动连续性。区分突然倒地、正常坐下、主动躺卧、弯腰、遮挡和静止。"
-            "不得仅根据event_type、posture或motion_state重复结论，必须与图片和传感器交叉验证。"
-            "图像与触发线索矛盾时写入contradictions，不得通过输出多个风险等级表达不确定性。"
-            "若无法确认，将疑点写入contradictions或missing_information，但必须保留事件最低风险等级。"
-            "结合传感器和设备证据判断，不要仅凭单帧姿态下结论。"
-        )
-    else:
-        analysis_instruction = (
-            "这是非视觉事件，没有图片。只分析事件、传感器和设备上下文，不要声称看到了画面、姿态或连续动作。"
-            "证据不足时写入missing_information，但必须保留事件最低风险等级。"
-        )
+    has_image = bool(contact_sheet and contact_sheet.is_file())
+    minimum_risk = _minimum_allowed_risk({"event": event})
+    analysis_instruction = LOCAL_VISUAL_INSTRUCTION if has_image else LOCAL_TEXT_INSTRUCTION
     prompt = (
-        "你是RK3588本地老人安全事件分析器。先遵守确定性规则，再进行语义分析。"
-        + RISK_POLICY_PROMPT
+        "分析老人安全事件，先分析证据再生成结论。"
+        + LOCAL_RISK_POLICY_PROMPT
+        + f"minimum_risk_level={minimum_risk}。"
         + analysis_instruction
-        + OUTPUT_CONSTRAINTS_PROMPT
-        + "必须完整输出required_fields列出的结果字段，但不要输出required_fields本身，不重复事实。\n"
+        + LOCAL_OUTPUT_CONTRACT
+        + "\n输入："
         + json.dumps(
-            {**_multimodal_schema(), **_compact_local_case(event, context)},
+            _compact_local_case(event, context),
             ensure_ascii=False,
             default=str,
             separators=(",", ":"),
@@ -568,7 +595,9 @@ def build_cloud_multimodal_content(
     context: dict[str, Any],
     image_frames: list[tuple[int, Path]],
 ) -> list[dict[str, Any]]:
-    has_images = any(path.is_file() for _, path in image_frames[:5])
+    available_frame_count = sum(path.is_file() for _, path in image_frames[:5])
+    has_images = available_frame_count > 0
+    temporal_limit = available_frame_count or 2
     modality_instruction = (
         "这是视觉事件。独立复核各张原始关键帧；每张图片前的文字是相对触发时刻的真实标签，缺失时间点不会补图。"
         "比较姿态、身体高度、位置和动作变化，区分突然倒地与正常坐下、主动躺卧、弯腰。"
@@ -580,7 +609,7 @@ def build_cloud_multimodal_content(
         "不能降级风险、撤销既有动作或直接控制设备。"
         + RISK_POLICY_PROMPT
         + modality_instruction
-        + OUTPUT_CONSTRAINTS_PROMPT
+        + _cloud_output_constraints(temporal_limit)
         + "必须完整输出required_fields列出的结果字段，但不要输出required_fields本身。\n"
         + json.dumps(
             {
@@ -621,10 +650,7 @@ class LocalMultimodalClient:
         content = build_local_multimodal_content(event, context, contact_sheet)
         body = {
             "model": settings.llm_model,
-            "messages": [
-                {"role": "system", "content": MULTIMODAL_SYSTEM_PROMPT},
-                {"role": "user", "content": content},
-            ],
+            "messages": [{"role": "user", "content": content}],
             "temperature": 0.1,
             "max_tokens": settings.llm_max_tokens,
             "response_format": {"type": "json_object"},
@@ -655,6 +681,7 @@ class CloudLLMClient:
         if not settings.cloud_llm_base_url or not settings.cloud_llm_model:
             return {"status": "misconfigured"}
         content = build_cloud_multimodal_content(event, local_result, context, image_frames)
+        available_frame_count = sum(path.is_file() for _, path in image_frames[:5])
         body = {
             "model": settings.cloud_llm_model,
             "messages": [
@@ -685,6 +712,7 @@ class CloudLLMClient:
             normalized = _normalize_multimodal_output(
                 {"event": {**event, "risk_level": local_result.get("risk_level", event.get("risk_level"))}},
                 parsed_output,
+                array_limits={"temporal_changes": available_frame_count or 2},
             )
             return {"status": "completed", **normalized}
         except Exception as exc:

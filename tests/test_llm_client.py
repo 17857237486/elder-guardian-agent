@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +16,10 @@ sys.path.insert(0, str(ROOT / "apps" / "guardian-orchestrator"))
 from app.llm_client import (
     CloudLLMClient,
     LLMOutputError,
+    LOCAL_OUTPUT_CONTRACT,
+    LOCAL_RISK_POLICY_PROMPT,
+    LOCAL_VISUAL_INSTRUCTION,
+    LocalMultimodalClient,
     _extract_json_object,
     _normalize_multimodal_output,
     _normalize_multimodal_response,
@@ -146,11 +150,12 @@ class LLMClientParserTests(unittest.TestCase):
 
             self.assertEqual(sum(item["type"] == "image_url" for item in local_content), 1)
             self.assertEqual(sum(item["type"] == "image_url" for item in cloud_content), 5)
-            self.assertIn('"allowed_values":["P0","P1","P2","P3","P4"]', local_content[0]["text"])
-            self.assertNotIn('"risk_level":"P0, P1, P2, P3, or P4"', local_content[0]["text"])
+            self.assertIn("minimum_risk_level=P2", local_content[0]["text"])
+            self.assertIn("risk_level:P0|P1|P2|P3|P4", local_content[0]["text"])
             self.assertNotIn('"output_template"', local_content[0]["text"])
+            self.assertNotIn('"required_fields"', local_content[0]["text"])
             self.assertIn("T-2、T-1、T、T+1、T+2", local_content[0]["text"])
-            self.assertIn("suspected_fall只能输出P1或P0", local_content[0]["text"])
+            self.assertIn("temporal_changes最多5项", cloud_content[0]["text"])
             labels = [item["text"] for item in cloud_content if item["type"] == "text"][1:]
             self.assertEqual(
                 labels,
@@ -228,6 +233,131 @@ class LLMClientParserTests(unittest.TestCase):
                 {"event": {"event_type": "co2_high", "risk_level": "P3"}}, output
             )
 
+    def test_cloud_temporal_changes_follow_available_frame_limit(self) -> None:
+        output = {
+            "event_semantics": "老人行走中失衡跌倒",
+            "risk_level": "P1",
+            "confidence": 0.98,
+            "temporal_changes": [f"frame {index}" for index in range(5)],
+            "supporting_evidence": ["posture changed", "remained on floor"],
+            "contradictions": [],
+            "missing_information": [],
+            "recommended_followup": ["check elder"],
+            "family_summary": "possible fall",
+        }
+
+        normalized = _normalize_multimodal_output(
+            {"event": {"event_type": "suspected_fall", "risk_level": "P1"}},
+            output,
+            array_limits={"temporal_changes": 5},
+        )
+        self.assertEqual(len(normalized["temporal_changes"]), 5)
+
+        with self.assertRaisesRegex(LLMOutputError, "more than 3 items"):
+            _normalize_multimodal_output(
+                {"event": {"event_type": "suspected_fall", "risk_level": "P1"}},
+                output,
+                array_limits={"temporal_changes": 3},
+            )
+
+    def test_local_prompt_stays_within_rk3588_budget(self) -> None:
+        fixed_prompt = (
+            "分析老人安全事件，先分析证据再生成结论。"
+            + LOCAL_RISK_POLICY_PROMPT
+            + "minimum_risk_level=P1。"
+            + LOCAL_VISUAL_INSTRUCTION
+            + LOCAL_OUTPUT_CONTRACT
+            + "\n输入："
+        )
+        self.assertLessEqual(len(fixed_prompt.encode("utf-8")), 1200)
+
+        with tempfile.TemporaryDirectory() as directory:
+            contact_sheet = Path(directory) / "contact_sheet.jpg"
+            contact_sheet.write_bytes(b"sheet")
+            event = {
+                "event_type": "suspected_fall",
+                "risk_level": "P1",
+                "rule_risk_level": "P1",
+                "room": "living_room",
+                "summary": "检测到疑似跌倒，需要立即确认老人状态",
+                "confidence": 0.92,
+                "rule_trace": {"payload": {"posture": "lying", "motion_state": "static"}},
+            }
+            context = {
+                "sensors": {
+                    "observations": [
+                        {"kind": "vital", "payload": {"heart_rate": 96, "spo2": 95, "room": "living_room"}}
+                    ]
+                },
+                "devices": {"devices": [{"room": "living_room", "device": "light", "state": "on"}]},
+            }
+            prompt_text = build_local_multimodal_content(event, context, contact_sheet)[0]["text"]
+
+        self.assertLessEqual(len(prompt_text.encode("utf-8")), 2200)
+
+    def test_local_request_uses_one_user_message(self) -> None:
+        captured: dict[str, object] = {}
+        valid_content = json.dumps(
+            {
+                "event_semantics": "疑似跌倒",
+                "risk_level": "P1",
+                "confidence": 0.91,
+                "temporal_changes": ["站立转为倒地"],
+                "supporting_evidence": ["姿态高度快速下降"],
+                "contradictions": [],
+                "missing_information": [],
+                "recommended_followup": ["立即确认老人状态"],
+                "family_summary": "老人疑似跌倒",
+            },
+            ensure_ascii=False,
+        )
+
+        class FakeResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                return {"choices": [{"message": {"content": valid_content}}]}
+
+        class FakeClient:
+            def __init__(self, **_: object) -> None:
+                pass
+
+            async def __aenter__(self) -> "FakeClient":
+                return self
+
+            async def __aexit__(self, *_: object) -> None:
+                return None
+
+            async def post(self, _: str, **kwargs: object) -> FakeResponse:
+                captured.update(kwargs)
+                return FakeResponse()
+
+        fake_settings = SimpleNamespace(
+            llm_mock=False,
+            llm_model="internvl3.5-4b-rk3588",
+            llm_base_url="http://model.invalid/v1",
+            llm_api_key="local",
+            llm_timeout_sec=240,
+            llm_max_tokens=160,
+        )
+        with (
+            patch("app.llm_client.settings", fake_settings),
+            patch("app.llm_client.httpx.AsyncClient", FakeClient),
+        ):
+            result = asyncio.run(
+                LocalMultimodalClient().analyze(
+                    event={"event_type": "suspected_fall", "risk_level": "P1"},
+                    context={},
+                    contact_sheet=None,
+                )
+            )
+
+        body = captured["json"]
+        self.assertEqual(len(body["messages"]), 1)
+        self.assertEqual(body["messages"][0]["role"], "user")
+        self.assertEqual(result["risk_level"], "P1")
+
     def test_cloud_request_disables_thinking_and_preserves_invalid_response(self) -> None:
         captured: dict[str, object] = {}
 
@@ -281,14 +411,89 @@ class LLMClientParserTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["rejected_model_content"], "not valid JSON")
 
+    def test_cloud_five_frame_review_completes(self) -> None:
+        captured: dict[str, object] = {}
+        cloud_output = {
+            "event_semantics": "老人行走中失衡跌倒",
+            "risk_level": "P1",
+            "confidence": 0.98,
+            "temporal_changes": [f"T{index} posture" for index in range(5)],
+            "supporting_evidence": ["height dropped", "remained down"],
+            "contradictions": [],
+            "missing_information": ["no audio"],
+            "recommended_followup": ["check immediately"],
+            "family_summary": "possible fall",
+        }
+
+        class FakeResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                return {
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {"content": json.dumps(cloud_output)},
+                        }
+                    ]
+                }
+
+        class FakeClient:
+            def __init__(self, **_: object) -> None:
+                pass
+
+            async def __aenter__(self) -> "FakeClient":
+                return self
+
+            async def __aexit__(self, *_: object) -> None:
+                return None
+
+            async def post(self, _: str, **kwargs: object) -> FakeResponse:
+                captured.update(kwargs)
+                return FakeResponse()
+
+        fake_settings = SimpleNamespace(
+            cloud_llm_enabled=True,
+            cloud_llm_base_url="https://example.invalid/v1",
+            cloud_llm_api_key="secret",
+            cloud_llm_model="qwen3-vl-plus",
+            cloud_llm_timeout_sec=120,
+            llm_max_tokens=512,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            frames: list[tuple[int, Path]] = []
+            for index, offset in enumerate((-2000, -1000, 0, 1000, 2000)):
+                frame = Path(directory) / f"frame_{index}.jpg"
+                frame.write_bytes(b"frame")
+                frames.append((offset, frame))
+            with (
+                patch("app.llm_client.settings", fake_settings),
+                patch("app.llm_client.httpx.AsyncClient", FakeClient),
+            ):
+                result = asyncio.run(
+                    CloudLLMClient().review(
+                        event={"event_type": "suspected_fall", "risk_level": "P1"},
+                        local_result={"risk_level": "P1"},
+                        context={},
+                        image_frames=frames,
+                    )
+                )
+
+        body = captured["json"]
+        self.assertFalse(body["enable_thinking"])
+        self.assertEqual(body["max_tokens"], 1024)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["temporal_changes"], cloud_output["temporal_changes"])
+
     def test_nonvisual_prompt_does_not_claim_visual_evidence(self) -> None:
         content = build_local_multimodal_content(
             {"event_type": "heart_rate_abnormal", "risk_level": "P1"}, {}, None
         )
 
         self.assertEqual(len(content), 1)
-        self.assertIn("这是非视觉事件，没有图片", content[0]["text"])
-        self.assertNotIn("比较联系表", content[0]["text"])
+        self.assertIn("非视觉：只分析事件", content[0]["text"])
+        self.assertNotIn("比较T-2、T-1、T、T+1、T+2", content[0]["text"])
 
     def test_cloud_frame_labels_preserve_missing_offsets(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -386,6 +591,68 @@ class LLMClientParserTests(unittest.TestCase):
         self.assertEqual(fallback["risk_level"], "P1")
         self.assertEqual(fallback["rejected_model_output"], parsed)
         self.assertEqual(fallback["rejected_model_content"], json.dumps(parsed, ensure_ascii=False))
+
+    def test_final_advisory_prefers_completed_cloud_summary(self) -> None:
+        class FakeLocalClient:
+            async def analyze(self, **_: object) -> dict[str, object]:
+                return {
+                    "event_semantics": "local fall",
+                    "risk_level": "P1",
+                    "confidence": 0.9,
+                    "family_summary": "local summary",
+                }
+
+        class FakeCloudClient:
+            async def review(self, **_: object) -> dict[str, object]:
+                return {
+                    "status": "completed",
+                    "event_semantics": "cloud confirmed fall",
+                    "risk_level": "P1",
+                    "confidence": 0.98,
+                    "family_summary": "cloud family summary",
+                }
+
+        runner = WorkflowRunner()
+        runner.local_llm = FakeLocalClient()
+        runner.cloud_llm = FakeCloudClient()
+        runner._collect_frames = AsyncMock(
+            return_value=(
+                {"image_refs": ["frame_0000.jpg"]},
+                Path("contact_sheet.jpg"),
+                [(offset, Path(f"frame_{offset}.jpg")) for offset in (-2000, -1000, 0, 1000, 2000)],
+            )
+        )
+        runner._record_step = AsyncMock()
+        runner.edge.get_recent_sensor_context = AsyncMock(return_value={"observations": []})
+        runner.edge.get_home_device_snapshot = AsyncMock(return_value={"devices": []})
+        runner.edge.update_event_analysis = AsyncMock(return_value={})
+        event = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type=EventType.SUSPECTED_FALL,
+            risk_level=RiskLevel.P1,
+            summary="rule summary",
+            confidence=0.8,
+            source_kind="VISION",
+            frame_set_id="frames_test",
+        )
+
+        asyncio.run(
+            runner._run_analysis_inner(
+                SimpleNamespace(workflow_id="wf_test"),
+                event,
+                {"event_type": "suspected_fall", "risk_level": "P1"},
+                {"status": "baseline"},
+            )
+        )
+
+        update_payload = runner.edge.update_event_analysis.await_args.args[1]
+        self.assertEqual(update_payload["summary"], "cloud family summary")
+        final_calls = [
+            call
+            for call in runner._record_step.await_args_list
+            if len(call.args) >= 3 and call.args[2] == "final_advisory"
+        ]
+        self.assertEqual(final_calls[-1].args[4]["family_summary"], "cloud family summary")
 
     def test_multimodal_response_records_downgrade_output(self) -> None:
         output = {
