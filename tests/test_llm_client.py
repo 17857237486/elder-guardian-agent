@@ -23,6 +23,7 @@ from app.llm_client import (
     _extract_json_object,
     _normalize_multimodal_output,
     _normalize_multimodal_response,
+    _normalize_local_multimodal_output,
     _normalize_output,
     build_cloud_multimodal_content,
     build_local_multimodal_content,
@@ -154,7 +155,8 @@ class LLMClientParserTests(unittest.TestCase):
             self.assertIn("risk_level:P0|P1|P2|P3|P4", local_content[0]["text"])
             self.assertNotIn('"output_template"', local_content[0]["text"])
             self.assertNotIn('"required_fields"', local_content[0]["text"])
-            self.assertIn("T-2、T-1、T、T+1、T+2", local_content[0]["text"])
+            self.assertIn("T-1、T、T+1", local_content[0]["text"])
+            self.assertNotIn("T-2、T-1", local_content[0]["text"])
             self.assertIn("temporal_changes最多5项", cloud_content[0]["text"])
             labels = [item["text"] for item in cloud_content if item["type"] == "text"][1:]
             self.assertEqual(
@@ -302,11 +304,7 @@ class LLMClientParserTests(unittest.TestCase):
                 "event_semantics": "疑似跌倒",
                 "risk_level": "P1",
                 "confidence": 0.91,
-                "temporal_changes": ["站立转为倒地"],
                 "supporting_evidence": ["姿态高度快速下降"],
-                "contradictions": [],
-                "missing_information": [],
-                "recommended_followup": ["立即确认老人状态"],
                 "family_summary": "老人疑似跌倒",
             },
             ensure_ascii=False,
@@ -356,7 +354,39 @@ class LLMClientParserTests(unittest.TestCase):
         body = captured["json"]
         self.assertEqual(len(body["messages"]), 1)
         self.assertEqual(body["messages"][0]["role"], "user")
+        self.assertEqual(body["max_tokens"], 128)
         self.assertEqual(result["risk_level"], "P1")
+        self.assertEqual(result["temporal_changes"], [])
+        self.assertEqual(result["contradictions"], [])
+        self.assertEqual(result["missing_information"], [])
+        self.assertEqual(result["recommended_followup"], [])
+
+    def test_local_five_field_output_is_expanded_and_guarded(self) -> None:
+        output = {
+            "event_semantics": "疑似跌倒",
+            "risk_level": "P1",
+            "confidence": 0.9,
+            "supporting_evidence": ["触发帧前后姿态下降"],
+            "family_summary": "老人疑似跌倒",
+        }
+        normalized = _normalize_local_multimodal_output(
+            {"event": {"event_type": "suspected_fall", "risk_level": "P1"}}, output
+        )
+
+        self.assertEqual(normalized["risk_level"], "P1")
+        self.assertEqual(normalized["temporal_changes"], [])
+        self.assertEqual(normalized["recommended_followup"], [])
+
+        with self.assertRaises(LLMOutputError):
+            _normalize_local_multimodal_output(
+                {"event": {"event_type": "suspected_fall", "risk_level": "P1"}},
+                {**output, "risk_level": "P2"},
+            )
+        with self.assertRaises(LLMOutputError):
+            _normalize_local_multimodal_output(
+                {"event": {"event_type": "suspected_fall", "risk_level": "P1"}},
+                {**output, "commands": [{"device": "alarm", "action": "on"}]},
+            )
 
     def test_cloud_request_disables_thinking_and_preserves_invalid_response(self) -> None:
         captured: dict[str, object] = {}
@@ -653,6 +683,52 @@ class LLMClientParserTests(unittest.TestCase):
             if len(call.args) >= 3 and call.args[2] == "final_advisory"
         ]
         self.assertEqual(final_calls[-1].args[4]["family_summary"], "cloud family summary")
+
+    def test_frame_collection_prefers_local_sheet_and_supports_old_manifest(self) -> None:
+        event = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type=EventType.SUSPECTED_FALL,
+            risk_level=RiskLevel.P1,
+            source_kind="VISION",
+            frame_set_id="frames_test",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            frame_dir = root / "2026" / "06" / "15" / "elder_001" / "frames_test"
+            frame_dir.mkdir(parents=True)
+            full_sheet = frame_dir / "contact_sheet.jpg"
+            local_sheet = frame_dir / "local_contact_sheet.jpg"
+            trigger_frame = frame_dir / "frame_0000.jpg"
+            for path in (full_sheet, local_sheet, trigger_frame):
+                path.write_bytes(b"image")
+            relative_dir = frame_dir.relative_to(root).as_posix()
+            manifest_path = frame_dir / "manifest.json"
+            manifest = {
+                "frame_set_id": "frames_test",
+                "contact_sheet_path": f"{relative_dir}/contact_sheet.jpg",
+                "local_contact_sheet_path": f"{relative_dir}/local_contact_sheet.jpg",
+                "frames": [
+                    {
+                        "offset_ms": 0,
+                        "relative_path": f"{relative_dir}/frame_0000.jpg",
+                        "missing": False,
+                    }
+                ],
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            fake_settings = SimpleNamespace(snapshot_root=str(root), vision_frame_wait_sec=0.2)
+            runner = WorkflowRunner()
+
+            with patch("app.workflow.settings", fake_settings):
+                _, selected_sheet, frames = asyncio.run(runner._collect_frames(event))
+            self.assertEqual(selected_sheet, local_sheet)
+            self.assertEqual(frames, [(0, trigger_frame)])
+
+            manifest.pop("local_contact_sheet_path")
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with patch("app.workflow.settings", fake_settings):
+                _, selected_sheet, _ = asyncio.run(runner._collect_frames(event))
+            self.assertEqual(selected_sheet, full_sheet)
 
     def test_multimodal_response_records_downgrade_output(self) -> None:
         output = {

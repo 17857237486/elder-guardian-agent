@@ -17,11 +17,12 @@ from uuid import uuid4
 import httpx
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 
 from app.frame_selection import closest_frame as select_closest_frame
 from app.frame_selection import select_keyframes
+from app.contact_sheet import make_contact_sheet
 
 
 SNAPSHOT_ROOT = Path(os.getenv("SNAPSHOT_ROOT", "/app/data/snapshots"))
@@ -32,6 +33,7 @@ JPEG_QUALITY = int(os.getenv("VISION_JPEG_QUALITY", "80"))
 BUFFER_SECONDS = int(os.getenv("VISION_BUFFER_SECONDS", "12"))
 RETENTION_DAYS = int(os.getenv("VISION_RETENTION_DAYS", "7"))
 FRAME_OFFSETS_MS = (-2000, -1000, 0, 1000, 2000)
+LOCAL_FRAME_OFFSETS_MS = (-1000, 0, 1000)
 
 
 def utc_now() -> datetime:
@@ -123,31 +125,6 @@ def event_directory(trigger: VisionTrigger, frame_set_id: str) -> Path:
     return SNAPSHOT_ROOT / day.strftime("%Y/%m/%d") / trigger.elder_id / frame_set_id
 
 
-def make_contact_sheet(records: list[dict[str, Any]], output_path: Path) -> None:
-    cell_width, cell_height, label_height = 256, 192, 28
-    sheet = Image.new("RGB", (cell_width * 5, cell_height + label_height), "#20252b")
-    draw = ImageDraw.Draw(sheet)
-    font = ImageFont.load_default()
-    by_offset = {item["offset_ms"]: item for item in records if not item.get("missing")}
-    for index, offset in enumerate(FRAME_OFFSETS_MS):
-        x = index * cell_width
-        label = f"T{offset / 1000:+g}s" if offset else "T trigger"
-        record = by_offset.get(offset)
-        if record:
-            image = Image.open(output_path.parent / record["filename"]).convert("RGB")
-            fitted = ImageOps.contain(image, (cell_width - 8, cell_height - 8))
-            px = x + (cell_width - fitted.width) // 2
-            py = label_height + (cell_height - fitted.height) // 2
-            sheet.paste(fitted, (px, py))
-        else:
-            draw.rectangle((x + 4, label_height + 4, x + cell_width - 4, label_height + cell_height - 4), outline="#7d8790", width=2)
-            draw.text((x + 100, label_height + 85), "missing", fill="#c7cdd3", font=font)
-        border = "#ff3b30" if offset == 0 else "#59636d"
-        draw.rectangle((x + 1, label_height + 1, x + cell_width - 2, label_height + cell_height - 2), outline=border, width=4 if offset == 0 else 1)
-        draw.text((x + 8, 8), label, fill="white", font=font)
-    sheet.save(output_path, format="JPEG", quality=JPEG_QUALITY, optimize=True)
-
-
 async def send_observation(trigger: VisionTrigger, frame_set_id: str) -> None:
     payload = {
         "elder_id": trigger.elder_id,
@@ -211,7 +188,23 @@ async def finalize_frame_set(trigger: VisionTrigger, frame_set_id: str) -> None:
                 }
             )
         contact_sheet = directory / "contact_sheet.jpg"
-        make_contact_sheet(records, contact_sheet)
+        make_contact_sheet(
+            records,
+            contact_sheet,
+            offsets_ms=FRAME_OFFSETS_MS,
+            cell_width=256,
+            cell_height=192,
+            jpeg_quality=JPEG_QUALITY,
+        )
+        local_contact_sheet = directory / "local_contact_sheet.jpg"
+        make_contact_sheet(
+            records,
+            local_contact_sheet,
+            offsets_ms=LOCAL_FRAME_OFFSETS_MS,
+            cell_width=224,
+            cell_height=168,
+            jpeg_quality=JPEG_QUALITY,
+        )
         manifest = {
             "frame_set_id": frame_set_id,
             "elder_id": trigger.elder_id,
@@ -223,6 +216,7 @@ async def finalize_frame_set(trigger: VisionTrigger, frame_set_id: str) -> None:
             "frames": records,
             "image_refs": image_refs,
             "contact_sheet_path": contact_sheet.relative_to(SNAPSHOT_ROOT).as_posix(),
+            "local_contact_sheet_path": local_contact_sheet.relative_to(SNAPSHOT_ROOT).as_posix(),
             "completed_at": utc_now().isoformat(),
         }
         (directory / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")

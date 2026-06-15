@@ -205,7 +205,8 @@ class WorkflowRunner:
         if manifest_path is None:
             return {"frame_set_id": event.frame_set_id, "status": "timeout", "frames": []}, None, []
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        contact_sheet = root / manifest["contact_sheet_path"]
+        contact_sheet_path = manifest.get("local_contact_sheet_path") or manifest["contact_sheet_path"]
+        contact_sheet = root / contact_sheet_path
         image_frames = [
             (int(frame["offset_ms"]), root / frame["relative_path"])
             for frame in manifest.get("frames", [])

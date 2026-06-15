@@ -55,14 +55,12 @@ LOCAL_RISK_POLICY_PROMPT = (
 LOCAL_OUTPUT_CONTRACT = (
     "只输出顶层JSON，不输出Markdown、解释、输入数据或控制命令。字段："
     "event_semantics:string,risk_level:P0|P1|P2|P3|P4,confidence:0..1,"
-    "temporal_changes:string[<=2],supporting_evidence:string[<=2],"
-    "contradictions:string[<=2],missing_information:string[<=2],"
-    "recommended_followup:string[<=2],family_summary:string。risk_level必须是单一值。"
+    "supporting_evidence:string[<=2],family_summary:string。risk_level必须是单一值。"
 )
 LOCAL_VISUAL_INSTRUCTION = (
-    "视觉：比较T-2、T-1、T、T+1、T+2的姿态、高度、位置、支撑和动作连续性；"
+    "视觉：比较T-1、T、T+1的姿态、高度、位置、支撑和动作连续性；"
     "区分跌倒、坐下、主动躺卧、弯腰、遮挡和静止。触发参数仅是线索，须与图像和传感器交叉验证；"
-    "矛盾或缺失写入对应字段。"
+    "证据不足时降低confidence，但不得降低minimum_risk_level。"
 )
 LOCAL_TEXT_INSTRUCTION = (
     "非视觉：只分析事件、传感器和设备上下文，不得声称看到图像；证据不足写入missing_information。"
@@ -92,6 +90,13 @@ MULTIMODAL_REQUIRED_FIELDS = {
     "contradictions",
     "missing_information",
     "recommended_followup",
+    "family_summary",
+}
+LOCAL_MULTIMODAL_REQUIRED_FIELDS = {
+    "event_semantics",
+    "risk_level",
+    "confidence",
+    "supporting_evidence",
     "family_summary",
 }
 
@@ -486,6 +491,69 @@ def _normalize_multimodal_response(payload: dict[str, Any], raw_content: str) ->
         ) from exc
 
 
+def _normalize_local_multimodal_output(payload: dict[str, Any], output: dict[str, Any]) -> dict[str, Any]:
+    nested = output.get("output_template")
+    if isinstance(nested, dict) and LOCAL_MULTIMODAL_REQUIRED_FIELDS.issubset(nested):
+        output = nested
+    missing = sorted(LOCAL_MULTIMODAL_REQUIRED_FIELDS - output.keys())
+    if missing:
+        raise LLMOutputError(f"local multimodal output missing required fields: {', '.join(missing)}")
+    if _contains_forbidden_action_key(output):
+        raise LLMOutputError("local multimodal output contains forbidden device control fields")
+    original = _minimum_allowed_risk(payload)
+    reviewed = str(output.get("risk_level", original)).split(".")[-1].upper()
+    if reviewed not in RISK_ORDER:
+        raise LLMOutputError(f"invalid risk level: {reviewed}")
+    if RISK_ORDER[reviewed] < RISK_ORDER[original]:
+        raise LLMOutputError(f"model attempted to downgrade risk from {original} to {reviewed}")
+    try:
+        confidence = max(0.0, min(float(output.get("confidence", 0.0)), 1.0))
+    except (TypeError, ValueError) as exc:
+        raise LLMOutputError("local multimodal confidence must be a number") from exc
+    evidence = output.get("supporting_evidence")
+    repaired_fields: list[str] = []
+    if isinstance(evidence, str):
+        evidence = [evidence] if evidence.strip() else []
+        repaired_fields.append("supporting_evidence")
+    elif evidence is None:
+        evidence = []
+        repaired_fields.append("supporting_evidence")
+    elif not isinstance(evidence, list):
+        raise LLMOutputError("local multimodal supporting_evidence must be an array of strings")
+    if len(evidence) > 2:
+        raise LLMOutputError("local multimodal supporting_evidence contains more than 2 items")
+    for field in ("event_semantics", "family_summary"):
+        if not isinstance(output.get(field), str):
+            raise LLMOutputError(f"local multimodal field {field} must be a string")
+    normalized = {
+        "event_semantics": output["event_semantics"],
+        "risk_level": reviewed,
+        "confidence": confidence,
+        "temporal_changes": [],
+        "supporting_evidence": [str(item) for item in evidence if str(item).strip()],
+        "contradictions": [],
+        "missing_information": [],
+        "recommended_followup": [],
+        "family_summary": output["family_summary"],
+    }
+    if repaired_fields:
+        normalized["schema_repaired_fields"] = repaired_fields
+    return normalized
+
+
+def _normalize_local_multimodal_response(payload: dict[str, Any], raw_content: str) -> dict[str, Any]:
+    parsed_output: dict[str, Any] | None = None
+    try:
+        parsed_output = _extract_json_object(raw_content)
+        return _normalize_local_multimodal_output(payload, parsed_output)
+    except LLMOutputError as exc:
+        raise LLMOutputError(
+            str(exc),
+            raw_model_content=raw_content,
+            parsed_model_output=parsed_output,
+        ) from exc
+
+
 def _compact_local_case(event: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     rule_payload = event.get("rule_trace", {}).get("payload", {}) if isinstance(event.get("rule_trace"), dict) else {}
     compact_event = {
@@ -652,7 +720,7 @@ class LocalMultimodalClient:
             "model": settings.llm_model,
             "messages": [{"role": "user", "content": content}],
             "temperature": 0.1,
-            "max_tokens": settings.llm_max_tokens,
+            "max_tokens": min(settings.llm_max_tokens, 128),
             "response_format": {"type": "json_object"},
             "enable_thinking": False,
         }
@@ -664,7 +732,7 @@ class LocalMultimodalClient:
             )
             response.raise_for_status()
         raw_content = response.json()["choices"][0]["message"].get("content") or ""
-        return _normalize_multimodal_response({"event": event}, raw_content)
+        return _normalize_local_multimodal_response({"event": event}, raw_content)
 
 
 class CloudLLMClient:
