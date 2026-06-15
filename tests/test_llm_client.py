@@ -276,6 +276,7 @@ class LLMClientParserTests(unittest.TestCase):
         body = captured["json"]
         self.assertIsInstance(body, dict)
         self.assertFalse(body["enable_thinking"])
+        self.assertEqual(body["max_tokens"], 1024)
         self.assertEqual(body["messages"][0]["role"], "system")
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["rejected_model_content"], "not valid JSON")

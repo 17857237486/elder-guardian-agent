@@ -662,12 +662,13 @@ class CloudLLMClient:
                 {"role": "user", "content": content},
             ],
             "temperature": 0.1,
-            "max_tokens": settings.llm_max_tokens,
+            "max_tokens": max(settings.llm_max_tokens, 1024),
             "response_format": {"type": "json_object"},
             "enable_thinking": False,
         }
         raw_content = ""
         parsed_output: dict[str, Any] | None = None
+        finish_reason: str | None = None
         try:
             async with httpx.AsyncClient(timeout=settings.cloud_llm_timeout_sec) as client:
                 response = await client.post(
@@ -676,7 +677,9 @@ class CloudLLMClient:
                     json=body,
                 )
                 response.raise_for_status()
-            message = response.json()["choices"][0]["message"]
+            choice = response.json()["choices"][0]
+            finish_reason = choice.get("finish_reason")
+            message = choice["message"]
             raw_content = message.get("content") or message.get("reasoning_content") or ""
             parsed_output = _extract_json_object(raw_content)
             normalized = _normalize_multimodal_output(
@@ -686,6 +689,8 @@ class CloudLLMClient:
             return {"status": "completed", **normalized}
         except Exception as exc:
             result: dict[str, Any] = {"status": "failed", "error": str(exc)}
+            if finish_reason:
+                result["finish_reason"] = finish_reason
             error_raw = getattr(exc, "raw_model_content", None) or raw_content
             error_parsed = getattr(exc, "parsed_model_output", None) or parsed_output
             if error_raw:
