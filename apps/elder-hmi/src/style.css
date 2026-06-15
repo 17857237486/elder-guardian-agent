@@ -41,6 +41,22 @@ button {
   font-weight: 700;
 }
 
+.network-message {
+  position: fixed;
+  top: 86px;
+  left: 50%;
+  z-index: 2;
+  max-width: calc(100vw - 40px);
+  margin: 0;
+  padding: 10px 16px;
+  transform: translateX(-50%);
+  border-radius: 8px;
+  background: rgba(23, 32, 51, 0.88);
+  color: white;
+  font-size: 18px;
+  text-align: center;
+}
+
 .status {
   display: flex;
   flex-direction: column;

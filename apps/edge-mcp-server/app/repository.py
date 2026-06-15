@@ -397,14 +397,40 @@ def list_hmi_prompts(db: Session, elder_id: str, limit: int = 30) -> list[dict[s
 
 
 def respond_hmi_prompt(db: Session, response: HmiResponseV2) -> dict[str, Any] | None:
-    obj = db.query(models.HmiPromptModel).filter(models.HmiPromptModel.prompt_id == response.prompt_id).first()
+    obj = (
+        db.query(models.HmiPromptModel)
+        .filter(models.HmiPromptModel.prompt_id == response.prompt_id, models.HmiPromptModel.status == "waiting")
+        .first()
+    )
     if obj is None:
         return None
+    safe = response.response_type in {"safe", "我没事"}
+    response_record = models.HmiResponseModel(
+        prompt_id=response.prompt_id,
+        event_id=response.event_id,
+        elder_id=response.elder_id,
+        response_type=response.response_type,
+        response_text=response.response_text,
+        outcome="resolved" if safe else "family_alert",
+        created_at=response.created_at,
+    )
+    db.add(response_record)
     obj.status = "responded"
     obj.responded_at = response.created_at
     db.commit()
     db.refresh(obj)
     return row_to_dict(obj)
+
+
+def list_hmi_responses(db: Session, elder_id: str, limit: int = 10) -> list[dict[str, Any]]:
+    rows = (
+        db.query(models.HmiResponseModel)
+        .filter(models.HmiResponseModel.elder_id == elder_id)
+        .order_by(desc(models.HmiResponseModel.created_at))
+        .limit(limit)
+        .all()
+    )
+    return [row_to_dict(row) for row in rows]
 
 
 def dashboard_state(db: Session, elder_id: str) -> dict[str, Any]:
@@ -421,6 +447,7 @@ def dashboard_state(db: Session, elder_id: str) -> dict[str, Any]:
         "tool_calls": list_tool_calls(db, elder_id=elder_id),
         "action_executions": list_action_executions(db, elder_id=elder_id),
         "hmi_prompts": list_hmi_prompts(db, elder_id=elder_id),
+        "hmi_responses": list_hmi_responses(db, elder_id=elder_id, limit=10),
         "current_hmi_prompt": latest_waiting_hmi_prompt(db, elder_id=elder_id),
         "alerts": list_alerts(db, elder_id=elder_id),
     }

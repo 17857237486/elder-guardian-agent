@@ -148,3 +148,16 @@ class HmiPromptModel(Base):
     timeout_sec: Mapped[int] = mapped_column(Integer, default=30)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class HmiResponseModel(Base):
+    __tablename__ = "v2_hmi_responses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    prompt_id: Mapped[str] = mapped_column(String(64), index=True)
+    event_id: Mapped[str] = mapped_column(String(64), index=True)
+    elder_id: Mapped[str] = mapped_column(String(64), index=True)
+    response_type: Mapped[str] = mapped_column(String(64), index=True)
+    response_text: Mapped[str] = mapped_column(Text)
+    outcome: Mapped[str] = mapped_column(String(64), default="recorded", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)

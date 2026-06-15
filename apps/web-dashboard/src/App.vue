@@ -1,48 +1,45 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { API_BASE } from "@elder-guardian/frontend-shared";
 
 type AnyRecord = Record<string, any>;
+const DISPLAY_LIMIT = 10;
+const IMPORTANT_STEPS = new Set([
+  "rule_gate",
+  "frame_collection",
+  "local_multiframe_analysis",
+  "local_policy_execution",
+  "cloud_review",
+  "final_advisory"
+]);
 
 const state = reactive<AnyRecord>({
   elder_id: "elder_001",
   current_risk_level: "P4",
   events: [],
-  observations: [],
   workflows: [],
   workflow_steps: [],
   tool_calls: [],
   action_executions: [],
   hmi_prompts: [],
+  hmi_responses: [],
   alerts: []
 });
 const loading = ref(false);
 const lastUpdated = ref("");
+const loadError = ref("");
+let refreshTimer: number | undefined;
+
 const latestEvent = computed(() => state.events?.[0] ?? null);
-const latestObservation = computed(() => state.observations?.[0] ?? null);
-const latestWorkflow = computed(() => state.workflows?.[0] ?? null);
 const latestLocalAnalysis = computed(() =>
   state.workflow_steps?.find(
     (step: AnyRecord) =>
       step.event_id === latestEvent.value?.event_id && step.step_name === "local_multiframe_analysis"
   ) ?? null
 );
-const localDiagnostic = computed(() => {
-  const output = latestLocalAnalysis.value?.output;
-  if (!output?.fallback) return null;
-  const rejected = output.rejected_model_output ?? null;
-  return {
-    reason: output.error ?? "本地模型输出未通过安全校验",
-    semantics: rejected?.event_semantics ?? "--",
-    riskLevel: rejected?.risk_level ?? "--",
-    confidence: rejected?.confidence ?? "--",
-    parsed: rejected,
-    raw: output.rejected_model_content ?? ""
-  };
-});
 const localSemanticStatus = computed(() => {
   if (latestLocalAnalysis.value?.status === "failed" || latestLocalAnalysis.value?.output?.fallback) {
-    return { state: "fallback", text: "模型输出已被安全策略拒绝，最终采用规则结果。" };
+    return { state: "fallback", text: "本地模型不可用，已采用规则结果" };
   }
   if (latestEvent.value?.local_semantics) {
     return { state: "completed", text: latestEvent.value.local_semantics };
@@ -50,21 +47,102 @@ const localSemanticStatus = computed(() => {
   return { state: "pending", text: "等待 RK3588 本地模型分析" };
 });
 
+function eventTime(item: AnyRecord): string {
+  return item.completed_at ?? item.responded_at ?? item.updated_at ?? item.created_at ?? "";
+}
+
+function formatTime(value?: string): string {
+  if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  }).format(date);
+}
+
+function clip(value: unknown, length = 72): string {
+  const text = String(value ?? "").trim();
+  return text.length > length ? `${text.slice(0, length)}…` : text;
+}
+
+function workflowSummary(step: AnyRecord): string {
+  const output = step.output ?? {};
+  if (step.error) return clip(step.error);
+  if (output.error) return clip(output.error);
+  if (step.step_name === "rule_gate") return output.accepted ? "规则已命中并进入处置" : "规则未命中";
+  if (step.step_name === "frame_collection") {
+    const count = output.frames?.filter((frame: AnyRecord) => !frame.missing).length;
+    return `${output.status ?? "已完成"}${count !== undefined ? ` · ${count}/5 帧` : ""}`;
+  }
+  if (step.step_name === "local_multiframe_analysis") {
+    return clip(`${output.event_semantics ?? "本地分析"} · ${output.risk_level ?? "--"}${output.fallback ? " · 规则回退" : ""}`);
+  }
+  if (step.step_name === "local_policy_execution") return clip(output.status ?? "本地策略已执行");
+  if (step.step_name === "cloud_review") {
+    return clip(`${output.status ?? step.status}${output.risk_level ? ` · ${output.risk_level}` : ""}${output.family_summary ? ` · ${output.family_summary}` : ""}`);
+  }
+  if (step.step_name === "final_advisory") return clip(`${output.final_risk_level ?? "--"} · ${output.family_summary ?? "最终建议已生成"}`);
+  return clip(output.status ?? step.status);
+}
+
+const riskEvents = computed(() => (state.events ?? []).slice(0, DISPLAY_LIMIT));
+const workflowSteps = computed(() =>
+  (state.workflow_steps ?? [])
+    .filter((step: AnyRecord) => IMPORTANT_STEPS.has(step.step_name) || step.status === "failed" || step.error)
+    .slice(0, DISPLAY_LIMIT)
+);
+const policyExecutions = computed(() => {
+  const executions = (state.action_executions ?? []).map((item: AnyRecord) => ({ ...item, itemType: "execution" }));
+  const failedCalls = (state.tool_calls ?? [])
+    .filter((item: AnyRecord) => !["accepted", "completed", "success"].includes(String(item.status).toLowerCase()))
+    .map((item: AnyRecord) => ({ ...item, itemType: "tool" }));
+  return [...executions, ...failedCalls]
+    .sort((a, b) => new Date(eventTime(b)).getTime() - new Date(eventTime(a)).getTime())
+    .slice(0, DISPLAY_LIMIT);
+});
+const hmiAlerts = computed(() => {
+  const prompts = (state.hmi_prompts ?? []).map((item: AnyRecord) => ({ ...item, itemType: "prompt" }));
+  const alerts = (state.alerts ?? []).map((item: AnyRecord) => ({ ...item, itemType: "alert" }));
+  return [...prompts, ...alerts]
+    .sort((a, b) => new Date(eventTime(b)).getTime() - new Date(eventTime(a)).getTime())
+    .slice(0, DISPLAY_LIMIT);
+});
+const elderFeedback = computed(() => (state.hmi_responses ?? []).slice(0, DISPLAY_LIMIT));
+
 async function loadState() {
+  if (loading.value) return;
   loading.value = true;
   try {
     const response = await fetch(`${API_BASE}/api/v2/dashboard/state`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     Object.assign(state, await response.json());
-    lastUpdated.value = new Date().toLocaleTimeString();
+    lastUpdated.value = formatTime(new Date().toISOString());
+    loadError.value = "";
+  } catch (error) {
+    loadError.value = `数据更新失败：${error instanceof Error ? error.message : "网络异常"}`;
   } finally {
     loading.value = false;
   }
 }
 
+function scheduleRefresh() {
+  refreshTimer = window.setTimeout(async () => {
+    await loadState();
+    scheduleRefresh();
+  }, 3000);
+}
+
 onMounted(async () => {
   await loadState();
-  window.setInterval(loadState, 3000);
+  scheduleRefresh();
 });
+onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
 </script>
 
 <template>
@@ -72,7 +150,7 @@ onMounted(async () => {
     <header>
       <div>
         <h1>居家老人健康守护 v2</h1>
-        <p>规则、本地多模态模型与云端复核 · {{ loading ? "刷新中" : `最近刷新 ${lastUpdated}` }}</p>
+        <p>最近更新 {{ lastUpdated || "--" }} · 北京时间<span v-if="loadError" class="error"> · {{ loadError }}</span></p>
       </div>
       <strong :class="state.current_risk_level">{{ state.current_risk_level }}</strong>
     </header>
@@ -87,111 +165,67 @@ onMounted(async () => {
     </section>
 
     <section class="local-semantics" :class="localSemanticStatus.state">
-      <div>
-        <span>第二级：RK3588 本地模型事件语义</span>
-        <strong>{{ localSemanticStatus.text }}</strong>
-      </div>
-      <p>
-        {{ latestEvent?.event_type ?? "暂无事件" }} ·
-        本地风险 {{ latestEvent?.local_risk_level ?? "--" }} ·
-        {{ latestLocalAnalysis?.model ?? "internvl3.5-4b-rk3588" }}
-      </p>
-    </section>
-
-    <section v-if="localDiagnostic" class="model-diagnostic">
-      <h2>本地模型拒绝诊断</h2>
-      <p class="diagnostic-warning">该输出已被安全策略拒绝，最终风险和处置采用一级规则结果。</p>
-      <div class="diagnostic-summary">
-        <p><span>拒绝原因</span><strong>{{ localDiagnostic.reason }}</strong></p>
-        <p><span>原始事件语义</span><strong>{{ localDiagnostic.semantics }}</strong></p>
-        <p><span>原始风险</span><strong>{{ localDiagnostic.riskLevel }}</strong></p>
-        <p><span>原始置信度</span><strong>{{ localDiagnostic.confidence }}</strong></p>
-      </div>
-      <details v-if="localDiagnostic.parsed">
-        <summary>查看解析后的模型 JSON</summary>
-        <pre>{{ JSON.stringify(localDiagnostic.parsed, null, 2) }}</pre>
-      </details>
-      <details v-if="localDiagnostic.raw">
-        <summary>查看模型原始回复</summary>
-        <pre>{{ localDiagnostic.raw }}</pre>
-      </details>
+      <div><span>第二级：RK3588 本地模型事件语义</span><strong>{{ localSemanticStatus.text }}</strong></div>
+      <p>{{ latestEvent?.event_type ?? "暂无事件" }} · 本地风险 {{ latestEvent?.local_risk_level ?? "--" }}</p>
     </section>
 
     <section class="grid">
-      <article class="panel wide">
+      <article class="panel">
         <h2>三级风险事件</h2>
-        <ul>
-          <li v-for="event in state.events" :key="event.event_id">
-            <strong>{{ event.final_risk_level ?? event.risk_level }}</strong>
-            <span>{{ event.event_type }} · {{ event.state }} · {{ event.decision_source ?? "rule" }}</span>
-            <p>{{ event.summary }}</p>
-            <p class="tiers">
-              规则 {{ event.rule_risk_level ?? event.risk_level }} →
-              本地 {{ event.local_risk_level ?? "--" }} →
-              云端 {{ event.cloud_risk_level ?? "--" }}
-            </p>
-            <p v-if="event.local_semantics">本地语义：{{ event.local_semantics }}</p>
-            <p v-if="event.image_refs?.length">关键帧：{{ event.image_refs.join(" · ") }}</p>
+        <div class="panel-scroll"><p v-if="!riskEvents.length" class="empty">暂无风险事件</p><ul>
+          <li v-for="event in riskEvents" :key="event.event_id">
+            <div class="row-head"><strong>{{ event.final_risk_level ?? event.risk_level }}</strong><time>{{ formatTime(eventTime(event)) }}</time></div>
+            <b>{{ event.event_type }} · {{ event.state }}</b>
+            <p>{{ clip(event.local_semantics || event.summary) }}</p>
+            <small>规则 {{ event.rule_risk_level ?? event.risk_level }} → 本地 {{ event.local_risk_level ?? "--" }} → 云端 {{ event.cloud_risk_level ?? "--" }} · {{ event.decision_source ?? "rule" }}</small>
           </li>
-        </ul>
-      </article>
-
-      <article class="panel wide">
-        <h2>原始观察</h2>
-        <ul>
-          <li v-for="observation in state.observations" :key="observation.observation_id">
-            <strong>{{ observation.kind }}</strong>
-            <span>{{ observation.topic ?? observation.source }}</span>
-            <p>{{ JSON.stringify(observation.payload) }}</p>
-          </li>
-        </ul>
-      </article>
-
-      <article class="panel wide">
-        <h2>分析工作流</h2>
-        <ul>
-          <li v-for="step in state.workflow_steps" :key="step.step_id">
-            <strong>{{ step.status }}</strong>
-            <span>{{ step.step_name }} · {{ step.model ?? "rules" }}</span>
-            <p>{{ JSON.stringify(step.output) }}</p>
-          </li>
-        </ul>
-      </article>
-
-      <article class="panel wide">
-        <h2>策略与设备执行</h2>
-        <ul>
-          <li v-for="execution in state.action_executions" :key="execution.execution_id">
-            <strong>{{ execution.status }}</strong>
-            <span>{{ execution.command?.room }}/{{ execution.command?.device }} {{ execution.command?.action }}</span>
-            <p>{{ execution.reason }} {{ execution.mqtt_topic ?? "" }}</p>
-          </li>
-          <li v-for="call in state.tool_calls" :key="call.call_id">
-            <strong>{{ call.status }}</strong><span>{{ call.tool_name }}</span>
-            <p>{{ call.reason || JSON.stringify(call.result) }}</p>
-          </li>
-        </ul>
-      </article>
-
-      <article class="panel wide">
-        <h2>HMI 与家属告警</h2>
-        <ul>
-          <li v-for="prompt in state.hmi_prompts" :key="prompt.prompt_id">
-            <strong>{{ prompt.status }}</strong><span>{{ prompt.risk_level }} · {{ prompt.event_type }}</span>
-            <p>{{ prompt.message }}</p>
-          </li>
-          <li v-for="alert in state.alerts" :key="alert.alert_id">
-            <strong>{{ alert.alert_level }}</strong><span>{{ alert.channel }} · {{ alert.status }}</span>
-            <p>{{ alert.message }}</p>
-          </li>
-        </ul>
+        </ul></div>
       </article>
 
       <article class="panel">
-        <h2>运行概览</h2>
-        <p>最近事件：{{ latestEvent?.event_type ?? "--" }}</p>
-        <p>最近观察：{{ latestObservation?.kind ?? "--" }}</p>
-        <p>最近工作流：{{ latestWorkflow?.status ?? "--" }}</p>
+        <h2>策略与设备执行</h2>
+        <div class="panel-scroll"><p v-if="!policyExecutions.length" class="empty">暂无设备执行</p><ul>
+          <li v-for="item in policyExecutions" :key="item.execution_id ?? item.call_id">
+            <div class="row-head"><strong>{{ item.status }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
+            <b v-if="item.itemType === 'execution'">{{ item.command?.room }}/{{ item.command?.device }} · {{ item.command?.action }}</b>
+            <b v-else>{{ item.tool_name }} · 异常调用</b>
+            <p>{{ clip(item.reason || item.error || "执行记录") }}</p>
+          </li>
+        </ul></div>
+      </article>
+
+      <article class="panel">
+        <h2>分析工作流</h2>
+        <div class="panel-scroll"><p v-if="!workflowSteps.length" class="empty">暂无工作流记录</p><ul>
+          <li v-for="step in workflowSteps" :key="step.step_id">
+            <div class="row-head"><strong>{{ step.status }}</strong><time>{{ formatTime(eventTime(step)) }}</time></div>
+            <b>{{ step.step_name }} · {{ step.model ?? "rules" }}</b>
+            <p>{{ workflowSummary(step) }}</p>
+          </li>
+        </ul></div>
+      </article>
+
+      <article class="panel">
+        <h2>HMI 与家属告警</h2>
+        <div class="panel-scroll"><p v-if="!hmiAlerts.length" class="empty">暂无提示或告警</p><ul>
+          <li v-for="item in hmiAlerts" :key="item.prompt_id ?? item.alert_id">
+            <div class="row-head"><strong>{{ item.status }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
+            <b v-if="item.itemType === 'prompt'">HMI · {{ item.risk_level }} · {{ item.event_type }}</b>
+            <b v-else>家属告警 · {{ item.alert_level }} · {{ item.channel }}</b>
+            <p>{{ clip(item.message) }}</p>
+          </li>
+        </ul></div>
+      </article>
+
+      <article class="panel feedback-panel">
+        <h2>老人反馈</h2>
+        <div class="panel-scroll"><p v-if="!elderFeedback.length" class="empty">暂无老人反馈</p><ul>
+          <li v-for="feedback in elderFeedback" :key="`${feedback.prompt_id}-${feedback.created_at}`">
+            <div class="row-head"><strong>{{ feedback.response_text }}</strong><time>{{ formatTime(feedback.created_at) }}</time></div>
+            <b>{{ feedback.outcome === "resolved" ? "已确认安全" : "已升级家属告警" }}</b>
+            <p>事件 {{ feedback.event_id }} · {{ feedback.response_type }}</p>
+          </li>
+        </ul></div>
       </article>
     </section>
   </main>
