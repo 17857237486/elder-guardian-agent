@@ -36,7 +36,6 @@ EVENT_LABELS = {
     "heart_rate_abnormal": "心率异常",
     "suspected_fall": "疑似跌倒",
     "long_static": "长时间静止",
-    "night_abnormal_activity": "夜间异常活动",
     "co2_high": "CO2 偏高",
     "gas_leak": "燃气异常",
     "temperature_high": "室温过高",

@@ -21,7 +21,6 @@
 - `heart_rate_abnormal`：心率异常，高于 130 bpm 触发 P1
 - `suspected_fall`：疑似跌倒，发布视觉事件并触发 P1
 - `long_static`：长时间静止，发布视觉事件并触发 P2
-- `night_abnormal_activity`：夜间异常活动，卧室持续无人 5 分钟触发 P2
 - `co2_high`：CO2 偏高，高于 1500 ppm 触发 P3
 - `gas_leak`：燃气异常，高于 100 ppm 触发 P0
 - `temperature_high`：室温过高，达到 30°C 及以上触发 P3

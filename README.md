@@ -101,38 +101,10 @@ home/{room}/{device}/state
 home/{room}/{device}/ack
 ```
 
-## 夜间异常活动规则（v2）
-
-`night_abnormal_activity` 是唯一保留的夜间组合风险事件。系统按北京时间判断夜间：
-
-```text
-22:00 至次日 06:00
-+ 卧室持续无人满 5 分钟
--> night_abnormal_activity（P2）
-```
-
-人体存在传感器可向 Edge API `POST /api/v2/observations` 发送状态：
-
-```json
-{
-  "elder_id": "elder_001",
-  "kind": "device_state",
-  "source": "presence_sensor",
-  "payload": {
-    "room": "bedroom",
-    "device": "presence_sensor",
-    "present": false,
-    "state": "absent"
-  }
-}
-```
-
-检测到老人返回卧室时发送 `present: true` 和 `state: "present"`。首次无人上报会启动独立计时器，期间重复上报不会重置计时；恢复有人会取消计时。灯光关闭、门窗开启、卫生间状态、心率数据以及直接上报 `event_type=night_abnormal_activity` 均不会单独触发此规则。
-
 ## 风险等级
 
 - `P0`: 紧急危险，规则引擎直接告警，不等待老人确认或 LLM，例如燃气异常、血氧 `< 88`。
-- `P1`: 高风险，本地询问并同步通知家属，例如疑似跌倒、血氧明显下降、夜间异常。
+- `P1`: 高风险，本地询问并同步通知家属，例如疑似跌倒、血氧明显下降。
 - `P2`: 中风险，先询问老人，超时后通知家属，例如长时间静止。
 - `P3`: 低风险，自动控制设备或本地提醒，例如 CO2 偏高、温度异常。
 - `P4`: 正常状态，仅记录和更新 dashboard。

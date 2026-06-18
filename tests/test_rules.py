@@ -80,6 +80,7 @@ class RuleTests(unittest.TestCase):
 
     def test_old_night_composites_and_direct_visual_event_are_removed(self) -> None:
         observations = [
+            {"kind": "device_state", "payload": {"room": "bedroom", "device": "presence_sensor", "present": False, "state": "absent"}},
             {"kind": "device_state", "payload": {"room": "bathroom", "present": True}},
             {"kind": "device_state", "payload": {"room": "bathroom", "device": "light", "state": "on"}},
             {"kind": "device_state", "payload": {"room": "hall", "device": "door", "state": "open"}},

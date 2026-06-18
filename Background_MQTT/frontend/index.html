@@ -818,7 +818,6 @@
                 <option value="heart_rate_abnormal">心率异常</option>
                 <option value="suspected_fall">疑似跌倒</option>
                 <option value="long_static">长时间静止</option>
-                <option value="night_abnormal_activity">夜间异常活动</option>
                 <option value="co2_high">CO2 偏高</option>
                 <option value="gas_leak" selected>燃气异常</option>
                 <option value="temperature_high">室温过高</option>
@@ -886,7 +885,6 @@
           <button class="template-button" type="button" data-template="heart_rate_abnormal">心率异常<br />触发本地询问</button>
           <button class="template-button" type="button" data-template="suspected_fall">疑似跌倒<br />触发 P1 视觉事件</button>
           <button class="template-button" type="button" data-template="long_static">长时间静止<br />触发 P2 视觉事件</button>
-          <button class="template-button" type="button" data-template="night_abnormal_activity">夜间异常活动<br />卧室无人计时</button>
           <button class="template-button" type="button" data-template="co2_high">CO2 偏高<br />触发通风建议</button>
           <button class="template-button" type="button" data-template="gas_leak">燃气异常<br />触发 P0 告警</button>
           <button class="template-button" type="button" data-template="temperature_high">室温过高<br />触发降温建议</button>
@@ -1200,14 +1198,6 @@
           vital: { heart_rate: 78, spo2: 96, systolic_bp: 128, diastolic_bp: 80, body_temperature: 36.6 },
           env: { room: "living_room", temperature: 25.0, humidity: 50.0, co2_ppm: 900, gas_ppm: 0, smoke_ppm: 0 },
         },
-        night_abnormal_activity: {
-          name: "夜间异常活动",
-          event: "night_abnormal_activity",
-          risk: "P2",
-          reason: "发布卧室无人状态；仅在北京时间 22:00 至次日 06:00 持续 5 分钟后触发。",
-          vital: { heart_rate: 78, spo2: 96, systolic_bp: 128, diastolic_bp: 80, body_temperature: 36.6 },
-          env: { room: "bedroom", temperature: 24.0, humidity: 50.0, co2_ppm: 820, gas_ppm: 0, smoke_ppm: 0 },
-        },
         co2_high: {
           name: "CO2 偏高",
           event: "co2_high",
@@ -1279,7 +1269,6 @@
         heart_rate_abnormal: "心率在触发点前后升高，高于 130 bpm 后触发 heart_rate_abnormal P1。",
         suspected_fall: "在触发点发布 suspected_fall 视觉事件，触发 P1；无关键帧时本地视觉模型会安全降级。",
         long_static: "在触发点发布 long_static 视觉事件，触发 P2；用于模拟一级视觉检测器上报。",
-        night_abnormal_activity: "在触发点发布卧室无人状态；北京时间夜间持续 5 分钟后触发 P2。",
         co2_high: "CO2 在触发点前后升高，超过 1500 ppm 后触发 co2_high P3。",
         gas_leak: "燃气在触发点前后平滑升高，超过 100 ppm 后触发 gas_leak P0。",
         temperature_high: "室温在触发点前后升高，达到 30°C 及以上后触发 temperature_high P3。",
@@ -1578,9 +1567,6 @@
       function updateScenarioPreview() {
         const scene = $("scenario-scene").value;
         const eventType = $("scenario-event").value;
-        if (eventType === "night_abnormal_activity" && $("scenario-event-room").value !== "bedroom") {
-          $("scenario-event-room").value = "bedroom";
-        }
         const eventRoom = $("scenario-event-room").value;
         const triggerSecond = Number($("scenario-trigger").value);
         $("scenario-trigger-label").textContent = `第 ${triggerSecond} 秒`;
@@ -1602,7 +1588,7 @@
           event_room: $("scenario-event-room").value,
           trigger_second: Number($("scenario-trigger").value),
           elder_id: $("scenario-elder").value.trim(),
-          duration_sec: eventType === "night_abnormal_activity" ? 360 : 120,
+          duration_sec: 120,
           interval_sec: 5,
           realtime: $("scenario-realtime").checked,
         };

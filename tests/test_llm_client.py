@@ -17,11 +17,13 @@ sys.path.insert(0, str(ROOT / "apps" / "guardian-orchestrator"))
 
 from app.llm_client import (
     CloudLLMClient,
+    EVENT_MINIMUM_RISK,
     LLMOutputError,
     LOCAL_OUTPUT_CONTRACT,
     LOCAL_RISK_POLICY_PROMPT,
     LOCAL_VISUAL_INSTRUCTION,
     LocalMultimodalClient,
+    RISK_POLICY_PROMPT,
     _compact_local_case,
     _extract_json_object,
     _normalize_multimodal_output,
@@ -587,7 +589,6 @@ class LLMClientParserTests(unittest.TestCase):
         cases = [
             ("suspected_fall", "P4", "P2"),
             ("long_static", "P4", "P3"),
-            ("night_abnormal_activity", "P4", "P3"),
             ("co2_high", "P4", "P4"),
             ("gas_leak", "P4", "P1"),
         ]
@@ -605,6 +606,11 @@ class LLMClientParserTests(unittest.TestCase):
                 {"event": {"event_type": "suspected_fall", "risk_level": "P4"}}, output
             )
             self.assertEqual(normalized["risk_level"], accepted)
+
+    def test_night_abnormal_activity_is_not_a_model_minimum_risk_policy(self) -> None:
+        self.assertNotIn("night_abnormal_activity", EVENT_MINIMUM_RISK)
+        self.assertNotIn("卧室持续无人5分钟", RISK_POLICY_PROMPT)
+        self.assertNotIn("夜间异常活动", RISK_POLICY_PROMPT)
 
     def test_llm_output_error_carries_rejected_model_diagnostics(self) -> None:
         parsed = {"event_semantics": "possible fall", "risk_level": "P3"}
@@ -1001,6 +1007,83 @@ class LLMClientParserTests(unittest.TestCase):
 
         self.assertEqual(captured.exception.raw_model_content, raw)
         self.assertEqual(captured.exception.parsed_model_output, output)
+
+    def test_candidate_low_risk_is_dismissed_without_event_promotion(self) -> None:
+        runner = WorkflowRunner()
+        runner._record_step = AsyncMock()
+        runner.edge.create_workflow = AsyncMock(return_value={})
+        runner.edge.update_ai_review_candidate = AsyncMock(return_value={})
+        runner.edge.get_recent_sensor_context = AsyncMock(return_value={"elder_id": "elder_001", "observations": []})
+        runner.edge.get_home_device_snapshot = AsyncMock(return_value={"devices": []})
+        runner.edge.get_behavior_segments = AsyncMock(return_value=[])
+        runner.edge.get_personal_baselines = AsyncMock(return_value=[])
+        runner.edge.create_event = AsyncMock(side_effect=AssertionError("candidate P3/P4 must not create event"))
+        runner.local_llm.analyze = AsyncMock(
+            return_value={
+                "event_semantics": "night wake can be recorded",
+                "risk_level": "P3",
+                "confidence": 0.6,
+                "family_summary": "continue observing",
+            }
+        )
+
+        result = asyncio.run(
+            runner.run_candidate(
+                {
+                    "candidate_id": "cand_low",
+                    "elder_id": "elder_001",
+                    "candidate_type": "night_behavior_anomaly",
+                    "reason": "night wake exceeds personal p90",
+                }
+            )
+        )
+
+        self.assertEqual(result["status"], "dismissed")
+        runner.edge.create_event.assert_not_awaited()
+        final_update = runner.edge.update_ai_review_candidate.await_args_list[-1].args[1]
+        self.assertEqual(final_update["status"], "dismissed")
+
+    def test_candidate_p2_or_higher_is_promoted_to_formal_event(self) -> None:
+        runner = WorkflowRunner()
+        runner._record_step = AsyncMock()
+        runner._execute_policy = AsyncMock(return_value={"status": "waiting_hmi"})
+        runner.edge.create_workflow = AsyncMock(return_value={})
+        runner.edge.update_ai_review_candidate = AsyncMock(return_value={})
+        runner.edge.get_recent_sensor_context = AsyncMock(return_value={"elder_id": "elder_001", "observations": []})
+        runner.edge.get_home_device_snapshot = AsyncMock(return_value={"devices": []})
+        runner.edge.get_behavior_segments = AsyncMock(return_value=[])
+        runner.edge.get_personal_baselines = AsyncMock(return_value=[])
+        runner.edge.create_event = AsyncMock(return_value={"event_id": "event_promoted"})
+        runner.local_llm.analyze = AsyncMock(
+            return_value={
+                "event_semantics": "night behavior needs attention",
+                "risk_level": "P2",
+                "confidence": 0.82,
+                "family_summary": "night wake exceeded personal routine",
+            }
+        )
+
+        result = asyncio.run(
+            runner.run_candidate(
+                {
+                    "candidate_id": "cand_promote",
+                    "elder_id": "elder_001",
+                    "candidate_type": "night_behavior_anomaly",
+                    "reason": "night wake exceeds personal p90",
+                    "features": {"duration_seconds": 720},
+                }
+            )
+        )
+
+        self.assertEqual(result["status"], "promoted")
+        self.assertEqual(result["promoted_event_id"], "event_promoted")
+        promoted_event = runner.edge.create_event.await_args.args[0]
+        self.assertEqual(str(promoted_event.event_type), "night_behavior_anomaly")
+        self.assertEqual(str(promoted_event.risk_level), "P2")
+        runner._execute_policy.assert_awaited_once()
+        final_update = runner.edge.update_ai_review_candidate.await_args_list[-1].args[1]
+        self.assertEqual(final_update["status"], "promoted")
+        self.assertEqual(final_update["promoted_event_id"], "event_promoted")
 
 
 if __name__ == "__main__":

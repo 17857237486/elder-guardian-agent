@@ -74,6 +74,54 @@ class DeviceReadingV2(GuardianModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class BehaviorSegmentV2(GuardianModel):
+    segment_id: str = Field(default_factory=lambda: new_id("seg"))
+    elder_id: str
+    segment_type: str
+    start_at: datetime = Field(default_factory=utc_now)
+    end_at: datetime | None = None
+    duration_seconds: int = 0
+    room: str | None = None
+    source_kinds: list[str] = Field(default_factory=list)
+    start_observation_id: str | None = None
+    end_observation_id: str | None = None
+    observation_count: int = 0
+    features: dict[str, Any] = Field(default_factory=dict)
+    status: str = "closed"
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class PersonalBaselineV2(GuardianModel):
+    baseline_id: str = Field(default_factory=lambda: new_id("base"))
+    elder_id: str
+    baseline_type: str
+    scope: str = "default"
+    timezone: str = "Asia/Shanghai"
+    period_start: datetime | None = None
+    period_end: datetime | None = None
+    lookback_days: int = 14
+    sample_count: int = 0
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    quality: str = "insufficient_data"
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class AiReviewCandidateV2(GuardianModel):
+    candidate_id: str = Field(default_factory=lambda: new_id("cand"))
+    elder_id: str
+    candidate_type: str
+    priority: str = "low"
+    status: str = "pending"
+    reason: str = ""
+    source_segment_ids: list[str] = Field(default_factory=list)
+    baseline_refs: list[str] = Field(default_factory=list)
+    features: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+    reviewed_at: datetime | None = None
+    promoted_event_id: str | None = None
+
+
 class NormalizedEventV2(GuardianModel):
     event_id: str = Field(default_factory=lambda: new_id("event"))
     elder_id: str

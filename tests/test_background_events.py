@@ -29,7 +29,6 @@ EXPECTED_EVENTS = {
     "heart_rate_abnormal",
     "suspected_fall",
     "long_static",
-    "night_abnormal_activity",
     "co2_high",
     "gas_leak",
     "temperature_high",
@@ -41,6 +40,11 @@ EXPECTED_EVENTS = {
 class BackgroundEventTests(unittest.TestCase):
     def test_all_risk_events_are_available(self) -> None:
         self.assertEqual(set(EVENT_LABELS), EXPECTED_EVENTS)
+        self.assertNotIn("night_abnormal_activity", EVENT_LABELS)
+
+    def test_frontend_does_not_offer_night_abnormal_event(self) -> None:
+        html = (ROOT / "Background_MQTT" / "frontend" / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn("night_abnormal_activity", html)
 
     def test_spo2_levels_are_distinct(self) -> None:
         critical = build_event_samples("dinner", "spo2_critical", 0, 10, 5, "elder_001")[-1]

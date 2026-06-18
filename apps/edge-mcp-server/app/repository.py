@@ -11,9 +11,12 @@ from guardian_shared.v2 import (
     ActionExecutionV2,
     AlertRecordV2,
     DeviceReadingV2,
+    AiReviewCandidateV2,
+    BehaviorSegmentV2,
     HmiPromptV2,
     HmiResponseV2,
     NormalizedEventV2,
+    PersonalBaselineV2,
     RawObservationV2,
     ToolCallV2,
     WorkflowStepV2,
@@ -56,11 +59,24 @@ def row_to_dict(row: Any) -> dict[str, Any]:
         "command_json",
         "options_json",
         "metrics_json",
+        "features_json",
+        "source_kinds_json",
+        "source_segment_ids_json",
+        "baseline_refs_json",
         "units_json",
+        "state_json",
     ]:
         if key in data:
             base = key.replace("_json", "")
-            default: Any = [] if key in {"trigger_observation_ids_json", "options_json", "evidence_json", "image_refs_json"} else {}
+            default: Any = [] if key in {
+                "trigger_observation_ids_json",
+                "options_json",
+                "evidence_json",
+                "image_refs_json",
+                "source_kinds_json",
+                "source_segment_ids_json",
+                "baseline_refs_json",
+            } else {}
             data[base] = _loads(data.pop(key), default)
     return data
 
@@ -141,6 +157,156 @@ def latest_device_readings(db: Session, elder_id: str, limit: int = 100) -> list
         if row.device_id not in latest:
             latest[row.device_id] = _with_online_state(row, now=now)
     return list(latest.values())
+
+
+def upsert_behavior_segment(db: Session, segment: BehaviorSegmentV2) -> dict[str, Any]:
+    obj = db.query(models.BehaviorSegmentModel).filter(models.BehaviorSegmentModel.segment_id == segment.segment_id).first()
+    if obj is None:
+        obj = models.BehaviorSegmentModel(segment_id=segment.segment_id, elder_id=segment.elder_id, segment_type=segment.segment_type, start_at=segment.start_at)
+        db.add(obj)
+    obj.elder_id = segment.elder_id
+    obj.segment_type = segment.segment_type
+    obj.start_at = segment.start_at
+    obj.end_at = segment.end_at
+    obj.duration_seconds = segment.duration_seconds
+    obj.room = segment.room
+    obj.source_kinds_json = _json(segment.source_kinds)
+    obj.start_observation_id = segment.start_observation_id
+    obj.end_observation_id = segment.end_observation_id
+    obj.observation_count = segment.observation_count
+    obj.features_json = _json(segment.features)
+    obj.status = segment.status
+    obj.created_at = segment.created_at
+    obj.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(obj)
+    return row_to_dict(obj)
+
+
+def create_behavior_segment(db: Session, segment: BehaviorSegmentV2) -> dict[str, Any]:
+    return upsert_behavior_segment(db, segment)
+
+
+def list_behavior_segments(db: Session, elder_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    rows = (
+        db.query(models.BehaviorSegmentModel)
+        .filter(models.BehaviorSegmentModel.elder_id == elder_id)
+        .order_by(desc(models.BehaviorSegmentModel.start_at))
+        .limit(limit)
+        .all()
+    )
+    return [row_to_dict(row) for row in rows]
+
+
+def create_personal_baseline(db: Session, baseline: PersonalBaselineV2) -> dict[str, Any]:
+    obj = (
+        db.query(models.PersonalBaselineModel)
+        .filter(
+            models.PersonalBaselineModel.elder_id == baseline.elder_id,
+            models.PersonalBaselineModel.baseline_type == baseline.baseline_type,
+            models.PersonalBaselineModel.scope == baseline.scope,
+        )
+        .first()
+    )
+    if obj is None:
+        obj = models.PersonalBaselineModel(
+            baseline_id=baseline.baseline_id,
+            elder_id=baseline.elder_id,
+            baseline_type=baseline.baseline_type,
+            scope=baseline.scope,
+        )
+        db.add(obj)
+    obj.timezone = baseline.timezone
+    obj.period_start = baseline.period_start
+    obj.period_end = baseline.period_end
+    obj.lookback_days = baseline.lookback_days
+    obj.sample_count = baseline.sample_count
+    obj.metrics_json = _json(baseline.metrics)
+    obj.quality = baseline.quality
+    obj.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(obj)
+    return row_to_dict(obj)
+
+
+def list_personal_baselines(db: Session, elder_id: str) -> list[dict[str, Any]]:
+    rows = (
+        db.query(models.PersonalBaselineModel)
+        .filter(models.PersonalBaselineModel.elder_id == elder_id)
+        .order_by(desc(models.PersonalBaselineModel.updated_at))
+        .all()
+    )
+    return [row_to_dict(row) for row in rows]
+
+
+def create_ai_review_candidate(db: Session, candidate: AiReviewCandidateV2) -> dict[str, Any]:
+    obj = models.AiReviewCandidateModel(
+        candidate_id=candidate.candidate_id,
+        elder_id=candidate.elder_id,
+        candidate_type=candidate.candidate_type,
+        priority=candidate.priority,
+        status=candidate.status,
+        reason=candidate.reason,
+        source_segment_ids_json=_json(candidate.source_segment_ids),
+        baseline_refs_json=_json(candidate.baseline_refs),
+        features_json=_json(candidate.features),
+        created_at=candidate.created_at,
+        reviewed_at=candidate.reviewed_at,
+        promoted_event_id=candidate.promoted_event_id,
+    )
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return row_to_dict(obj)
+
+
+def list_ai_review_candidates(db: Session, elder_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    rows = (
+        db.query(models.AiReviewCandidateModel)
+        .filter(models.AiReviewCandidateModel.elder_id == elder_id)
+        .order_by(desc(models.AiReviewCandidateModel.created_at))
+        .limit(limit)
+        .all()
+    )
+    return [row_to_dict(row) for row in rows]
+
+
+def update_ai_review_candidate(db: Session, candidate_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    obj = db.query(models.AiReviewCandidateModel).filter(models.AiReviewCandidateModel.candidate_id == candidate_id).first()
+    if obj is None:
+        return None
+    for field in ("priority", "status", "reason", "promoted_event_id"):
+        if field in payload:
+            setattr(obj, field, payload[field])
+    if "source_segment_ids" in payload:
+        obj.source_segment_ids_json = _json(payload["source_segment_ids"])
+    if "baseline_refs" in payload:
+        obj.baseline_refs_json = _json(payload["baseline_refs"])
+    if "features" in payload:
+        obj.features_json = _json(payload["features"])
+    if "reviewed_at" in payload:
+        value = payload["reviewed_at"]
+        obj.reviewed_at = datetime.fromisoformat(value.replace("Z", "+00:00")) if isinstance(value, str) else value
+    db.commit()
+    db.refresh(obj)
+    return row_to_dict(obj)
+
+
+def get_worker_state(db: Session, worker_name: str) -> dict[str, Any]:
+    row = db.query(models.WorkerStateModel).filter(models.WorkerStateModel.worker_name == worker_name).first()
+    return row_to_dict(row)["state"] if row else {}
+
+
+def set_worker_state(db: Session, worker_name: str, state: dict[str, Any]) -> dict[str, Any]:
+    row = db.query(models.WorkerStateModel).filter(models.WorkerStateModel.worker_name == worker_name).first()
+    if row is None:
+        row = models.WorkerStateModel(worker_name=worker_name)
+        db.add(row)
+    row.state_json = _json(state)
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
+    return row_to_dict(row)
 
 
 def list_observations(db: Session, elder_id: str, limit: int = 100) -> list[dict[str, Any]]:
@@ -509,6 +675,9 @@ def dashboard_state(db: Session, elder_id: str) -> dict[str, Any]:
         "observations": observations,
         "device_readings": list_device_readings(db, elder_id=elder_id, limit=100),
         "device_readings_latest": latest_device_readings(db, elder_id=elder_id, limit=200),
+        "behavior_segments": list_behavior_segments(db, elder_id=elder_id, limit=30),
+        "personal_baselines": list_personal_baselines(db, elder_id=elder_id),
+        "ai_review_candidates": list_ai_review_candidates(db, elder_id=elder_id, limit=30),
         "workflows": list_workflows(db, elder_id=elder_id),
         "workflow_steps": list_workflow_steps(db, elder_id=elder_id),
         "tool_calls": list_tool_calls(db, elder_id=elder_id),

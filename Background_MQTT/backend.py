@@ -488,20 +488,6 @@ def publish_risk_signal(event_type: str, elder_id: str, room: str) -> int:
             },
         )
         return 1
-    if event_type == "night_abnormal_activity":
-        publish_json(
-            home_device_state("bedroom", "presence_sensor"),
-            {
-                "elder_id": elder_id,
-                "room": "bedroom",
-                "device": "presence_sensor",
-                "present": False,
-                "state": "absent",
-                "online": True,
-                "timestamp": utc_now(),
-            },
-        )
-        return 1
     return 0
 
 

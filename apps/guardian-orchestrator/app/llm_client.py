@@ -32,7 +32,6 @@ EVENT_MINIMUM_RISK = {
     "heart_rate_abnormal": "P1",
     "suspected_fall": "P1",
     "long_static": "P2",
-    "night_abnormal_activity": "P2",
     "co2_high": "P3",
     "temperature_high": "P3",
     "temperature_low": "P3",
@@ -42,7 +41,7 @@ EVENT_MINIMUM_RISK = {
 RISK_POLICY_PROMPT = (
     "风险等级政策：P0=紧急危险，包括燃气异常、血氧低于88%或有明确证据的即时生命危险；"
     "P1=高风险，包括疑似跌倒、血氧88%至91%、心率低于45或高于130；"
-    "P2=中风险，包括长时间静止、北京时间22:00至次日06:00卧室持续无人5分钟的夜间异常活动；"
+    "P2=中风险，包括长时间静止；"
     "P3=低风险，包括CO2、温度、湿度等环境异常；P4=未发现风险，仅记录。"
     "输入事件的rule_risk_level以及上述事件类型等级都是最低风险等级。模型只能保持或升级，不能因画面模糊、"
     "证据矛盾、置信度较低或老人之后起身而降级。suspected_fall只能输出P1或P0；"
@@ -296,6 +295,12 @@ def _compact_value(value: Any, *, depth: int = 0) -> Any:
 
 
 def _compact_environment_samples(samples: Any) -> list[Any]:
+    if not isinstance(samples, list):
+        return []
+    return [_compact_value(item) for item in samples[:20]]
+
+
+def _compact_vital_samples(samples: Any) -> list[Any]:
     if not isinstance(samples, list):
         return []
     return [_compact_value(item) for item in samples[:20]]
@@ -613,10 +618,27 @@ def _compact_local_case(event: dict[str, Any], context: dict[str, Any]) -> dict[
         "room_sequence": environment_context.get("room_sequence", []),
         "samples": _compact_environment_samples(environment_context.get("samples", [])),
     }
+    recent_vital = context.get("recent_vital_samples") if isinstance(context.get("recent_vital_samples"), dict) else {}
+    behavior_context = context.get("behavior_context") if isinstance(context.get("behavior_context"), dict) else {}
+    baseline_context = context.get("baseline_context") if isinstance(context.get("baseline_context"), dict) else {}
+    candidate = context.get("candidate") if isinstance(context.get("candidate"), dict) else None
     return {
         "event": compact_event,
+        "candidate": _compact_value(candidate) if candidate else None,
         "elder_location": _compact_value(elder_location),
         "environment_context": compact_environment_context,
+        "recent_vital_samples": {
+            "target_samples": recent_vital.get("target_samples"),
+            "actual_samples": recent_vital.get("actual_samples"),
+            "samples": _compact_vital_samples(recent_vital.get("samples", [])),
+        },
+        "behavior_context": {
+            "night_wake": _compact_value(behavior_context.get("night_wake")),
+            "bathroom_stay": _compact_value(behavior_context.get("bathroom_stay")),
+            "room_sequence": _compact_value(behavior_context.get("room_sequence", [])),
+            "recent_segments": _compact_value(behavior_context.get("recent_segments", [])[:8]),
+        },
+        "baseline_context": _compact_value(baseline_context),
         "sensor_evidence": sensor_evidence,
         "device_states": device_states,
     }

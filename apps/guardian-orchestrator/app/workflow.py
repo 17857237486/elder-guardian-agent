@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 
 from guardian_shared.enums import DeviceAction, DeviceType, EventType, RiskLevel
+from guardian_shared.schemas import new_id
 from guardian_shared.v2 import (
     ActionCommandV2,
     ActionRequestV2,
@@ -127,7 +128,8 @@ class WorkflowRunner:
 
         sensors = await self.edge.get_recent_sensor_context(event.elder_id, limit=240)
         devices = await self.edge.get_home_device_snapshot(event.elder_id)
-        context = self._build_local_context(event, saved_event, sensors, devices)
+        segments, baselines = await self._get_behavior_context_sources(event.elder_id)
+        context = self._build_local_context(event, saved_event, sensors, devices, segments=segments, baselines=baselines)
         await self._record_step(workflow, event, "local_context_fusion", {"event": saved_event}, context)
 
         local_started = perf_counter()
@@ -199,6 +201,113 @@ class WorkflowRunner:
             {"local": local, "cloud": cloud},
             {"final_risk_level": final_risk, "family_summary": summary},
         )
+
+    async def run_candidate(self, candidate: dict[str, Any]) -> dict[str, Any]:
+        candidate_id = str(candidate.get("candidate_id") or new_id("cand"))
+        elder_id = str(candidate.get("elder_id") or settings.elder_id)
+        event = NormalizedEventV2(
+            event_id=candidate_id,
+            elder_id=elder_id,
+            event_type=str(candidate.get("candidate_type") or "ai_review_candidate"),
+            risk_level=RiskLevel.P4,
+            summary=str(candidate.get("reason") or "AI review candidate"),
+            source_kind="ai_review_candidate",
+            evidence=[{"candidate": candidate}],
+            rule_risk_level=RiskLevel.P4,
+            local_risk_level=RiskLevel.P4,
+            final_risk_level=RiskLevel.P4,
+            decision_source="candidate",
+            confidence=0.0,
+        )
+        workflow = WorkflowV2(
+            event_id=candidate_id,
+            elder_id=elder_id,
+            status=WorkflowStatus.RUNNING,
+            current_step="candidate_received",
+            model=settings.llm_model,
+        )
+        await self.edge.create_workflow(workflow)
+        await self._record_step(workflow, event, "candidate_received", {"candidate": candidate}, {"accepted": True})
+
+        await self.edge.update_ai_review_candidate(
+            candidate_id,
+            {"status": "reviewing", "reviewed_at": datetime.now(timezone.utc).isoformat()},
+        )
+
+        sensors = await self.edge.get_recent_sensor_context(elder_id, limit=240)
+        devices = await self.edge.get_home_device_snapshot(elder_id)
+        segments, baselines = await self._get_behavior_context_sources(elder_id)
+        saved_event = {
+            "event_id": candidate_id,
+            "event_type": event.event_type,
+            "risk_level": "P4",
+            "summary": event.summary,
+            "source_kind": "ai_review_candidate",
+            "candidate": candidate,
+        }
+        context = self._build_local_context(event, saved_event, sensors, devices, segments=segments, baselines=baselines)
+        context["candidate"] = candidate
+        await self._record_step(workflow, event, "local_context_fusion", {"candidate": candidate}, context)
+
+        started = perf_counter()
+        try:
+            local = await self.local_llm.analyze(event=saved_event, context=context, contact_sheet=None)
+        except Exception as exc:
+            local = self._fallback_result(event, exc)
+        local["latency_ms"] = round((perf_counter() - started) * 1000, 1)
+        await self._record_step(workflow, event, "local_multiframe_analysis", {"candidate": candidate}, local)
+
+        local_risk = risk_text(local.get("risk_level", "P4"))
+        if local.get("fallback"):
+            status = "failed"
+            promoted_event_id = None
+            output = {"status": status, "reason": local.get("error"), "risk_level": local_risk}
+        elif local_risk in {"P4", "P3"}:
+            status = "dismissed"
+            promoted_event_id = None
+            output = {"status": status, "reason": "local_model_low_risk", "risk_level": local_risk}
+        else:
+            promoted = NormalizedEventV2(
+                elder_id=elder_id,
+                event_type=str(candidate.get("candidate_type") or "ai_review_candidate"),
+                risk_level=local_risk,
+                summary=local.get("family_summary") or local.get("event_semantics") or event.summary,
+                source_kind="ai_review_candidate",
+                evidence=[{"candidate": candidate, "local_result": local}],
+                rule_risk_level=RiskLevel.P4,
+                local_risk_level=local_risk,
+                final_risk_level=local_risk,
+                decision_source="local",
+                confidence=float(local.get("confidence") or 0.0),
+            )
+            saved = await self.edge.create_event(promoted)
+            await self._execute_policy(workflow, promoted, local)
+            status = "promoted"
+            promoted_event_id = str(saved.get("event_id") or promoted.event_id)
+            output = {"status": status, "promoted_event_id": promoted_event_id, "risk_level": local_risk}
+
+        await self.edge.update_ai_review_candidate(
+            candidate_id,
+            {
+                "status": status,
+                "reviewed_at": datetime.now(timezone.utc).isoformat(),
+                "promoted_event_id": promoted_event_id,
+                "features": {**(candidate.get("features") if isinstance(candidate.get("features"), dict) else {}), "local_result": local},
+            },
+        )
+        await self._record_step(workflow, event, "candidate_decision", local, output)
+        return {"candidate_id": candidate_id, "workflow_id": workflow.workflow_id, **output}
+
+    async def _get_behavior_context_sources(self, elder_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        try:
+            segments, baselines = await asyncio.gather(
+                self.edge.get_behavior_segments(elder_id, limit=50),
+                self.edge.get_personal_baselines(elder_id),
+            )
+            return segments, baselines
+        except Exception:
+            logger.exception("failed to fetch behavior context sources")
+            return [], []
 
     async def _collect_frames(
         self, event: NormalizedEventV2
@@ -287,6 +396,9 @@ class WorkflowRunner:
         saved_event: dict[str, Any],
         sensors: dict[str, Any],
         devices: dict[str, Any],
+        *,
+        segments: list[dict[str, Any]] | None = None,
+        baselines: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         observations = sensors.get("observations", []) if isinstance(sensors, dict) else []
         observations = [item for item in observations if isinstance(item, dict)]
@@ -332,8 +444,30 @@ class WorkflowRunner:
                 }
             )
 
+        vital_candidates = [
+            item
+            for item in observations_desc
+            if str(item.get("kind") or "") == "vital"
+        ][:20]
+        recent_vital_samples = []
+        for item in reversed(vital_candidates):
+            payload = cls._payload(item)
+            recent_vital_samples.append(
+                {
+                    "observation_id": item.get("observation_id"),
+                    "observed_at": item.get("observed_at"),
+                    "heart_rate": payload.get("heart_rate"),
+                    "spo2": payload.get("spo2"),
+                    "systolic_bp": payload.get("systolic_bp"),
+                    "diastolic_bp": payload.get("diastolic_bp"),
+                    "body_temperature": payload.get("body_temperature"),
+                    "room": payload.get("room"),
+                }
+            )
+
         trigger_ids = set(saved_event.get("trigger_observation_ids") or event.trigger_observation_ids or [])
         selected_ids = {str(item.get("observation_id")) for item in selected_env if item.get("observation_id")}
+        vital_ids = {str(item.get("observation_id")) for item in vital_candidates if item.get("observation_id")}
         selected_room_set = set(selected_rooms)
         local_observations: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
@@ -345,12 +479,23 @@ class WorkflowRunner:
                 keep = True
             if observation_id and observation_id in selected_ids:
                 keep = True
+            if observation_id and observation_id in vital_ids:
+                keep = True
             if str(item.get("kind") or "") == "device_state" and payload.get("room") in selected_room_set:
                 keep = True
             if keep and observation_id not in seen_ids:
                 local_observations.append(item)
                 seen_ids.add(observation_id)
         local_observations = sorted(local_observations, key=cls._observation_time)
+
+        behavior_segments = segments or []
+        personal_baselines = baselines or []
+        recent_segments = sorted(behavior_segments, key=lambda item: str(item.get("start_at") or ""), reverse=True)[:20]
+        baseline_context = {
+            str(item.get("baseline_type")): item
+            for item in personal_baselines
+            if isinstance(item, dict) and item.get("baseline_type")
+        }
 
         return {
             "sensors": {
@@ -371,6 +516,18 @@ class WorkflowRunner:
                 "room_sequence": room_sequence,
                 "samples": environment_samples,
             },
+            "recent_vital_samples": {
+                "target_samples": 20,
+                "actual_samples": len(recent_vital_samples),
+                "samples": recent_vital_samples,
+            },
+            "behavior_context": {
+                "recent_segments": recent_segments,
+                "night_wake": next((item for item in recent_segments if item.get("segment_type") == "night_wake"), None),
+                "bathroom_stay": next((item for item in recent_segments if item.get("segment_type") == "bathroom_stay"), None),
+                "room_sequence": room_sequence,
+            },
+            "baseline_context": baseline_context,
         }
 
     async def _complete_deterministic_p3(

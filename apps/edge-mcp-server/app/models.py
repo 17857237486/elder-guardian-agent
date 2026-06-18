@@ -42,6 +42,72 @@ class DeviceReadingModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
 
 
+class BehaviorSegmentModel(Base):
+    __tablename__ = "v2_behavior_segments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    segment_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    elder_id: Mapped[str] = mapped_column(String(64), index=True)
+    segment_type: Mapped[str] = mapped_column(String(64), index=True)
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    room: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    source_kinds_json: Mapped[str] = mapped_column(Text, default="[]")
+    start_observation_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    end_observation_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    observation_count: Mapped[int] = mapped_column(Integer, default=0)
+    features_json: Mapped[str] = mapped_column(Text, default="{}")
+    status: Mapped[str] = mapped_column(String(32), default="closed", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+
+
+class PersonalBaselineModel(Base):
+    __tablename__ = "v2_personal_baselines"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    baseline_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    elder_id: Mapped[str] = mapped_column(String(64), index=True)
+    baseline_type: Mapped[str] = mapped_column(String(64), index=True)
+    scope: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    timezone: Mapped[str] = mapped_column(String(64), default="Asia/Shanghai")
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lookback_days: Mapped[int] = mapped_column(Integer, default=14)
+    sample_count: Mapped[int] = mapped_column(Integer, default=0)
+    metrics_json: Mapped[str] = mapped_column(Text, default="{}")
+    quality: Mapped[str] = mapped_column(String(64), default="insufficient_data", index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+
+
+class AiReviewCandidateModel(Base):
+    __tablename__ = "v2_ai_review_candidates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    candidate_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    elder_id: Mapped[str] = mapped_column(String(64), index=True)
+    candidate_type: Mapped[str] = mapped_column(String(64), index=True)
+    priority: Mapped[str] = mapped_column(String(32), default="low", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    source_segment_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    baseline_refs_json: Mapped[str] = mapped_column(Text, default="[]")
+    features_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    promoted_event_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+
+class WorkerStateModel(Base):
+    __tablename__ = "v2_worker_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    worker_name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    state_json: Mapped[str] = mapped_column(Text, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+
+
 class NormalizedEventModel(Base):
     __tablename__ = "v2_normalized_events"
 

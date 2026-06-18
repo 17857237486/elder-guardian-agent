@@ -35,6 +35,19 @@ class EdgeClient:
     async def get_home_device_snapshot(self, elder_id: str) -> dict[str, Any]:
         return await self._get(f"/api/v2/tools/device-snapshot/{elder_id}")
 
+    async def get_behavior_segments(self, elder_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        response = await self._get(f"/api/v2/behavior-segments?elder_id={elder_id}&limit={limit}")
+        segments = response.get("behavior_segments")
+        return segments if isinstance(segments, list) else []
+
+    async def get_personal_baselines(self, elder_id: str) -> list[dict[str, Any]]:
+        response = await self._get(f"/api/v2/personal-baselines?elder_id={elder_id}")
+        baselines = response.get("personal_baselines")
+        return baselines if isinstance(baselines, list) else []
+
+    async def update_ai_review_candidate(self, candidate_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._patch(f"/api/v2/ai-review-candidates/{candidate_id}", payload)
+
     async def get_observations(self, elder_id: str, limit: int = 1000) -> list[dict[str, Any]]:
         response = await self._get(f"/api/v2/observations?elder_id={elder_id}&limit={limit}")
         observations = response.get("observations")

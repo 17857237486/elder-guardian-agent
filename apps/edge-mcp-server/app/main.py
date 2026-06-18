@@ -8,8 +8,23 @@ import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from guardian_shared.v2 import ActionRequestV2, AlertRequestV2, DeviceReadingV2, HmiPromptV2, HmiResponseV2, NormalizedEventV2, RawObservationV2, WorkflowNoteV2, WorkflowStepV2, WorkflowV2
+from guardian_shared.v2 import (
+    ActionRequestV2,
+    AiReviewCandidateV2,
+    AlertRequestV2,
+    BehaviorSegmentV2,
+    DeviceReadingV2,
+    HmiPromptV2,
+    HmiResponseV2,
+    NormalizedEventV2,
+    PersonalBaselineV2,
+    RawObservationV2,
+    WorkflowNoteV2,
+    WorkflowStepV2,
+    WorkflowV2,
+)
 
+from app.behavior_worker import BehaviorAnalyticsWorker
 from app.config import settings
 from app.database import SessionLocal, init_db
 from app import repository
@@ -30,6 +45,7 @@ app.add_middleware(
 )
 mqtt_bridge = MqttBridge()
 tool_service = EdgeToolService(mqtt_bridge)
+behavior_worker = BehaviorAnalyticsWorker()
 mcp = build_mcp(tool_service)
 if mcp is not None and hasattr(mcp, "streamable_http_app"):
     app.mount("/mcp", mcp.streamable_http_app())
@@ -39,10 +55,12 @@ if mcp is not None and hasattr(mcp, "streamable_http_app"):
 async def startup() -> None:
     init_db()
     mqtt_bridge.start(asyncio.get_running_loop())
+    behavior_worker.start()
 
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
+    await behavior_worker.close()
     mqtt_bridge.stop()
 
 
@@ -86,6 +104,66 @@ async def list_device_readings(elder_id: str | None = None, limit: int = 100) ->
 async def latest_device_readings(elder_id: str | None = None, limit: int = 100) -> dict[str, Any]:
     with SessionLocal() as db:
         return {"device_readings_latest": repository.latest_device_readings(db, elder_id or settings.elder_id, limit)}
+
+
+async def forward_candidate_to_orchestrator(record: dict[str, Any]) -> None:
+    if not settings.orchestrator_url:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(f"{settings.orchestrator_url.rstrip('/')}/api/v2/orchestrator/candidates", json=record)
+            response.raise_for_status()
+    except Exception:
+        logger.exception("Failed to forward AI review candidate to orchestrator")
+
+
+@app.get("/api/v2/behavior-segments")
+async def list_behavior_segments(elder_id: str | None = None, limit: int = 100) -> dict[str, Any]:
+    with SessionLocal() as db:
+        return {"behavior_segments": repository.list_behavior_segments(db, elder_id or settings.elder_id, limit)}
+
+
+@app.post("/api/v2/behavior-segments")
+async def create_behavior_segment(segment: BehaviorSegmentV2) -> dict[str, Any]:
+    with SessionLocal() as db:
+        record = repository.create_behavior_segment(db, segment)
+    return {"ok": True, "behavior_segment": record}
+
+
+@app.get("/api/v2/personal-baselines")
+async def list_personal_baselines(elder_id: str | None = None) -> dict[str, Any]:
+    with SessionLocal() as db:
+        return {"personal_baselines": repository.list_personal_baselines(db, elder_id or settings.elder_id)}
+
+
+@app.post("/api/v2/personal-baselines")
+async def create_personal_baseline(baseline: PersonalBaselineV2) -> dict[str, Any]:
+    with SessionLocal() as db:
+        record = repository.create_personal_baseline(db, baseline)
+    return {"ok": True, "personal_baseline": record}
+
+
+@app.get("/api/v2/ai-review-candidates")
+async def list_ai_review_candidates(elder_id: str | None = None, limit: int = 100) -> dict[str, Any]:
+    with SessionLocal() as db:
+        return {"ai_review_candidates": repository.list_ai_review_candidates(db, elder_id or settings.elder_id, limit)}
+
+
+@app.post("/api/v2/ai-review-candidates")
+async def create_ai_review_candidate(candidate: AiReviewCandidateV2) -> dict[str, Any]:
+    with SessionLocal() as db:
+        record = repository.create_ai_review_candidate(db, candidate)
+    if settings.orchestrator_url:
+        asyncio.create_task(forward_candidate_to_orchestrator(record))
+        return {"ok": True, "ai_review_candidate": record, "orchestrator": {"status": "queued"}}
+    return {"ok": True, "ai_review_candidate": record, "orchestrator": {"status": "disabled"}}
+
+
+@app.patch("/api/v2/ai-review-candidates/{candidate_id}")
+async def update_ai_review_candidate(candidate_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    with SessionLocal() as db:
+        record = repository.update_ai_review_candidate(db, candidate_id, payload)
+    return {"ok": record is not None, "ai_review_candidate": record or {"candidate_id": candidate_id, "status": "not_found"}}
 
 
 async def forward_observation_to_orchestrator(record: dict[str, Any]) -> None:
