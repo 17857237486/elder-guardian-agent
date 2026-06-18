@@ -234,7 +234,7 @@ class WorkflowRunner:
             {"status": "reviewing", "reviewed_at": datetime.now(timezone.utc).isoformat()},
         )
 
-        sensors = await self.edge.get_recent_sensor_context(elder_id, limit=240)
+        sensors = await self.edge.get_recent_sensor_context(elder_id, limit=80)
         devices = await self.edge.get_home_device_snapshot(elder_id)
         segments, baselines = await self._get_behavior_context_sources(elder_id)
         saved_event = {
@@ -245,8 +245,7 @@ class WorkflowRunner:
             "source_kind": "ai_review_candidate",
             "candidate": candidate,
         }
-        context = self._build_local_context(event, saved_event, sensors, devices, segments=segments, baselines=baselines)
-        context["candidate"] = candidate
+        context = self._build_candidate_context(event, candidate, sensors, devices, segments=segments, baselines=baselines)
         await self._record_step(workflow, event, "local_context_fusion", {"candidate": candidate}, context)
 
         started = perf_counter()
@@ -528,6 +527,83 @@ class WorkflowRunner:
                 "room_sequence": room_sequence,
             },
             "baseline_context": baseline_context,
+        }
+
+    @classmethod
+    def _build_candidate_context(
+        cls,
+        event: NormalizedEventV2,
+        candidate: dict[str, Any],
+        sensors: dict[str, Any],
+        devices: dict[str, Any],
+        *,
+        segments: list[dict[str, Any]] | None = None,
+        baselines: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        base = cls._build_local_context(
+            event,
+            {"trigger_observation_ids": []},
+            sensors,
+            devices,
+            segments=segments,
+            baselines=baselines,
+        )
+        behavior_context = base.get("behavior_context") if isinstance(base.get("behavior_context"), dict) else {}
+        source_ids = {
+            str(item)
+            for item in (candidate.get("source_segment_ids") or [])
+            if item is not None
+        }
+        recent_segments = behavior_context.get("recent_segments") if isinstance(behavior_context.get("recent_segments"), list) else []
+        matched_segments = [
+            item
+            for item in recent_segments
+            if isinstance(item, dict) and str(item.get("segment_id")) in source_ids
+        ]
+        if not matched_segments and isinstance(candidate.get("features"), dict):
+            embedded = candidate["features"].get("segment")
+            if isinstance(embedded, dict):
+                matched_segments = [embedded]
+
+        environment_context = base.get("environment_context") if isinstance(base.get("environment_context"), dict) else {}
+        recent_vital = base.get("recent_vital_samples") if isinstance(base.get("recent_vital_samples"), dict) else {}
+        return {
+            "candidate": {
+                "candidate_id": candidate.get("candidate_id"),
+                "candidate_type": candidate.get("candidate_type"),
+                "priority": candidate.get("priority"),
+                "reason": candidate.get("reason"),
+                "features": candidate.get("features") if isinstance(candidate.get("features"), dict) else {},
+                "source_segment_ids": list(source_ids),
+            },
+            "elder_location": base.get("elder_location"),
+            "environment_context": {
+                "target_samples": environment_context.get("target_samples"),
+                "actual_samples": environment_context.get("actual_samples"),
+                "selection_policy": environment_context.get("selection_policy"),
+                "room_sequence": environment_context.get("room_sequence", []),
+                "samples": (environment_context.get("samples") or [])[-3:],
+            },
+            "recent_vital_samples": {
+                "target_samples": recent_vital.get("target_samples"),
+                "actual_samples": recent_vital.get("actual_samples"),
+                "samples": (recent_vital.get("samples") or [])[-3:],
+            },
+            "behavior_context": {
+                "candidate_segments": matched_segments[:3],
+                "night_wake": next(
+                    (item for item in matched_segments if isinstance(item, dict) and item.get("segment_type") == "night_wake"),
+                    behavior_context.get("night_wake"),
+                ),
+                "bathroom_stay": next(
+                    (item for item in matched_segments if isinstance(item, dict) and item.get("segment_type") == "bathroom_stay"),
+                    behavior_context.get("bathroom_stay"),
+                ),
+                "room_sequence": behavior_context.get("room_sequence", []),
+            },
+            "baseline_context": base.get("baseline_context", {}),
+            "sensors": {"elder_id": event.elder_id, "observations": []},
+            "devices": {"devices": []},
         }
 
     async def _complete_deterministic_p3(

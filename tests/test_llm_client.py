@@ -850,6 +850,88 @@ class LLMClientParserTests(unittest.TestCase):
         self.assertEqual(len(compact["environment_context"]["samples"]), 20)
         self.assertEqual(compact["sensor_evidence"][0]["payload"]["heart_rate"], 138)
 
+    def test_candidate_context_and_prompt_are_lightweight(self) -> None:
+        observations = [
+            {
+                "observation_id": f"env_{index}",
+                "kind": "environment",
+                "observed_at": f"2026-06-18T22:{index:02d}:00+08:00",
+                "payload": {
+                    "room": "living_room",
+                    "temperature": 25 + index,
+                    "humidity": 50,
+                    "presence": True,
+                },
+            }
+            for index in range(12)
+        ]
+        observations.extend(
+            {
+                "observation_id": f"vital_{index}",
+                "kind": "vital",
+                "observed_at": f"2026-06-18T22:{index:02d}:30+08:00",
+                "payload": {"heart_rate": 78 + index, "spo2": 96},
+            }
+            for index in range(12)
+        )
+        candidate = {
+            "candidate_id": "cand_light",
+            "candidate_type": "night_behavior_anomaly",
+            "priority": "low",
+            "reason": "night wake exceeds personal p90",
+            "source_segment_ids": ["seg_night"],
+            "features": {
+                "duration_seconds": 720,
+                "baseline_p90_seconds": 480,
+                "segment": {"segment_id": "seg_night", "segment_type": "night_wake", "duration_seconds": 720},
+                "local_result": {"error": "old timeout"},
+            },
+        }
+        event = NormalizedEventV2(
+            event_id="cand_light",
+            elder_id="elder_001",
+            event_type="night_behavior_anomaly",
+            risk_level=RiskLevel.P4,
+            source_kind="ai_review_candidate",
+            summary="night wake exceeds personal p90",
+        )
+        context = WorkflowRunner._build_candidate_context(
+            event,
+            candidate,
+            {"elder_id": "elder_001", "observations": observations},
+            {"devices": [{"room": "living_room", "device": "light", "state": "on"}]},
+            segments=[
+                {
+                    "segment_id": "seg_night",
+                    "segment_type": "night_wake",
+                    "duration_seconds": 720,
+                    "features": {"rooms": ["bedroom", "bathroom"], "returned_to_bedroom": False},
+                }
+            ],
+            baselines=[
+                {
+                    "baseline_type": "night_routine",
+                    "quality": "stable",
+                    "sample_count": 14,
+                    "metrics": {"night_wake_duration_p90_sec": 480},
+                }
+            ],
+        )
+
+        self.assertEqual(context["sensors"]["observations"], [])
+        self.assertEqual(context["devices"]["devices"], [])
+        self.assertEqual(len(context["environment_context"]["samples"]), 3)
+        self.assertEqual(len(context["recent_vital_samples"]["samples"]), 3)
+        compact = _compact_local_case({"event_type": "night_behavior_anomaly", "risk_level": "P4"}, context)
+        self.assertEqual(compact["candidate"]["features"]["duration_seconds"], 720)
+        self.assertNotIn("local_result", compact["candidate"]["features"])
+        prompt_text = build_local_multimodal_content(
+            {"event_type": "night_behavior_anomaly", "risk_level": "P4", "summary": "night wake exceeds personal p90"},
+            context,
+            None,
+        )[0]["text"]
+        self.assertLessEqual(len(prompt_text.encode("utf-8")), 3600)
+
     def test_final_advisory_prefers_completed_cloud_summary(self) -> None:
         class FakeLocalClient:
             async def analyze(self, **_: object) -> dict[str, object]:

@@ -344,16 +344,62 @@ def _compact_segment_summary(segment: Any) -> dict[str, Any] | None:
 def _compact_baseline_context(baseline_context: Any) -> dict[str, Any]:
     if not isinstance(baseline_context, dict):
         return {}
+    metric_keys = {
+        "usual_sleep_start",
+        "usual_sleep_end",
+        "night_wake_count_p90",
+        "night_wake_duration_p90_sec",
+        "returned_to_bedroom_rate",
+        "bathroom_stay_p90_sec",
+        "night_bathroom_visits_avg",
+        "daily_avg",
+        "night_avg",
+        "avg",
+        "p10",
+        "p50",
+        "p90",
+        "low_count_avg_per_day",
+        "fallback",
+    }
     compact: dict[str, Any] = {}
     for key, item in baseline_context.items():
         if not isinstance(item, dict):
             continue
+        metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
         compact[str(key)] = {
             "quality": item.get("quality"),
             "sample_count": item.get("sample_count"),
-            "metrics": _compact_value(item.get("metrics") if isinstance(item.get("metrics"), dict) else {}),
+            "metrics": {metric: metrics.get(metric) for metric in metric_keys if metric in metrics},
         }
     return compact
+
+
+def _compact_candidate(candidate: Any) -> dict[str, Any] | None:
+    if not isinstance(candidate, dict):
+        return None
+    features = candidate.get("features") if isinstance(candidate.get("features"), dict) else {}
+    compact_features = {
+        key: features.get(key)
+        for key in (
+            "duration_seconds",
+            "baseline_p90_seconds",
+            "baseline_p90",
+            "latest_value",
+            "metric",
+            "room",
+            "returned_to_bedroom",
+            "bathroom_stay_seconds",
+        )
+        if key in features
+    }
+    return {
+        "candidate_id": candidate.get("candidate_id"),
+        "candidate_type": candidate.get("candidate_type"),
+        "priority": candidate.get("priority"),
+        "reason": candidate.get("reason"),
+        "features": compact_features,
+        "source_segment_ids": candidate.get("source_segment_ids", []),
+    }
 
 
 def _compact_payload(step_name: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -671,10 +717,10 @@ def _compact_local_case(event: dict[str, Any], context: dict[str, Any]) -> dict[
     recent_vital = context.get("recent_vital_samples") if isinstance(context.get("recent_vital_samples"), dict) else {}
     behavior_context = context.get("behavior_context") if isinstance(context.get("behavior_context"), dict) else {}
     baseline_context = context.get("baseline_context") if isinstance(context.get("baseline_context"), dict) else {}
-    candidate = context.get("candidate") if isinstance(context.get("candidate"), dict) else None
+    candidate = _compact_candidate(context.get("candidate"))
     return {
         "event": compact_event,
-        "candidate": _compact_value(candidate) if candidate else None,
+        "candidate": candidate,
         "elder_location": _compact_value(elder_location),
         "environment_context": compact_environment_context,
         "recent_vital_samples": {
@@ -691,6 +737,18 @@ def _compact_local_case(event: dict[str, Any], context: dict[str, Any]) -> dict[
                 for item in (
                     _compact_segment_summary(segment)
                     for segment in (behavior_context.get("recent_segments", []) if isinstance(behavior_context.get("recent_segments"), list) else [])[:6]
+                )
+                if item
+            ],
+            "candidate_segments": [
+                item
+                for item in (
+                    _compact_segment_summary(segment)
+                    for segment in (
+                        behavior_context.get("candidate_segments", [])
+                        if isinstance(behavior_context.get("candidate_segments"), list)
+                        else []
+                    )[:3]
                 )
                 if item
             ],
