@@ -125,7 +125,7 @@ class WorkflowRunner:
             manifest or {"status": "not_applicable"},
         )
 
-        sensors = await self.edge.get_recent_sensor_context(event.elder_id, limit=120)
+        sensors = await self.edge.get_recent_sensor_context(event.elder_id, limit=240)
         devices = await self.edge.get_home_device_snapshot(event.elder_id)
         context = self._build_local_context(event, saved_event, sensors, devices)
         await self._record_step(workflow, event, "local_context_fusion", {"event": saved_event}, context)

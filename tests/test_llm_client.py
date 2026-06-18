@@ -898,6 +898,7 @@ class LLMClientParserTests(unittest.TestCase):
 
         update_payload = runner.edge.update_event_analysis.await_args.args[1]
         self.assertEqual(update_payload["summary"], "cloud family summary")
+        runner.edge.get_recent_sensor_context.assert_awaited_once_with("elder_001", limit=240)
         final_calls = [
             call
             for call in runner._record_step.await_args_list
