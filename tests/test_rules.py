@@ -42,6 +42,42 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(str(event.event_type), "humidity_abnormal")
         self.assertEqual(str(event.risk_level), "P3")
 
+    def test_p3_environment_rules_require_presence_when_present_field_exists(self) -> None:
+        absent_event = rules.classify_observation(
+            {
+                "observation_id": "obs-absent-hot",
+                "elder_id": "elder_001",
+                "kind": "environment",
+                "payload": {"room": "kitchen", "temperature": 31, "humidity": 50, "presence": False},
+            }
+        )
+        self.assertIsNone(absent_event)
+
+        present_event = rules.classify_observation(
+            {
+                "observation_id": "obs-present-hot",
+                "elder_id": "elder_001",
+                "kind": "environment",
+                "payload": {"room": "living_room", "temperature": 31, "humidity": 50, "presence": True},
+            }
+        )
+        self.assertIsNotNone(present_event)
+        self.assertEqual(str(present_event.event_type), "temperature_high")
+        self.assertEqual(str(present_event.risk_level), "P3")
+
+    def test_gas_leak_ignores_presence_filter(self) -> None:
+        event = rules.classify_observation(
+            {
+                "observation_id": "obs-gas-absent",
+                "elder_id": "elder_001",
+                "kind": "environment",
+                "payload": {"room": "kitchen", "gas_ppm": 180, "presence": False},
+            }
+        )
+        self.assertIsNotNone(event)
+        self.assertEqual(str(event.event_type), "gas_leak")
+        self.assertEqual(str(event.risk_level), "P0")
+
     def test_old_night_composites_and_direct_visual_event_are_removed(self) -> None:
         observations = [
             {"kind": "device_state", "payload": {"room": "bathroom", "present": True}},

@@ -30,6 +30,7 @@ from app.llm_client import CloudLLMClient, LocalMultimodalClient
 
 logger = logging.getLogger(__name__)
 RISK_ORDER = {"P4": 0, "P3": 1, "P2": 2, "P1": 3, "P0": 4}
+ENV_CONTEXT_TARGET_SAMPLES = 20
 DETERMINISTIC_P3_EVENTS = {
     EventType.CO2_HIGH.value,
     EventType.TEMPERATURE_HIGH.value,
@@ -124,9 +125,9 @@ class WorkflowRunner:
             manifest or {"status": "not_applicable"},
         )
 
-        sensors = await self.edge.get_recent_sensor_context(event.elder_id, limit=30)
+        sensors = await self.edge.get_recent_sensor_context(event.elder_id, limit=120)
         devices = await self.edge.get_home_device_snapshot(event.elder_id)
-        context = {"sensors": sensors, "devices": devices}
+        context = self._build_local_context(event, saved_event, sensors, devices)
         await self._record_step(workflow, event, "local_context_fusion", {"event": saved_event}, context)
 
         local_started = perf_counter()
@@ -234,6 +235,143 @@ class WorkflowRunner:
     @staticmethod
     def _is_deterministic_p3(event: NormalizedEventV2) -> bool:
         return risk_text(event.risk_level) == "P3" and str(event.event_type) in DETERMINISTIC_P3_EVENTS
+
+    @staticmethod
+    def _observation_time(observation: dict[str, Any]) -> datetime:
+        value = observation.get("observed_at") or observation.get("created_at")
+        if isinstance(value, datetime):
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        if isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+            except ValueError:
+                return datetime.min.replace(tzinfo=timezone.utc)
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+    @staticmethod
+    def _payload(observation: dict[str, Any]) -> dict[str, Any]:
+        payload = observation.get("payload")
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _is_present(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on", "present"}
+        return bool(value)
+
+    @classmethod
+    def _current_presence_room(cls, observations: list[dict[str, Any]]) -> dict[str, Any] | None:
+        for observation in sorted(observations, key=cls._observation_time, reverse=True):
+            payload = cls._payload(observation)
+            room = payload.get("room")
+            if not room:
+                continue
+            present = payload.get("present", payload.get("presence"))
+            state = str(payload.get("state") or "").lower()
+            if cls._is_present(present) or state == "present":
+                return {
+                    "current_room": str(room),
+                    "source": payload.get("device") or observation.get("kind") or "presence",
+                    "observed_at": observation.get("observed_at"),
+                    "observation_id": observation.get("observation_id"),
+                }
+        return None
+
+    @classmethod
+    def _build_local_context(
+        cls,
+        event: NormalizedEventV2,
+        saved_event: dict[str, Any],
+        sensors: dict[str, Any],
+        devices: dict[str, Any],
+    ) -> dict[str, Any]:
+        observations = sensors.get("observations", []) if isinstance(sensors, dict) else []
+        observations = [item for item in observations if isinstance(item, dict)]
+        observations_desc = sorted(observations, key=cls._observation_time, reverse=True)
+        location = cls._current_presence_room(observations_desc)
+
+        env_candidates = [
+            item
+            for item in observations_desc
+            if str(item.get("kind") or "") == "environment" and cls._is_present(cls._payload(item).get("presence"))
+        ]
+        if not env_candidates and location:
+            env_candidates = [
+                item
+                for item in observations_desc
+                if str(item.get("kind") or "") == "environment"
+                and str(cls._payload(item).get("room") or "") == location["current_room"]
+            ]
+        if not env_candidates:
+            env_candidates = [item for item in observations_desc if str(item.get("kind") or "") == "environment"]
+
+        selected_env_desc = env_candidates[:ENV_CONTEXT_TARGET_SAMPLES]
+        selected_env = list(reversed(selected_env_desc))
+        selected_rooms = [str(cls._payload(item).get("room")) for item in selected_env if cls._payload(item).get("room")]
+        room_sequence = list(dict.fromkeys(selected_rooms))
+
+        environment_samples = []
+        for item in selected_env:
+            payload = cls._payload(item)
+            environment_samples.append(
+                {
+                    "observation_id": item.get("observation_id"),
+                    "observed_at": item.get("observed_at"),
+                    "room": payload.get("room"),
+                    "temperature": payload.get("temperature"),
+                    "humidity": payload.get("humidity"),
+                    "co2_ppm": payload.get("co2_ppm"),
+                    "gas_ppm": payload.get("gas_ppm"),
+                    "smoke_ppm": payload.get("smoke_ppm"),
+                    "illuminance_lux": payload.get("illuminance_lux"),
+                    "presence": payload.get("presence"),
+                    "snapshot_id": payload.get("snapshot_id"),
+                }
+            )
+
+        trigger_ids = set(saved_event.get("trigger_observation_ids") or event.trigger_observation_ids or [])
+        selected_ids = {str(item.get("observation_id")) for item in selected_env if item.get("observation_id")}
+        selected_room_set = set(selected_rooms)
+        local_observations: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for item in observations_desc:
+            observation_id = str(item.get("observation_id") or "")
+            payload = cls._payload(item)
+            keep = False
+            if observation_id and observation_id in trigger_ids:
+                keep = True
+            if observation_id and observation_id in selected_ids:
+                keep = True
+            if str(item.get("kind") or "") == "device_state" and payload.get("room") in selected_room_set:
+                keep = True
+            if keep and observation_id not in seen_ids:
+                local_observations.append(item)
+                seen_ids.add(observation_id)
+        local_observations = sorted(local_observations, key=cls._observation_time)
+
+        return {
+            "sensors": {
+                "elder_id": sensors.get("elder_id") if isinstance(sensors, dict) else event.elder_id,
+                "observations": local_observations,
+            },
+            "devices": devices,
+            "elder_location": location
+            or {
+                "current_room": event.room,
+                "source": "event_room" if event.room else "unknown",
+                "observed_at": None,
+            },
+            "environment_context": {
+                "target_samples": ENV_CONTEXT_TARGET_SAMPLES,
+                "actual_samples": len(environment_samples),
+                "selection_policy": "presence_timeline_current_room_then_previous_rooms",
+                "room_sequence": room_sequence,
+                "samples": environment_samples,
+            },
+        }
 
     async def _complete_deterministic_p3(
         self,

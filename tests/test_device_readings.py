@@ -13,6 +13,67 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DeviceReadingTests(unittest.TestCase):
+    def test_home_environment_snapshot_is_split_into_standard_observations(self) -> None:
+        script = textwrap.dedent(
+            """
+            import asyncio
+            import json
+
+            from app.database import Base, engine, SessionLocal
+            from app import repository
+            from app.mqtt_bridge import MqttBridge
+
+            Base.metadata.create_all(bind=engine)
+            payload = {
+                "schema": "home_environment_snapshot_v1",
+                "elder_id": "elder_001",
+                "source": "real_home_sensors",
+                "rooms": {
+                    "bedroom": {"temperature": 24.5, "humidity": 51, "co2_ppm": 820, "gas_ppm": 0, "smoke_ppm": 0, "presence": "false"},
+                    "bathroom": {"temperature": 25.1, "humidity": 62, "co2_ppm": 760, "gas_ppm": 0, "smoke_ppm": 0, "presence": False},
+                    "living_room": {"temperature": 24.8, "humidity": 49.5, "co2_ppm": 900, "gas_ppm": 0, "smoke_ppm": 0, "presence": True},
+                    "kitchen": {"temperature": 26.0, "humidity": 54, "co2_ppm": 880, "gas_ppm": 0, "smoke_ppm": 0, "presence": False},
+                },
+            }
+            asyncio.run(
+                MqttBridge()._handle_message(
+                    "elder/elder_001/sensor/env",
+                    json.dumps(payload).encode("utf-8"),
+                )
+            )
+            with SessionLocal() as db:
+                observations = repository.list_observations(db, "elder_001", limit=20)
+                environments = [item for item in observations if item["kind"] == "environment"]
+                presence = [item for item in observations if item["kind"] == "device_state"]
+                assert len(environments) == 4
+                assert len(presence) == 4
+                assert {item["payload"]["room"] for item in environments} == {"bedroom", "bathroom", "living_room", "kitchen"}
+                assert all(item["payload"]["snapshot_id"] for item in observations)
+                living = [item for item in presence if item["payload"]["room"] == "living_room"][0]
+                assert living["payload"]["present"] is True
+                assert living["payload"]["state"] == "present"
+                bedroom = [item for item in presence if item["payload"]["room"] == "bedroom"][0]
+                assert bedroom["payload"]["present"] is False
+                assert bedroom["payload"]["state"] == "absent"
+            """
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            env = os.environ.copy()
+            env["DATABASE_URL"] = f"sqlite:///{Path(directory, 'home_snapshot.db').as_posix()}"
+            env["ORCHESTRATOR_URL"] = ""
+            paths = [ROOT / "apps" / "edge-mcp-server", ROOT / "packages" / "guardian-shared"]
+            env["PYTHONPATH"] = os.pathsep.join(str(path) for path in paths)
+            result = subprocess.run(
+                [sys.executable, "-c", script],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_device_reading_http_api(self) -> None:
         script = textwrap.dedent(
             """

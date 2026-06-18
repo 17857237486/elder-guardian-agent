@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 import paho.mqtt.client as mqtt
 
+from guardian_shared.schemas import new_id
 from guardian_shared.topics import ELDER_TOPIC_PATTERNS, HOME_TOPIC_PATTERNS, home_device_set
 from guardian_shared.utils import model_to_json, parse_json_payload
 from guardian_shared.v2 import DeviceReadingV2, ObservationKind, RawObservationV2
@@ -47,6 +48,70 @@ def _telemetry_metrics(data: dict[str, Any]) -> dict[str, Any]:
         for key in ("temperature", "humidity", "battery", "rssi", "illuminance")
         if key in data
     }
+
+
+def _is_home_environment_snapshot(data: dict[str, Any]) -> bool:
+    return data.get("schema") == "home_environment_snapshot_v1" and isinstance(data.get("rooms"), dict)
+
+
+def _presence_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on", "present"}:
+            return True
+        if normalized in {"0", "false", "no", "off", "absent"}:
+            return False
+    return bool(value)
+
+
+def _snapshot_observations(elder_id: str, topic: str, data: dict[str, Any]) -> list[RawObservationV2]:
+    snapshot_id = str(data.get("snapshot_id") or new_id("envsnap"))
+    source = str(data.get("source") or "mqtt")
+    observed_at = data.get("observed_at") or data.get("timestamp")
+    observations: list[RawObservationV2] = []
+    rooms = data.get("rooms") if isinstance(data.get("rooms"), dict) else {}
+    for room, raw_room_payload in rooms.items():
+        if not isinstance(raw_room_payload, dict):
+            continue
+        room_name = str(room)
+        room_payload = {
+            **raw_room_payload,
+            "room": room_name,
+            "snapshot_id": snapshot_id,
+            "source_snapshot_schema": "home_environment_snapshot_v1",
+        }
+        common = {
+            "elder_id": elder_id,
+            "source": source,
+            "topic": topic,
+            "observed_at": observed_at,
+        }
+        observations.append(
+            RawObservationV2(
+                kind=ObservationKind.ENVIRONMENT,
+                payload=room_payload,
+                **({key: value for key, value in common.items() if value is not None}),
+            )
+        )
+        if "presence" in raw_room_payload:
+            present = _presence_bool(raw_room_payload.get("presence"))
+            observations.append(
+                RawObservationV2(
+                    kind=ObservationKind.DEVICE_STATE,
+                    payload={
+                        "room": room_name,
+                        "device": "pir_presence",
+                        "present": present,
+                        "state": "present" if present else "absent",
+                        "snapshot_id": snapshot_id,
+                        "source_snapshot_schema": "home_environment_snapshot_v1",
+                    },
+                    **({key: value for key, value in common.items() if value is not None}),
+                )
+            )
+    return observations
 
 
 class MqttBridge:
@@ -167,6 +232,14 @@ class MqttBridge:
             logger.warning("Unhandled MQTT topic %s", topic)
             return
         elder_id = data.get("elder_id") or (parts[1] if parts and parts[0] == "elder" else settings.elder_id)
+        if kind == ObservationKind.ENVIRONMENT and _is_home_environment_snapshot(data):
+            observations = _snapshot_observations(str(elder_id), topic, data)
+            with SessionLocal() as db:
+                records = [repository.create_observation(db, observation) for observation in observations]
+            if settings.orchestrator_url:
+                for record in records:
+                    asyncio.create_task(self._forward_to_orchestrator(record))
+            return
         observation = RawObservationV2(elder_id=elder_id, kind=kind, source="mqtt", topic=topic, payload=data)
         with SessionLocal() as db:
             record = repository.create_observation(db, observation)

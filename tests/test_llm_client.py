@@ -22,6 +22,7 @@ from app.llm_client import (
     LOCAL_RISK_POLICY_PROMPT,
     LOCAL_VISUAL_INSTRUCTION,
     LocalMultimodalClient,
+    _compact_local_case,
     _extract_json_object,
     _normalize_multimodal_output,
     _normalize_multimodal_response,
@@ -704,6 +705,143 @@ class LLMClientParserTests(unittest.TestCase):
                 self.assertEqual(steps["local_multiframe_analysis"]["status"], "skipped")
                 self.assertEqual(steps["cloud_review"]["status"], "not_required")
                 self.assertEqual(steps["final_advisory"]["final_risk_level"], "P3")
+
+    def test_local_context_uses_presence_timeline_twenty_environment_samples(self) -> None:
+        base = "2026-06-18T22:{minute:02d}:00+08:00"
+        observations: list[dict[str, object]] = []
+
+        def env(index: int, room: str, minute: int, present: bool = True) -> dict[str, object]:
+            return {
+                "observation_id": f"env_{room}_{index}",
+                "kind": "environment",
+                "observed_at": base.format(minute=minute),
+                "payload": {
+                    "room": room,
+                    "temperature": 24 + index / 10,
+                    "humidity": 50,
+                    "co2_ppm": 800 + index,
+                    "presence": present,
+                    "snapshot_id": f"snap_{minute}",
+                },
+            }
+
+        for index in range(15):
+            observations.append(env(index, "kitchen", index))
+            observations.append(
+                {
+                    "observation_id": f"presence_kitchen_{index}",
+                    "kind": "device_state",
+                    "observed_at": base.format(minute=index),
+                    "payload": {"room": "kitchen", "device": "pir_presence", "present": True, "state": "present"},
+                }
+            )
+        for index in range(15):
+            minute = 15 + index
+            observations.append(env(index, "living_room", minute))
+            observations.append(
+                {
+                    "observation_id": f"presence_living_{index}",
+                    "kind": "device_state",
+                    "observed_at": base.format(minute=minute),
+                    "payload": {
+                        "room": "living_room",
+                        "device": "pir_presence",
+                        "present": True,
+                        "state": "present",
+                    },
+                }
+            )
+        observations.append(env(0, "bedroom", 29, present=False))
+        observations.append(
+            {
+                "observation_id": "heart_trigger",
+                "kind": "vital",
+                "observed_at": "2026-06-18T22:30:00+08:00",
+                "payload": {"heart_rate": 138, "spo2": 96, "room": "living_room"},
+            }
+        )
+
+        event = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type=EventType.HEART_RATE_ABNORMAL,
+            risk_level=RiskLevel.P1,
+            summary="heart rate abnormal",
+            trigger_observation_ids=["heart_trigger"],
+        )
+        context = WorkflowRunner._build_local_context(
+            event,
+            {"trigger_observation_ids": ["heart_trigger"]},
+            {"elder_id": "elder_001", "observations": observations},
+            {"devices": []},
+        )
+
+        env_context = context["environment_context"]
+        samples = env_context["samples"]
+        self.assertEqual(env_context["target_samples"], 20)
+        self.assertEqual(env_context["actual_samples"], 20)
+        self.assertEqual(env_context["room_sequence"], ["kitchen", "living_room"])
+        self.assertEqual([sample["room"] for sample in samples[:5]], ["kitchen"] * 5)
+        self.assertEqual([sample["room"] for sample in samples[5:]], ["living_room"] * 15)
+        self.assertEqual([sample["observed_at"] for sample in samples], sorted(sample["observed_at"] for sample in samples))
+        self.assertEqual(context["elder_location"]["current_room"], "living_room")
+
+        local_obs = context["sensors"]["observations"]
+        local_ids = {item["observation_id"] for item in local_obs}
+        self.assertIn("heart_trigger", local_ids)
+        self.assertNotIn("env_bedroom_0", local_ids)
+        self.assertTrue(
+            all(
+                item["kind"] != "environment" or item["payload"]["room"] in {"kitchen", "living_room"}
+                for item in local_obs
+            )
+        )
+
+    def test_compact_local_case_preserves_elder_environment_context(self) -> None:
+        samples = [
+            {
+                "observation_id": f"env_{index}",
+                "observed_at": f"2026-06-18T22:{index:02d}:00+08:00",
+                "room": "living_room",
+                "temperature": 24.0,
+                "humidity": 50,
+                "co2_ppm": 820,
+                "presence": True,
+            }
+            for index in range(20)
+        ]
+        context = {
+            "elder_location": {
+                "current_room": "living_room",
+                "source": "pir_presence",
+                "observed_at": "2026-06-18T22:19:00+08:00",
+            },
+            "environment_context": {
+                "target_samples": 20,
+                "actual_samples": 20,
+                "selection_policy": "presence_timeline_current_room_then_previous_rooms",
+                "room_sequence": ["living_room"],
+                "samples": samples,
+            },
+            "sensors": {
+                "observations": [
+                    {
+                        "kind": "vital",
+                        "payload": {"heart_rate": 138, "spo2": 96, "room": "living_room"},
+                    }
+                ]
+            },
+            "devices": {"devices": []},
+        }
+
+        compact = _compact_local_case(
+            {"event_type": "heart_rate_abnormal", "risk_level": "P1", "room": "living_room"},
+            context,
+        )
+
+        self.assertEqual(compact["elder_location"]["current_room"], "living_room")
+        self.assertEqual(compact["environment_context"]["actual_samples"], 20)
+        self.assertEqual(len(compact["environment_context"]["samples"]), 20)
+        self.assertEqual(compact["sensor_evidence"][0]["payload"]["heart_rate"], 138)
 
     def test_final_advisory_prefers_completed_cloud_summary(self) -> None:
         class FakeLocalClient:

@@ -6,6 +6,17 @@ from guardian_shared.enums import EventState, EventType, RiskLevel
 from guardian_shared.v2 import NormalizedEventV2
 
 
+def _presence_allows_environment_p3(payload: dict[str, Any]) -> bool:
+    if "presence" not in payload:
+        return True
+    value = payload.get("presence")
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on", "present"}
+    return bool(value)
+
+
 def classify_observation(observation: dict[str, Any]) -> NormalizedEventV2 | None:
     kind = observation.get("kind")
     payload = observation.get("payload", {})
@@ -21,6 +32,7 @@ def classify_observation(observation: dict[str, Any]) -> NormalizedEventV2 | Non
         humidity = float(payload.get("humidity") or 0)
         room = payload.get("room") or "living_room"
         trace = {"payload": payload, "observation_id": observation_id}
+        allow_p3 = _presence_allows_environment_p3(payload)
         if gas_ppm >= 100:
             return NormalizedEventV2(
                 elder_id=elder_id,
@@ -33,7 +45,7 @@ def classify_observation(observation: dict[str, Any]) -> NormalizedEventV2 | Non
                 trigger_observation_ids=[observation_id] if observation_id else [],
                 rule_trace=trace,
             )
-        if co2_ppm >= 1500:
+        if allow_p3 and co2_ppm >= 1500:
             return NormalizedEventV2(
                 elder_id=elder_id,
                 event_type=EventType.CO2_HIGH,
@@ -44,7 +56,7 @@ def classify_observation(observation: dict[str, Any]) -> NormalizedEventV2 | Non
                 trigger_observation_ids=[observation_id] if observation_id else [],
                 rule_trace=trace,
             )
-        if temperature is not None and temperature >= 30:
+        if allow_p3 and temperature is not None and temperature >= 30:
             return NormalizedEventV2(
                 elder_id=elder_id,
                 event_type=EventType.TEMPERATURE_HIGH,
@@ -55,7 +67,7 @@ def classify_observation(observation: dict[str, Any]) -> NormalizedEventV2 | Non
                 trigger_observation_ids=[observation_id] if observation_id else [],
                 rule_trace=trace,
             )
-        if temperature is not None and temperature <= 16:
+        if allow_p3 and temperature is not None and temperature <= 16:
             return NormalizedEventV2(
                 elder_id=elder_id,
                 event_type=EventType.TEMPERATURE_LOW,
@@ -67,7 +79,7 @@ def classify_observation(observation: dict[str, Any]) -> NormalizedEventV2 | Non
                 rule_trace=trace,
             )
 
-        if humidity and (humidity < 25 or humidity > 75):
+        if allow_p3 and humidity and (humidity < 25 or humidity > 75):
             return NormalizedEventV2(
                 elder_id=elder_id,
                 event_type="humidity_abnormal",

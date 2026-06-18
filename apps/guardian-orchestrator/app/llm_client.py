@@ -295,6 +295,12 @@ def _compact_value(value: Any, *, depth: int = 0) -> Any:
     return value
 
 
+def _compact_environment_samples(samples: Any) -> list[Any]:
+    if not isinstance(samples, list):
+        return []
+    return [_compact_value(item) for item in samples[:20]]
+
+
 def _compact_payload(step_name: str, payload: dict[str, Any]) -> dict[str, Any]:
     event = payload.get("event")
     compact: dict[str, Any] = {"event": _compact_value(event)}
@@ -598,7 +604,22 @@ def _compact_local_case(event: dict[str, Any], context: dict[str, Any]) -> dict[
         for device in devices[:8]
         if isinstance(device, dict)
     ]
-    return {"event": compact_event, "sensor_evidence": sensor_evidence, "device_states": device_states}
+    environment_context = context.get("environment_context") if isinstance(context.get("environment_context"), dict) else {}
+    elder_location = context.get("elder_location") if isinstance(context.get("elder_location"), dict) else {}
+    compact_environment_context = {
+        "target_samples": environment_context.get("target_samples"),
+        "actual_samples": environment_context.get("actual_samples"),
+        "selection_policy": environment_context.get("selection_policy"),
+        "room_sequence": environment_context.get("room_sequence", []),
+        "samples": _compact_environment_samples(environment_context.get("samples", [])),
+    }
+    return {
+        "event": compact_event,
+        "elder_location": _compact_value(elder_location),
+        "environment_context": compact_environment_context,
+        "sensor_evidence": sensor_evidence,
+        "device_states": device_states,
+    }
 
 
 def _multimodal_schema() -> dict[str, Any]:

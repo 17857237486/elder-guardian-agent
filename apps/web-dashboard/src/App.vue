@@ -132,6 +132,30 @@ const hmiAlerts = computed(() => {
 });
 const elderFeedback = computed(() => (state.hmi_responses ?? []).slice(0, DISPLAY_LIMIT));
 const realDevices = computed(() => (state.device_readings_latest ?? []).slice(0, DISPLAY_LIMIT));
+const latestContextFusion = computed(() =>
+  state.workflow_steps?.find(
+    (step: AnyRecord) =>
+      step.event_id === latestEvent.value?.event_id && step.step_name === "local_context_fusion"
+  ) ?? null
+);
+const localAiRoom = computed(() => latestContextFusion.value?.output?.elder_location?.current_room ?? "--");
+const homeEnvironmentRooms = computed(() => {
+  const rooms = new Map<string, AnyRecord>();
+  for (const observation of state.observations ?? []) {
+    const payload = observation.payload ?? {};
+    const room = payload.room;
+    if (!room) continue;
+    const current = rooms.get(room) ?? { room };
+    if (observation.kind === "environment") {
+      rooms.set(room, { ...current, ...payload, observed_at: observation.observed_at });
+    }
+    if (observation.kind === "device_state" && payload.device === "pir_presence") {
+      rooms.set(room, { ...current, presence: payload.present, presence_state: payload.state, presence_at: observation.observed_at });
+    }
+  }
+  const order = ["bedroom", "bathroom", "living_room", "kitchen"];
+  return order.map((room) => rooms.get(room) ?? { room });
+});
 
 function metricValue(reading: AnyRecord, metric: string): string {
   const value = reading.metrics?.[metric];
@@ -145,6 +169,11 @@ function deviceOnline(reading: AnyRecord): boolean {
   const observed = new Date(reading.observed_at ?? reading.created_at ?? "");
   if (Number.isNaN(observed.getTime())) return false;
   return Date.now() - observed.getTime() <= 30000;
+}
+
+function roomMetric(room: AnyRecord, metric: string, unit = ""): string {
+  const value = room?.[metric];
+  return value === undefined || value === null || value === "" ? "--" : `${value}${unit}`;
 }
 
 async function loadState() {
@@ -198,7 +227,7 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
 
     <section class="local-semantics" :class="localSemanticStatus.state">
       <div><span>第二级：RK3588 本地模型事件语义</span><strong>{{ localSemanticStatus.text }}</strong></div>
-      <p>{{ latestEvent?.event_type ?? "暂无事件" }} · 本地风险 {{ latestEvent?.local_risk_level ?? "--" }}</p>
+      <p>{{ latestEvent?.event_type ?? "暂无事件" }} · 本地风险 {{ latestEvent?.local_risk_level ?? "--" }} · AI房间 {{ localAiRoom }}</p>
     </section>
 
     <section class="grid">
@@ -260,6 +289,21 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
             <b>{{ reading.room }} / {{ reading.device_id }}</b>
             <p>温度 {{ metricValue(reading, "temperature") }} · 湿度 {{ metricValue(reading, "humidity") }}</p>
             <small>{{ reading.device_type ?? "unknown" }} · {{ reading.source ?? "real_device" }} · 仅展示，不进入 AI</small>
+          </li>
+        </ul></div>
+      </article>
+
+      <article class="panel">
+        <h2>整屋环境状态</h2>
+        <div class="panel-scroll"><ul>
+          <li v-for="room in homeEnvironmentRooms" :key="room.room">
+            <div class="row-head">
+              <strong :class="room.presence ? 'online' : 'offline'">{{ room.presence ? "有人" : "无人" }}</strong>
+              <time>{{ formatTime(room.observed_at ?? room.presence_at) }}</time>
+            </div>
+            <b>{{ room.room }}</b>
+            <p>温度 {{ roomMetric(room, "temperature", "°C") }} · 湿度 {{ roomMetric(room, "humidity", "%") }} · CO2 {{ roomMetric(room, "co2_ppm", "ppm") }}</p>
+            <small>燃气 {{ roomMetric(room, "gas_ppm", "ppm") }} · 烟雾 {{ roomMetric(room, "smoke_ppm", "ppm") }} · 光照 {{ roomMetric(room, "illuminance_lux", "lux") }}</small>
           </li>
         </ul></div>
       </article>
