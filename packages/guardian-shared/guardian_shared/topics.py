@@ -37,6 +37,10 @@ def elder_system_status(elder_id: str) -> str:
     return f"elder/{elder_id}/system/status"
 
 
+def elder_device_telemetry(elder_id: str, device_id: str) -> str:
+    return f"elder/{elder_id}/device/{device_id}/telemetry"
+
+
 def home_device_set(room: str, device: str) -> str:
     return f"home/{room}/{device}/set"
 
@@ -89,10 +93,14 @@ class TopicBuilder:
     def system_status(self) -> str:
         return elder_system_status(self.elder_id)
 
+    def device_telemetry(self, device_id: str) -> str:
+        return elder_device_telemetry(self.elder_id, device_id)
+
 
 ELDER_TOPIC_PATTERNS = [
     "elder/+/sensor/vital",
     "elder/+/sensor/env",
+    "elder/+/device/+/telemetry",
     "elder/+/vision/event",
     "elder/+/hmi/response",
 ]

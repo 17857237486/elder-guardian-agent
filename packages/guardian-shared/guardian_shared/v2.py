@@ -60,6 +60,20 @@ class RawObservationV2(GuardianModel):
     observed_at: datetime = Field(default_factory=utc_now)
 
 
+class DeviceReadingV2(GuardianModel):
+    reading_id: str = Field(default_factory=lambda: new_id("reading"))
+    elder_id: str
+    device_id: str
+    device_type: str = "unknown"
+    room: str = "living_room"
+    source: str = "real_device"
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    units: dict[str, str] = Field(default_factory=dict)
+    topic: str | None = None
+    observed_at: datetime = Field(default_factory=utc_now)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class NormalizedEventV2(GuardianModel):
     event_id: str = Field(default_factory=lambda: new_id("event"))
     elder_id: str

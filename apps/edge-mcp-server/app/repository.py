@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from guardian_shared.v2 import (
     ActionExecutionV2,
     AlertRecordV2,
+    DeviceReadingV2,
     HmiPromptV2,
     HmiResponseV2,
     NormalizedEventV2,
@@ -54,6 +55,8 @@ def row_to_dict(row: Any) -> dict[str, Any]:
         "result_json",
         "command_json",
         "options_json",
+        "metrics_json",
+        "units_json",
     ]:
         if key in data:
             base = key.replace("_json", "")
@@ -76,6 +79,68 @@ def create_observation(db: Session, observation: RawObservationV2) -> dict[str, 
     db.commit()
     db.refresh(obj)
     return row_to_dict(obj)
+
+
+def _aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _with_online_state(row: Any, *, now: datetime | None = None) -> dict[str, Any]:
+    data = row_to_dict(row)
+    current = now or datetime.now(timezone.utc)
+    observed = _aware_utc(row.observed_at)
+    data["online"] = (current - observed).total_seconds() <= 30
+    return data
+
+
+def create_device_reading(db: Session, reading: DeviceReadingV2) -> dict[str, Any]:
+    obj = models.DeviceReadingModel(
+        reading_id=reading.reading_id,
+        elder_id=reading.elder_id,
+        device_id=reading.device_id,
+        device_type=reading.device_type,
+        room=reading.room,
+        source=reading.source,
+        metrics_json=_json(reading.metrics),
+        units_json=_json(reading.units),
+        topic=reading.topic,
+        observed_at=reading.observed_at,
+        created_at=reading.created_at,
+    )
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return _with_online_state(obj)
+
+
+def list_device_readings(db: Session, elder_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    rows = (
+        db.query(models.DeviceReadingModel)
+        .filter(models.DeviceReadingModel.elder_id == elder_id)
+        .order_by(desc(models.DeviceReadingModel.observed_at))
+        .limit(limit)
+        .all()
+    )
+    now = datetime.now(timezone.utc)
+    return [_with_online_state(row, now=now) for row in rows]
+
+
+def latest_device_readings(db: Session, elder_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    rows = (
+        db.query(models.DeviceReadingModel)
+        .filter(models.DeviceReadingModel.elder_id == elder_id)
+        .order_by(desc(models.DeviceReadingModel.observed_at))
+        .limit(limit)
+        .all()
+    )
+    now = datetime.now(timezone.utc)
+    latest: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if row.device_id not in latest:
+            latest[row.device_id] = _with_online_state(row, now=now)
+    return list(latest.values())
 
 
 def list_observations(db: Session, elder_id: str, limit: int = 100) -> list[dict[str, Any]]:
@@ -442,6 +507,8 @@ def dashboard_state(db: Session, elder_id: str) -> dict[str, Any]:
         "current_risk_level": latest["risk_level"] if latest else "P4",
         "events": events,
         "observations": observations,
+        "device_readings": list_device_readings(db, elder_id=elder_id, limit=100),
+        "device_readings_latest": latest_device_readings(db, elder_id=elder_id, limit=200),
         "workflows": list_workflows(db, elder_id=elder_id),
         "workflow_steps": list_workflow_steps(db, elder_id=elder_id),
         "tool_calls": list_tool_calls(db, elder_id=elder_id),

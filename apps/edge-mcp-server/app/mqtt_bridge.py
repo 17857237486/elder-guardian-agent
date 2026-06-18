@@ -9,7 +9,7 @@ import paho.mqtt.client as mqtt
 
 from guardian_shared.topics import ELDER_TOPIC_PATTERNS, HOME_TOPIC_PATTERNS, home_device_set
 from guardian_shared.utils import model_to_json, parse_json_payload
-from guardian_shared.v2 import ObservationKind, RawObservationV2
+from guardian_shared.v2 import DeviceReadingV2, ObservationKind, RawObservationV2
 
 from app.config import settings
 from app.database import SessionLocal
@@ -32,6 +32,21 @@ def _kind_from_topic(parts: list[str]) -> ObservationKind | None:
     if len(parts) >= 4 and parts[0] == "home" and parts[3] == "ack":
         return ObservationKind.DEVICE_ACK
     return None
+
+
+def _is_device_telemetry_topic(parts: list[str]) -> bool:
+    return len(parts) >= 5 and parts[0] == "elder" and parts[2] == "device" and parts[4] == "telemetry"
+
+
+def _telemetry_metrics(data: dict[str, Any]) -> dict[str, Any]:
+    metrics = data.get("metrics")
+    if isinstance(metrics, dict):
+        return metrics
+    return {
+        key: data[key]
+        for key in ("temperature", "humidity", "battery", "rssi", "illuminance")
+        if key in data
+    }
 
 
 class MqttBridge:
@@ -126,6 +141,27 @@ class MqttBridge:
     async def _handle_message(self, topic: str, payload: bytes) -> None:
         data = parse_json_payload(payload)
         parts = topic.split("/")
+        if _is_device_telemetry_topic(parts):
+            elder_id = data.get("elder_id") or parts[1]
+            device_id = data.get("device_id") or parts[3]
+            payload = {
+                "elder_id": elder_id,
+                "device_id": device_id,
+                "device_type": str(data.get("device_type") or "unknown"),
+                "room": str(data.get("room") or "living_room"),
+                "source": str(data.get("source") or "real_device"),
+                "metrics": _telemetry_metrics(data),
+                "units": data.get("units") if isinstance(data.get("units"), dict) else {},
+                "topic": topic,
+            }
+            if data.get("observed_at") or data.get("timestamp"):
+                payload["observed_at"] = data.get("observed_at") or data.get("timestamp")
+            reading = DeviceReadingV2(
+                **payload,
+            )
+            with SessionLocal() as db:
+                repository.create_device_reading(db, reading)
+            return
         kind = _kind_from_topic(parts)
         if kind is None:
             logger.warning("Unhandled MQTT topic %s", topic)

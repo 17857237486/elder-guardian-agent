@@ -8,7 +8,7 @@ import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from guardian_shared.v2 import ActionRequestV2, AlertRequestV2, HmiPromptV2, HmiResponseV2, NormalizedEventV2, RawObservationV2, WorkflowNoteV2, WorkflowStepV2, WorkflowV2
+from guardian_shared.v2 import ActionRequestV2, AlertRequestV2, DeviceReadingV2, HmiPromptV2, HmiResponseV2, NormalizedEventV2, RawObservationV2, WorkflowNoteV2, WorkflowStepV2, WorkflowV2
 
 from app.config import settings
 from app.database import SessionLocal, init_db
@@ -67,6 +67,25 @@ async def dashboard_state(elder_id: str | None = None) -> dict[str, Any]:
 async def list_observations(elder_id: str | None = None, limit: int = 100) -> dict[str, Any]:
     with SessionLocal() as db:
         return {"observations": repository.list_observations(db, elder_id or settings.elder_id, limit)}
+
+
+@app.post("/api/v2/device-readings")
+async def create_device_reading(reading: DeviceReadingV2) -> dict[str, Any]:
+    with SessionLocal() as db:
+        record = repository.create_device_reading(db, reading)
+    return {"ok": True, "device_reading": record}
+
+
+@app.get("/api/v2/device-readings")
+async def list_device_readings(elder_id: str | None = None, limit: int = 100) -> dict[str, Any]:
+    with SessionLocal() as db:
+        return {"device_readings": repository.list_device_readings(db, elder_id or settings.elder_id, limit)}
+
+
+@app.get("/api/v2/device-readings/latest")
+async def latest_device_readings(elder_id: str | None = None, limit: int = 100) -> dict[str, Any]:
+    with SessionLocal() as db:
+        return {"device_readings_latest": repository.latest_device_readings(db, elder_id or settings.elder_id, limit)}
 
 
 async def forward_observation_to_orchestrator(record: dict[str, Any]) -> None:

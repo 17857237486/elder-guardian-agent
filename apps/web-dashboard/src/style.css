@@ -34,6 +34,8 @@ li { padding: 11px 0; border-top: 1px solid #edf1f5; }
 li:first-child { border-top: 0; }
 .row-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .row-head strong { color: #c2410c; }
+.row-head strong.online { color: #118443; }
+.row-head strong.offline { color: #8a4b00; }
 time { flex: 0 0 auto; color: #7a8495; font-size: 12px; }
 li > b { display: block; margin-top: 4px; color: #394255; font-size: 14px; }
 li p { margin-top: 5px; color: #566174; line-height: 1.4; }

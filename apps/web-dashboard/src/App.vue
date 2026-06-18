@@ -23,6 +23,7 @@ const state = reactive<AnyRecord>({
   action_executions: [],
   hmi_prompts: [],
   hmi_responses: [],
+  device_readings_latest: [],
   alerts: []
 });
 const loading = ref(false);
@@ -130,6 +131,21 @@ const hmiAlerts = computed(() => {
     .slice(0, DISPLAY_LIMIT);
 });
 const elderFeedback = computed(() => (state.hmi_responses ?? []).slice(0, DISPLAY_LIMIT));
+const realDevices = computed(() => (state.device_readings_latest ?? []).slice(0, DISPLAY_LIMIT));
+
+function metricValue(reading: AnyRecord, metric: string): string {
+  const value = reading.metrics?.[metric];
+  if (value === undefined || value === null || value === "") return "--";
+  const unit = reading.units?.[metric] ?? (metric === "temperature" ? "°C" : metric === "humidity" ? "%" : "");
+  return `${value}${unit}`;
+}
+
+function deviceOnline(reading: AnyRecord): boolean {
+  if (typeof reading.online === "boolean") return reading.online;
+  const observed = new Date(reading.observed_at ?? reading.created_at ?? "");
+  if (Number.isNaN(observed.getTime())) return false;
+  return Date.now() - observed.getTime() <= 30000;
+}
 
 async function loadState() {
   if (loading.value) return;
@@ -229,6 +245,21 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
             <b v-if="item.itemType === 'prompt'">HMI · {{ item.risk_level }} · {{ item.event_type }}</b>
             <b v-else>家属告警 · {{ item.alert_level }} · {{ item.channel }}</b>
             <p>{{ clip(item.message) }}</p>
+          </li>
+        </ul></div>
+      </article>
+
+      <article class="panel">
+        <h2>真实设备数据</h2>
+        <div class="panel-scroll"><p v-if="!realDevices.length" class="empty">暂无真实设备读数</p><ul>
+          <li v-for="reading in realDevices" :key="reading.device_id">
+            <div class="row-head">
+              <strong :class="deviceOnline(reading) ? 'online' : 'offline'">{{ deviceOnline(reading) ? "在线" : "离线" }}</strong>
+              <time>{{ formatTime(reading.observed_at ?? reading.created_at) }}</time>
+            </div>
+            <b>{{ reading.room }} / {{ reading.device_id }}</b>
+            <p>温度 {{ metricValue(reading, "temperature") }} · 湿度 {{ metricValue(reading, "humidity") }}</p>
+            <small>{{ reading.device_type ?? "unknown" }} · {{ reading.source ?? "real_device" }} · 仅展示，不进入 AI</small>
           </li>
         </ul></div>
       </article>

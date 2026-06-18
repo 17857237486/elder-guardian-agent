@@ -25,6 +25,23 @@ class RawObservationModel(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
 
 
+class DeviceReadingModel(Base):
+    __tablename__ = "v2_device_readings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    reading_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    elder_id: Mapped[str] = mapped_column(String(64), index=True)
+    device_id: Mapped[str] = mapped_column(String(128), index=True)
+    device_type: Mapped[str] = mapped_column(String(128), default="unknown", index=True)
+    room: Mapped[str] = mapped_column(String(64), default="living_room", index=True)
+    source: Mapped[str] = mapped_column(String(64), default="real_device", index=True)
+    metrics_json: Mapped[str] = mapped_column(Text, default="{}")
+    units_json: Mapped[str] = mapped_column(Text, default="{}")
+    topic: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+
+
 class NormalizedEventModel(Base):
     __tablename__ = "v2_normalized_events"
 
