@@ -13,6 +13,7 @@ import httpx
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "packages" / "guardian-shared"))
 sys.path.insert(0, str(ROOT / "apps" / "guardian-orchestrator"))
 
 from app.llm_client import (

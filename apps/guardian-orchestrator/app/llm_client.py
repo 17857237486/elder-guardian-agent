@@ -306,6 +306,56 @@ def _compact_vital_samples(samples: Any) -> list[Any]:
     return [_compact_value(item) for item in samples[:20]]
 
 
+def _compact_segment_summary(segment: Any) -> dict[str, Any] | None:
+    if not isinstance(segment, dict):
+        return None
+    features = segment.get("features") if isinstance(segment.get("features"), dict) else {}
+    return {
+        "segment_id": segment.get("segment_id"),
+        "segment_type": segment.get("segment_type"),
+        "start_at": segment.get("start_at"),
+        "end_at": segment.get("end_at"),
+        "duration_seconds": segment.get("duration_seconds"),
+        "room": segment.get("room"),
+        "status": segment.get("status"),
+        "features": {
+            key: features.get(key)
+            for key in (
+                "rooms",
+                "returned_to_bedroom",
+                "bathroom_stay_seconds",
+                "night_key",
+                "metric",
+                "avg",
+                "min",
+                "max",
+                "p10",
+                "p50",
+                "p90",
+                "latest_value",
+                "sample_count",
+                "abnormal_count",
+            )
+            if key in features
+        },
+    }
+
+
+def _compact_baseline_context(baseline_context: Any) -> dict[str, Any]:
+    if not isinstance(baseline_context, dict):
+        return {}
+    compact: dict[str, Any] = {}
+    for key, item in baseline_context.items():
+        if not isinstance(item, dict):
+            continue
+        compact[str(key)] = {
+            "quality": item.get("quality"),
+            "sample_count": item.get("sample_count"),
+            "metrics": _compact_value(item.get("metrics") if isinstance(item.get("metrics"), dict) else {}),
+        }
+    return compact
+
+
 def _compact_payload(step_name: str, payload: dict[str, Any]) -> dict[str, Any]:
     event = payload.get("event")
     compact: dict[str, Any] = {"event": _compact_value(event)}
@@ -633,12 +683,19 @@ def _compact_local_case(event: dict[str, Any], context: dict[str, Any]) -> dict[
             "samples": _compact_vital_samples(recent_vital.get("samples", [])),
         },
         "behavior_context": {
-            "night_wake": _compact_value(behavior_context.get("night_wake")),
-            "bathroom_stay": _compact_value(behavior_context.get("bathroom_stay")),
+            "night_wake": _compact_segment_summary(behavior_context.get("night_wake")),
+            "bathroom_stay": _compact_segment_summary(behavior_context.get("bathroom_stay")),
             "room_sequence": _compact_value(behavior_context.get("room_sequence", [])),
-            "recent_segments": _compact_value(behavior_context.get("recent_segments", [])[:8]),
+            "recent_segments": [
+                item
+                for item in (
+                    _compact_segment_summary(segment)
+                    for segment in (behavior_context.get("recent_segments", []) if isinstance(behavior_context.get("recent_segments"), list) else [])[:6]
+                )
+                if item
+            ],
         },
-        "baseline_context": _compact_value(baseline_context),
+        "baseline_context": _compact_baseline_context(baseline_context),
         "sensor_evidence": sensor_evidence,
         "device_states": device_states,
     }
