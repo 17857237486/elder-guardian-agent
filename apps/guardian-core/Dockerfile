@@ -19,4 +19,4 @@ COPY configs /app/configs
 WORKDIR /app/apps/guardian-core
 RUN pip install --no-cache-dir -e ../../packages/guardian-shared -e .
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

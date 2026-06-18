@@ -21,4 +21,4 @@ RUN pip install --no-cache-dir \
     "httpx>=0.27" \
     "pydantic>=2.7,<3"
 
-CMD ["uvicorn", "Background_MQTT.backend:app", "--host", "0.0.0.0", "--port", "8090"]
+CMD ["python", "-m", "uvicorn", "Background_MQTT.backend:app", "--host", "0.0.0.0", "--port", "8090"]
