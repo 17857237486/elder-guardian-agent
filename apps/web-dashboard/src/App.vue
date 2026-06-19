@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { API_BASE } from "@elder-guardian/frontend-shared";
 
 type AnyRecord = Record<string, any>;
+type DemoNodeState = "idle" | "running" | "completed" | "skipped" | "failed";
+type DemoTarget = { kind: "event" | "candidate"; id: string; item: AnyRecord } | null;
 const DISPLAY_LIMIT = 10;
 const IMPORTANT_STEPS = new Set([
   "rule_gate",
@@ -32,6 +34,28 @@ const loadError = ref("");
 let refreshTimer: number | undefined;
 
 const latestEvent = computed(() => state.events?.[0] ?? null);
+const activeDemoTarget = computed<DemoTarget>(() => {
+  const events = (state.events ?? []) as AnyRecord[];
+  const steps = (state.workflow_steps ?? []) as AnyRecord[];
+  const candidates = (state.ai_review_candidates ?? []) as AnyRecord[];
+  const activeStates = new Set(["event_detected", "rule_classified", "action_planned", "ask_elder", "wait_response", "family_alert", "emergency_alert", "escalated"]);
+  const activeEvent = events.find((event) =>
+    ["P0", "P1", "P2"].includes(String(event.final_risk_level ?? event.risk_level ?? "")) &&
+    activeStates.has(String(event.state ?? "").toLowerCase())
+  );
+  if (activeEvent?.event_id) return { kind: "event", id: String(activeEvent.event_id), item: activeEvent };
+
+  const workflowEvent = events.find((event) => steps.some((step) => step.event_id === event.event_id));
+  if (workflowEvent?.event_id) return { kind: "event", id: String(workflowEvent.event_id), item: workflowEvent };
+
+  const activeCandidate = candidates.find((candidate) => ["pending", "reviewing"].includes(String(candidate.status ?? "").toLowerCase()));
+  if (activeCandidate?.candidate_id) return { kind: "candidate", id: String(activeCandidate.candidate_id), item: activeCandidate };
+
+  const latestCandidate = candidates[0];
+  if (latestCandidate?.candidate_id) return { kind: "candidate", id: String(latestCandidate.candidate_id), item: latestCandidate };
+  if (latestEvent.value?.event_id) return { kind: "event", id: String(latestEvent.value.event_id), item: latestEvent.value };
+  return null;
+});
 const latestLocalAnalysis = computed(() =>
   state.workflow_steps?.find(
     (step: AnyRecord) =>
@@ -80,6 +104,49 @@ function clip(value: unknown, length = 72): string {
   return text.length > length ? `${text.slice(0, length)}…` : text;
 }
 
+function shortText(value: unknown, length = 40): string {
+  const text = String(value ?? "").trim();
+  return text.length > length ? `${text.slice(0, length)}...` : text;
+}
+
+function riskOf(item: AnyRecord): string {
+  return String(item.final_risk_level ?? item.local_risk_level ?? item.rule_risk_level ?? item.risk_level ?? "--");
+}
+
+function nodeLabel(stateValue: DemoNodeState): string {
+  return {
+    idle: "未开始",
+    running: "进行中",
+    completed: "已完成",
+    skipped: "已跳过",
+    failed: "失败"
+  }[stateValue];
+}
+
+function stepState(step?: AnyRecord | null): DemoNodeState {
+  if (!step) return "idle";
+  const status = String(step.status ?? "").toLowerCase();
+  const output = step.output ?? {};
+  if (status === "failed" || step.error || output.error || output.fallback) return "failed";
+  if (status === "skipped" || output.reason === "deterministic_p3_rule" || ["disabled", "not_required"].includes(String(output.status ?? "").toLowerCase())) return "skipped";
+  if (["running", "pending", "reviewing"].includes(status)) return "running";
+  return "completed";
+}
+
+function targetSteps(target: DemoTarget): AnyRecord[] {
+  if (!target) return [];
+  return (state.workflow_steps ?? []).filter((step: AnyRecord) => step.event_id === target.id);
+}
+
+function findTargetStep(target: DemoTarget, name: string): AnyRecord | null {
+  return targetSteps(target).find((step) => step.step_name === name) ?? null;
+}
+
+function relatedItems(target: DemoTarget, key: string): AnyRecord[] {
+  if (!target) return [];
+  return (state[key] ?? []).filter((item: AnyRecord) => item.event_id === target.id);
+}
+
 function workflowSummary(step: AnyRecord): string {
   const output = step.output ?? {};
   if (step.error) return clip(step.error);
@@ -107,6 +174,113 @@ function workflowSummary(step: AnyRecord): string {
   if (step.step_name === "final_advisory") return clip(`${output.final_risk_level ?? "--"} · ${output.family_summary ?? "最终建议已生成"}`);
   return clip(output.status ?? step.status);
 }
+
+const demoTitle = computed(() => {
+  const target = activeDemoTarget.value;
+  if (!target) return "当前演示：暂无演示事件";
+  if (target.kind === "candidate") {
+    const item = target.item;
+    const promoted = item.promoted_event_id ? ` · promoted ${item.promoted_event_id}` : "";
+    return `当前演示：Candidate · ${item.candidate_type ?? "ai_review_candidate"} · ${item.status ?? "--"}${promoted}`;
+  }
+  const item = target.item;
+  const finalStep = findTargetStep(target, "final_advisory");
+  const localStep = findTargetStep(target, "local_multiframe_analysis");
+  const phase = finalStep ? "最终建议已生成" : localStep ? "本地模型已处理" : "规则处理中";
+  return `当前演示：${item.event_type ?? "--"} · ${riskOf(item)} · ${phase}`;
+});
+
+const demoNodes = computed(() => {
+  const target = activeDemoTarget.value;
+  if (!target) {
+    return [
+      { key: "input", name: "数据输入", state: "idle" as DemoNodeState, note: "暂无演示数据", time: "" },
+      { key: "edge", name: "Edge MCP", state: "idle" as DemoNodeState, note: "等待数据接入", time: "" },
+      { key: "rule", name: "规则判断", state: "idle" as DemoNodeState, note: "等待规则输入", time: "" },
+      { key: "local", name: "本地 AI / Candidate", state: "idle" as DemoNodeState, note: "等待分析", time: "" },
+      { key: "cloud", name: "云端复核", state: "idle" as DemoNodeState, note: "等待本地结果", time: "" },
+      { key: "policy", name: "设备策略", state: "idle" as DemoNodeState, note: "等待处置", time: "" },
+      { key: "hmi", name: "HMI / 家属", state: "idle" as DemoNodeState, note: "等待提示或告警", time: "" }
+    ];
+  }
+
+  const ruleStep = findTargetStep(target, "rule_gate");
+  const localStep = findTargetStep(target, "local_multiframe_analysis");
+  const cloudStep = findTargetStep(target, "cloud_review");
+  const policyStep = findTargetStep(target, "local_policy_execution");
+  const finalStep = findTargetStep(target, "final_advisory");
+  const actions = relatedItems(target, "action_executions");
+  const prompts = relatedItems(target, "hmi_prompts");
+  const responses = relatedItems(target, "hmi_responses");
+  const alerts = relatedItems(target, "alerts");
+  const isCandidate = target.kind === "candidate";
+  const item = target.item;
+  const candidateStatus = String(item.status ?? "").toLowerCase();
+  const risk = riskOf(item);
+  const dataTime = eventTime(item) || (state.observations?.[0] ? eventTime(state.observations[0]) : "");
+  const localOutput = localStep?.output ?? {};
+  const localLatency = localOutput.latency_ms !== undefined ? ` · ${Math.round(Number(localOutput.latency_ms) / 1000)}s` : "";
+  const queueWait = localOutput.queue_wait_ms ? ` · 排队${Math.round(Number(localOutput.queue_wait_ms) / 1000)}s` : "";
+  const cloudOutput = cloudStep?.output ?? {};
+  const hasHmi = Boolean(prompts.length || responses.length || alerts.length);
+  const p12Waiting = ["P1", "P2"].includes(risk) && prompts.some((prompt) => String(prompt.status ?? "").toLowerCase() === "waiting");
+
+  return [
+    {
+      key: "input",
+      name: "数据输入",
+      state: "completed" as DemoNodeState,
+      note: isCandidate ? "Candidate 已创建" : "MQTT/API 数据已进入",
+      time: dataTime
+    },
+    {
+      key: "edge",
+      name: "Edge MCP",
+      state: "completed" as DemoNodeState,
+      note: shortText(isCandidate ? `候选 ${candidateStatus || "--"}` : `事件 ${item.event_type ?? "--"}`),
+      time: eventTime(item)
+    },
+    {
+      key: "rule",
+      name: "规则判断",
+      state: isCandidate ? "skipped" as DemoNodeState : stepState(ruleStep),
+      note: isCandidate ? "非硬规则，进入候选复核" : shortText(ruleStep?.output?.accepted ? `规则命中 ${risk}` : "规则处理中"),
+      time: eventTime(ruleStep ?? item)
+    },
+    {
+      key: "local",
+      name: "本地 AI / Candidate",
+      state: stepState(localStep),
+      note: shortText(
+        localOutput.reason === "deterministic_p3_rule"
+          ? "P3 确定性规则，无需本地模型"
+          : `${localOutput.event_semantics ?? localOutput.status ?? "等待本地分析"}${localOutput.risk_level ? ` · ${localOutput.risk_level}` : ""}${localLatency}${queueWait}`
+      ),
+      time: eventTime(localStep ?? item)
+    },
+    {
+      key: "cloud",
+      name: "云端复核",
+      state: stepState(cloudStep),
+      note: shortText(cloudOutput.reason === "deterministic_p3_rule" ? "确定性规则跳过云端" : `${cloudOutput.status ?? "等待复核"}${cloudOutput.risk_level ? ` · ${cloudOutput.risk_level}` : ""}`),
+      time: eventTime(cloudStep ?? item)
+    },
+    {
+      key: "policy",
+      name: "设备策略",
+      state: actions.length ? "completed" as DemoNodeState : policyStep ? stepState(policyStep) : ["P3", "P4"].includes(risk) || candidateStatus === "dismissed" ? "skipped" as DemoNodeState : "idle" as DemoNodeState,
+      note: shortText(actions.length ? `设备动作 ${actions.length} 条` : policyStep?.output?.status ?? (candidateStatus === "dismissed" ? "候选已记录，不执行设备" : "等待策略")),
+      time: eventTime(actions[0] ?? policyStep ?? item)
+    },
+    {
+      key: "hmi",
+      name: "HMI / 家属",
+      state: hasHmi ? "completed" as DemoNodeState : p12Waiting ? "running" as DemoNodeState : ["P3", "P4"].includes(risk) || candidateStatus === "dismissed" ? "skipped" as DemoNodeState : "idle" as DemoNodeState,
+      note: shortText(responses.length ? `老人反馈 ${responses[0].response_text}` : alerts.length ? `家属告警 ${alerts[0].status}` : prompts.length ? `HMI ${prompts[0].status}` : "无需询问或告警"),
+      time: eventTime(responses[0] ?? alerts[0] ?? prompts[0] ?? finalStep ?? item)
+    }
+  ];
+});
 
 const riskEvents = computed(() => (state.events ?? []).slice(0, DISPLAY_LIMIT));
 const workflowSteps = computed(() =>
@@ -223,6 +397,26 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
       <article><span>云端复核</span><b>{{ latestEvent?.cloud_risk_level ?? "--" }}</b></article>
       <article><span>最终风险</span><b>{{ latestEvent?.final_risk_level ?? state.current_risk_level }}</b></article>
       <article><span>决策来源</span><b>{{ latestEvent?.decision_source ?? "rule" }}</b></article>
+    </section>
+
+    <section class="demo-overview">
+      <div class="demo-head">
+        <div>
+          <span>演示总览</span>
+          <h2>{{ demoTitle }}</h2>
+        </div>
+        <p>数据输入 → Edge MCP → 规则判断 → 本地 AI / Candidate → 云端复核 → 设备策略 → HMI / 家属</p>
+      </div>
+      <ol class="demo-steps">
+        <li v-for="node in demoNodes" :key="node.key" :class="node.state">
+          <div class="step-dot">{{ nodeLabel(node.state) }}</div>
+          <div class="step-body">
+            <strong>{{ node.name }}</strong>
+            <p>{{ node.note }}</p>
+            <time>{{ formatTime(node.time) }}</time>
+          </div>
+        </li>
+      </ol>
     </section>
 
     <section class="local-semantics" :class="localSemanticStatus.state">
