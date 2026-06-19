@@ -899,7 +899,6 @@ class LLMClientParserTests(unittest.TestCase):
             event,
             candidate,
             {"elder_id": "elder_001", "observations": observations},
-            {"devices": [{"room": "living_room", "device": "light", "state": "on"}]},
             segments=[
                 {
                     "segment_id": "seg_night",
@@ -920,17 +919,77 @@ class LLMClientParserTests(unittest.TestCase):
 
         self.assertEqual(context["sensors"]["observations"], [])
         self.assertEqual(context["devices"]["devices"], [])
-        self.assertEqual(len(context["environment_context"]["samples"]), 3)
-        self.assertEqual(len(context["recent_vital_samples"]["samples"]), 3)
+        self.assertEqual(len(context["environment_context"]["samples"]), 1)
+        self.assertEqual(len(context["recent_vital_samples"]["samples"]), 1)
+        self.assertIn("candidate_local_input", context)
+        self.assertEqual(context["candidate_local_input"]["duration_seconds"], 720)
+        self.assertEqual(context["candidate_local_input"]["baseline"]["night_routine"]["night_wake_duration_p90_sec"], 480)
         compact = _compact_local_case({"event_type": "night_behavior_anomaly", "risk_level": "P4"}, context)
-        self.assertEqual(compact["candidate"]["features"]["duration_seconds"], 720)
-        self.assertNotIn("local_result", compact["candidate"]["features"])
+        self.assertEqual(compact["candidate_review"]["duration_seconds"], 720)
+        self.assertNotIn("local_result", str(compact))
+        self.assertNotIn("dedupe_key", str(compact))
+        self.assertNotIn("observations", str(compact))
+        self.assertNotIn("devices", str(compact))
+        self.assertNotIn("segment_id", str(compact))
         prompt_text = build_local_multimodal_content(
             {"event_type": "night_behavior_anomaly", "risk_level": "P4", "summary": "night wake exceeds personal p90"},
             context,
             None,
         )[0]["text"]
-        self.assertLessEqual(len(prompt_text.encode("utf-8")), 3600)
+        self.assertLessEqual(len(prompt_text.encode("utf-8")), 1200)
+
+    def test_vital_candidate_context_is_summary_only(self) -> None:
+        observations = [
+            {
+                "observation_id": "vital_latest",
+                "kind": "vital",
+                "observed_at": "2026-06-18T22:12:00+08:00",
+                "payload": {"heart_rate": 104, "spo2": 95, "room": "living_room"},
+            }
+        ]
+        candidate = {
+            "candidate_id": "cand_vital",
+            "candidate_type": "vital_baseline_anomaly",
+            "reason": "heart rate window above personal p90",
+            "source_segment_ids": ["seg_hr"],
+            "features": {
+                "dedupe_key": "very-long-key",
+                "segment": {
+                    "segment_id": "seg_hr",
+                    "segment_type": "heart_rate_window",
+                    "features": {"metric": "heart_rate", "latest_value": 104, "max": 106, "p90": 102},
+                },
+                "baseline_p90": 96,
+            },
+        }
+        event = NormalizedEventV2(
+            event_id="cand_vital",
+            elder_id="elder_001",
+            event_type="vital_baseline_anomaly",
+            risk_level=RiskLevel.P4,
+            source_kind="ai_review_candidate",
+            summary="heart rate window above personal p90",
+        )
+        context = WorkflowRunner._build_candidate_context(
+            event,
+            candidate,
+            {"elder_id": "elder_001", "observations": observations},
+            segments=[],
+            baselines=[
+                {
+                    "baseline_type": "heart_rate_daily",
+                    "metrics": {"p90": 96, "p50": 76, "daily_avg": 78},
+                }
+            ],
+        )
+
+        review = context["candidate_local_input"]
+        self.assertEqual(review["baseline_p90"], 96)
+        self.assertEqual(review["latest_vital"]["heart_rate"], 104)
+        self.assertEqual(review["baseline"]["heart_rate_daily"]["p90"], 96)
+        compact_text = json.dumps(_compact_local_case({"event_type": "vital_baseline_anomaly", "risk_level": "P4"}, context))
+        self.assertNotIn("dedupe_key", compact_text)
+        self.assertNotIn("segment_id", compact_text)
 
     def test_final_advisory_prefers_completed_cloud_summary(self) -> None:
         class FakeLocalClient:

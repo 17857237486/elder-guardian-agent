@@ -662,6 +662,10 @@ def _normalize_local_multimodal_response(payload: dict[str, Any], raw_content: s
 
 
 def _compact_local_case(event: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    candidate_local_input = context.get("candidate_local_input")
+    if isinstance(candidate_local_input, dict):
+        return {"candidate_review": _compact_value(candidate_local_input)}
+
     rule_payload = event.get("rule_trace", {}).get("payload", {}) if isinstance(event.get("rule_trace"), dict) else {}
     compact_event = {
         "event_type": event.get("event_type"),
