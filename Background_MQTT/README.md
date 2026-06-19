@@ -1,6 +1,6 @@
 # Background MQTT 场景数据生成
 
-这个目录用于生成单个老人居家场景数据，并按主项目 `guardian-core` 的标准 MQTT 协议发送给 Mosquitto。
+这个目录用于生成单个老人居家 MQTT 模拟数据，并按主项目 v2 的标准 MQTT 协议发送给 Mosquitto。数据进入 Mosquitto 后由 `edge-mcp-server` 入库，再由 `guardian-orchestrator` 完成规则判断、workflow、本地 AI/云端复核和 Dashboard 展示。
 
 支持的场景：
 
@@ -13,7 +13,7 @@
 - `after_meal_walk`：饭后散步
 - `sleep_night`：夜间睡眠
 
-支持的插入事件：
+脚本支持的插入事件：
 
 - `normal`：正常状态
 - `spo2_critical`：严重低血氧，低于 88% 触发 P0
@@ -34,7 +34,7 @@ elder/{elder_id}/sensor/vital
 elder/{elder_id}/sensor/env
 ```
 
-因此，`generate_scenario_data.py` 可以替代 `scripts/simulate_sensor.py` 给 `guardian-core` 使用。
+因此，`generate_scenario_data.py` 可以替代 `scripts/simulate_sensor.py` 给 v2 MQTT 链路使用。
 
 ## 启动主系统验证
 
@@ -44,12 +44,10 @@ elder/{elder_id}/sensor/env
 docker compose up mosquitto
 ```
 
-2. 启动 guardian-core：
+2. 启动 v2 主系统：
 
 ```powershell
-conda activate elder-guardian-agent
-cd apps\guardian-core
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+docker compose up -d
 ```
 
 3. 选择一个场景，并按真实时间发送：
@@ -71,7 +69,7 @@ dinner
 4. 查看主系统状态：
 
 ```text
-http://localhost:8000/api/dashboard/state
+http://localhost:8010/api/v2/dashboard/state
 ```
 
 如果前端 dashboard 已启动，也可以打开：
@@ -115,16 +113,16 @@ python Background_MQTT\generate_scenario_data.py --scene morning_getup --host lo
 - `生命体征录入` 会发布到 `elder/{elder_id}/sensor/vital`
 - `环境数据录入` 会发布到 `elder/{elder_id}/sensor/env`
 - 提交成功后，网页等待 MQTT 回流再显示记录，避免只在前端假显示成功
-- 如果 `guardian-core` 已经启动，RK3588 主系统会按同一条链路完成入库、规则分级、Agent 处理和 dashboard 推送
+- 如果 v2 主系统已经启动，RK3588 主系统会按同一条链路完成 Edge 入库、规则分级、workflow、本地 AI/云端复核和 Dashboard 推送
 
-手动录入页面会展示当前 guardian-core 真实生效的阈值：
+手动录入页面会展示当前 v2 真实生效的阈值：
 
 - 心率：55-110 bpm 正常；低于 55 或高于 110 触发 P2；低于 45 或高于 130 触发 P1
 - 血氧：大于等于 92% 正常；低于 92% 触发 P1；低于 88% 触发 P0
 - CO2：低于 1500 ppm 正常；大于等于 1500 ppm 触发 P3
 - 燃气：低于 100 ppm 正常；大于等于 100 ppm 触发 P0
 - 温度：16-30°C 正常；低于等于 16°C 或大于等于 30°C 触发 P3
-- 血压、体温、湿度当前只记录展示，暂不参与规则分级
+- 血压、体温当前只记录展示；湿度低于 25% 或高于 75% 触发 P3 环境事件
 
 网页还提供验收用事件模板：
 
@@ -136,14 +134,23 @@ python Background_MQTT\generate_scenario_data.py --scene morning_getup --host lo
 
 点击模板后会自动填入生命体征和环境数据。评委可以直接点击 `一键发送当前模板`，也可以先修改具体数值，再单独提交生命体征或环境数据。
 
-网页还提供 `场景时间轴事件触发`：
+网页还提供 `风险事件时间轴触发`：
 
-- 选择生活场景：`老人早上起床`、`老人中午午休`、`老人晚上吃饭`
-- 选择插入事件：`正常状态`、`血氧异常`、`心率异常`、`CO2 偏高`、`燃气泄漏`、`室温过高`、`室温过低`
+- 选择风险事件：`正常状态`、`严重低血氧`、`低血氧`、`心率异常`、`疑似跌倒`、`长时间静止`、`CO2 偏高`、`燃气异常`、`室温过高`、`室温过低`、`湿度异常`
+- 选择风险发生房间：`bedroom`、`bathroom`、`living_room`、`kitchen`
 - 通过滑块选择触发时间，例如第 `60` 秒
-- 点击 `生成并发送场景数据`
+- 点击 `生成并发送风险事件时间轴`
 
-这种方式会先生成 2 分钟基础生活场景，再在触发点前后平滑注入异常曲线。例如 `晚上吃饭 + 燃气泄漏 + 第 60 秒` 会让燃气数据从低值逐步升高，并在触发点后超过 P0 阈值，而不是突然发送一条孤立异常值。
+这种方式会先生成 2 分钟基础 MQTT 数据，再在触发点前后向指定房间平滑注入风险事件。例如 `kitchen + 燃气异常 + 第 60 秒` 会让厨房燃气数据从低值逐步升高，并在触发点后超过 P0 阈值，而不是突然发送一条孤立异常值。
+
+页面展示的 v2 处理链路为：
+
+```text
+网页提交 -> MQTT 发布 -> Mosquitto -> Edge MCP -> v2_raw_observations
+-> Orchestrator 规则判断 -> workflow -> local_context_fusion
+-> 本地 AI / 确定性规则跳过 -> 云端复核可选
+-> 设备策略 -> HMI / 家属告警 -> Dashboard
+```
 
 对应接口：
 
@@ -160,7 +167,7 @@ GET  /api/scenario/status
 
 ```json
 {
-  "scene": "dinner",
+  "scene": "tv_evening",
   "event_type": "gas_leak",
   "trigger_second": 60,
   "elder_id": "elder_001",

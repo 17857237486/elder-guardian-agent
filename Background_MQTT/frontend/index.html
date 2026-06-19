@@ -759,7 +759,7 @@
         <div class="zone-header">
           <div>
             <h2>智能家居设备控制</h2>
-            <p>统一展示房间设备状态，手动控制经 guardian-core API，自动事件命令经 MQTT 回流同步。</p>
+            <p>统一展示房间设备状态，手动控制经主系统 API，自动事件命令经 MQTT 回流同步。</p>
           </div>
         </div>
         <div class="zone-body">
@@ -772,7 +772,7 @@
             <div class="device-log-toolbar">
               <h3>设备命令日志</h3>
               <div class="device-log-actions">
-                <button id="refresh-devices" type="button">刷新 guardian-core 设备</button>
+                <button id="refresh-devices" type="button">刷新设备状态</button>
                 <span id="device-submit-status" class="submit-status">等待设备状态</span>
               </div>
             </div>
@@ -788,29 +788,16 @@
         <div class="zone-header">
           <div>
             <h2>生命体征与环境数据</h2>
-            <p>手动录入或场景生成的数据会发布到 MQTT，并在记录区实时回流展示。</p>
+            <p>手动录入或风险事件时间轴生成的数据会发布到 MQTT，并在记录区实时回流展示。</p>
           </div>
         </div>
         <div class="zone-body">
       <article class="panel">
-        <h2>场景时间轴事件触发</h2>
+        <h2>风险事件时间轴触发</h2>
         <div class="timeline-panel">
           <div class="timeline-grid">
             <div class="timeline-field">
-              <label for="scenario-scene">生活场景</label>
-              <select id="scenario-scene">
-                <option value="morning_getup">早上起床</option>
-                <option value="midday_nap">中午午休</option>
-                <option value="dinner" selected>晚上吃饭</option>
-                <option value="night_bathroom">夜间起夜</option>
-                <option value="tv_evening">客厅看电视</option>
-                <option value="cooking">厨房做饭</option>
-                <option value="away">外出</option>
-                <option value="sleep_night">夜间睡眠</option>
-              </select>
-            </div>
-            <div class="timeline-field">
-              <label for="scenario-event">插入事件</label>
+              <label for="scenario-event">风险事件</label>
               <select id="scenario-event">
                 <option value="normal">正常状态</option>
                 <option value="spo2_critical">严重低血氧</option>
@@ -826,7 +813,7 @@
               </select>
             </div>
             <div class="timeline-field">
-              <label for="scenario-event-room">插入事件房间</label>
+              <label for="scenario-event-room">风险发生房间</label>
               <select id="scenario-event-room">
                 <option value="bedroom">bedroom</option>
                 <option value="kitchen">kitchen</option>
@@ -848,14 +835,10 @@
           <div class="scenario-summary">
             <div class="scenario-summary-row">
               <b>生成方式</b>
-              <span id="scenario-method">基础场景曲线 + 事件注入曲线，默认生成 2 分钟、每 5 秒 1 组数据。</span>
+              <span id="scenario-method">生成 2 分钟基础 MQTT 数据，并在指定时间向指定房间注入风险事件；每 5 秒 1 组。</span>
             </div>
             <div class="scenario-summary-row">
-              <b>场景房间</b>
-              <span id="scenario-room-note">kitchen -> living_room</span>
-            </div>
-            <div class="scenario-summary-row">
-              <b>事件房间</b>
+              <b>风险发生房间</b>
               <span id="scenario-event-room-note">living_room</span>
             </div>
             <div class="scenario-summary-row">
@@ -868,8 +851,8 @@
                 <span>按真实时间发送</span>
               </label>
               <div class="scenario-action-right">
-                <button id="submit-scenario" class="primary" type="button">生成并发送场景数据</button>
-                <span id="scenario-submit-status" class="submit-status">等待选择场景</span>
+                <button id="submit-scenario" class="primary" type="button">生成并发送风险事件时间轴</button>
+                <span id="scenario-submit-status" class="submit-status">等待选择风险事件</span>
               </div>
             </div>
           </div>
@@ -908,7 +891,7 @@
               </tr>
               <tr>
                 <th>处理链路</th>
-                <td id="template-flow" colspan="5">网页提交 -> MQTT 发布 -> Mosquitto -> guardian-core -> SQLite / Rule Engine / Agent / Dashboard</td>
+                <td id="template-flow" colspan="5"></td>
               </tr>
               <tr>
                 <th>快捷操作</th>
@@ -1162,7 +1145,7 @@
           name: "严重低血氧",
           event: "spo2_low",
           risk: "P0",
-          reason: "血氧低于 88%，guardian-core 的生命体征规则会进入紧急风险。",
+          reason: "血氧低于 88%，v2 生命体征规则会进入紧急风险。",
           vital: { heart_rate: 88, spo2: 86, systolic_bp: 132, diastolic_bp: 82, body_temperature: 36.7 },
           env: { room: "bedroom", temperature: 24.8, humidity: 52.0, co2_ppm: 900, gas_ppm: 0, smoke_ppm: 0 },
         },
@@ -1240,30 +1223,12 @@
         },
       };
 
-      const sceneLabels = {
-        morning_getup: "早上起床",
-        midday_nap: "中午午休",
-        dinner: "晚上吃饭",
-        night_bathroom: "夜间起夜",
-        tv_evening: "客厅看电视",
-        cooking: "厨房做饭",
-        away: "外出",
-        sleep_night: "夜间睡眠",
-      };
-
-      const sceneRoomNotes = {
-        morning_getup: "bedroom",
-        midday_nap: "bedroom",
-        dinner: "kitchen -> living_room",
-        night_bathroom: "bedroom -> bathroom -> bedroom",
-        tv_evening: "living_room",
-        cooking: "kitchen",
-        away: "outside / 不在家",
-        sleep_night: "bedroom",
-      };
+      const DEFAULT_SCENARIO_SCENE = "tv_evening";
+      const V2_PROCESSING_FLOW =
+        "网页提交 -> MQTT 发布 -> Mosquitto -> Edge MCP -> v2_raw_observations -> Orchestrator 规则判断 -> workflow -> local_context_fusion -> 本地 AI / 确定性规则跳过 -> 云端复核可选 -> 设备策略 -> HMI / 家属告警 -> Dashboard";
 
       const eventExpectations = {
-        normal: "保持基础场景曲线，预期为 P4 正常记录。",
+        normal: "保持基础数据曲线，预期为 P4 正常记录。",
         spo2_critical: "血氧平滑下降到 88% 以下，触发 spo2_low P0。",
         spo2_low: "血氧平滑下降到 88%-91%，触发 spo2_low P1。",
         heart_rate_abnormal: "心率在触发点前后升高，高于 130 bpm 后触发 heart_rate_abnormal P1。",
@@ -1374,10 +1339,10 @@
           return `${deviceLabel(data.room)} 的 ${deviceLabel(data.device)} 温控目标未更新。`;
         }
         if (item.type === "guardian_core") {
-          return data.status === "devices_synced" ? "已从 guardian-core 同步设备状态。" : `guardian-core 同步失败：${data.error ?? "未知错误"}`;
+          return data.status === "devices_synced" ? "已从主系统同步设备状态。" : `主系统设备同步失败：${data.error ?? "未知错误"}`;
         }
         if (item.type === "scenario_downgraded") {
-          return `${sceneLabels[data.scene] || data.scene} 中 ${deviceLabel(data.event_room)} 发生 ${data.event_type}，但老人当前在 ${deviceLabel(data.occupant_room)}，已向 guardian-core 上报正常环境值。`;
+          return `${deviceLabel(data.event_room)} 发生 ${data.event_type}，但老人当前在 ${deviceLabel(data.occupant_room)}，已向 v2 链路上报正常环境值。`;
         }
         if (item.type === "error") {
           return `设备链路错误：${data.message ?? data.error ?? JSON.stringify(data)}`;
@@ -1412,17 +1377,15 @@
 
       function renderCurrentSceneStatus() {
         const job = state.scenarioJob ?? {};
-        const scene = job.scene || $("scenario-scene")?.value || "dinner";
+        const eventType = job.event_type || $("scenario-event")?.value || "normal";
         const eventRoom = job.event_room || $("scenario-event-room")?.value || "living_room";
-        const latestEnv = latestEnvPayload();
-        const occupantRoom =
-          latestEnv.life_scene === scene ? latestEnv.occupant_room || latestEnv.room || sceneRoomNotes[scene] : sceneRoomNotes[scene];
         const status = state.scenarioRunning ? "运行中" : "未运行";
+        const triggerSecond = job.trigger_second ?? Number($("scenario-trigger")?.value ?? 60);
         $("current-scene-status").innerHTML = `
-          <div><span>当前生活场景</span><strong>${sceneLabels[scene] || scene}</strong></div>
-          <div><span>老人所在房间</span><strong>${valueOrDash(occupantRoom)}</strong></div>
-          <div><span>插入事件房间</span><strong>${deviceLabel(eventRoom)} (${eventRoom})</strong></div>
-          <div><span>场景状态</span><strong>${status}</strong></div>
+          <div><span>当前风险事件</span><strong>${scenarioTemplates[eventType]?.name || eventType}</strong></div>
+          <div><span>风险发生房间</span><strong>${deviceLabel(eventRoom)} (${eventRoom})</strong></div>
+          <div><span>触发时间</span><strong>第 ${triggerSecond} 秒</strong></div>
+          <div><span>发送状态</span><strong>${status}</strong></div>
         `;
       }
 
@@ -1528,7 +1491,7 @@
             value,
             reason: "Background MQTT unified dashboard control",
           });
-          setSubmitStatus("device-submit-status", "Command sent through guardian-core", "ok");
+          setSubmitStatus("device-submit-status", "Command sent through main system", "ok");
         } catch (error) {
           setSubmitStatus("device-submit-status", `Command failed: ${error.message}`, "error");
         }
@@ -1565,25 +1528,24 @@
       }
 
       function updateScenarioPreview() {
-        const scene = $("scenario-scene").value;
         const eventType = $("scenario-event").value;
         const eventRoom = $("scenario-event-room").value;
         const triggerSecond = Number($("scenario-trigger").value);
         $("scenario-trigger-label").textContent = `第 ${triggerSecond} 秒`;
         setText(
           "scenario-method",
-          `${sceneLabels[scene]}基础曲线 + ${eventRoom} 房间事件注入曲线，生成 2 分钟、每 5 秒 1 组数据。`,
+          `生成 2 分钟基础 MQTT 数据，并在第 ${triggerSecond} 秒向 ${deviceLabel(eventRoom)} 注入 ${eventType} 风险事件；每 5 秒 1 组。`,
         );
-        setText("scenario-room-note", sceneRoomNotes[scene]);
         setText("scenario-event-room-note", `${deviceLabel(eventRoom)} (${eventRoom})`);
         setText("scenario-expected", eventExpectations[eventType]);
+        setText("template-flow", V2_PROCESSING_FLOW);
         renderCurrentSceneStatus();
       }
 
       function buildScenarioPayload() {
         const eventType = $("scenario-event").value;
         return {
-          scene: $("scenario-scene").value,
+          scene: DEFAULT_SCENARIO_SCENE,
           event_type: eventType,
           event_room: $("scenario-event-room").value,
           trigger_second: Number($("scenario-trigger").value),
@@ -1595,7 +1557,7 @@
       }
 
       function setScenarioControlsDisabled(disabled) {
-        ["scenario-scene", "scenario-event", "scenario-event-room", "scenario-trigger", "scenario-elder", "scenario-realtime"].forEach((id) => {
+        ["scenario-event", "scenario-event-room", "scenario-trigger", "scenario-elder", "scenario-realtime"].forEach((id) => {
           $(id).disabled = disabled;
         });
       }
@@ -1609,7 +1571,7 @@
         if (job.status === "stopped") return `已中断：已发送 ${sent} / 共 ${total} 组`;
         if (job.status === "completed") return `已完成：已发送 ${sent} / 共 ${total} 组，等待 MQTT 回流`;
         if (job.status === "failed") return `发送失败：${job.error ?? "未知错误"}`;
-        return "等待选择场景";
+        return "等待选择风险事件";
       }
 
       function stopScenarioStatusPolling() {
@@ -1623,7 +1585,7 @@
         const running = job.status === "running";
         state.scenarioRunning = running;
         state.scenarioJob = job;
-        $("submit-scenario").textContent = running ? "停止发送" : "生成并发送场景数据";
+        $("submit-scenario").textContent = running ? "停止发送" : "生成并发送风险事件时间轴";
         setScenarioControlsDisabled(running);
         setSubmitStatus("scenario-submit-status", scenarioProgressText(job), job.status === "failed" ? "error" : running ? "" : "ok");
         renderCurrentSceneStatus();
@@ -1885,7 +1847,7 @@
         }
       });
 
-      ["scenario-scene", "scenario-event", "scenario-event-room", "scenario-trigger"].forEach((id) => {
+      ["scenario-event", "scenario-event-room", "scenario-trigger"].forEach((id) => {
         $(id).addEventListener("input", updateScenarioPreview);
         $(id).addEventListener("change", updateScenarioPreview);
       });
@@ -1918,7 +1880,7 @@
       $("refresh-devices").addEventListener("click", async () => {
         try {
           await loadDevices();
-          setSubmitStatus("device-submit-status", "Devices refreshed from guardian-core", "ok");
+          setSubmitStatus("device-submit-status", "Devices refreshed from main system", "ok");
         } catch (error) {
           setSubmitStatus("device-submit-status", `Refresh failed: ${error.message}`, "error");
         }
