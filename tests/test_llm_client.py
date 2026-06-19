@@ -923,7 +923,8 @@ class LLMClientParserTests(unittest.TestCase):
         self.assertEqual(len(context["recent_vital_samples"]["samples"]), 1)
         self.assertIn("candidate_local_input", context)
         self.assertEqual(context["candidate_local_input"]["duration_seconds"], 720)
-        self.assertEqual(context["candidate_local_input"]["baseline"]["night_routine"]["night_wake_duration_p90_sec"], 480)
+        self.assertEqual(context["candidate_local_input"]["baseline_p90_seconds"], 480)
+        self.assertNotIn("night_night_wake_duration_p90_sec", context["candidate_local_input"])
         compact = _compact_local_case({"event_type": "night_behavior_anomaly", "risk_level": "P4"}, context)
         self.assertEqual(compact["candidate_review"]["duration_seconds"], 720)
         self.assertNotIn("local_result", str(compact))
@@ -936,7 +937,7 @@ class LLMClientParserTests(unittest.TestCase):
             context,
             None,
         )[0]["text"]
-        self.assertLessEqual(len(prompt_text.encode("utf-8")), 1200)
+        self.assertLessEqual(len(prompt_text.encode("utf-8")), 1000)
 
     def test_vital_candidate_context_is_summary_only(self) -> None:
         observations = [
@@ -985,8 +986,8 @@ class LLMClientParserTests(unittest.TestCase):
 
         review = context["candidate_local_input"]
         self.assertEqual(review["baseline_p90"], 96)
-        self.assertEqual(review["latest_vital"]["heart_rate"], 104)
-        self.assertEqual(review["baseline"]["heart_rate_daily"]["p90"], 96)
+        self.assertEqual(review["vital"]["heart_rate"], 104)
+        self.assertNotIn("heart_rate_p90", review)
         compact_text = json.dumps(_compact_local_case({"event_type": "vital_baseline_anomaly", "risk_level": "P4"}, context))
         self.assertNotIn("dedupe_key", compact_text)
         self.assertNotIn("segment_id", compact_text)

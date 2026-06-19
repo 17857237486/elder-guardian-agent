@@ -568,9 +568,9 @@ class WorkflowRunner:
             **cls._candidate_feature_summary(candidate),
             **segment_summary,
             **baseline_summary,
-            "current_room": (location or {}).get("current_room") or event.room,
-            "latest_environment": latest_environment,
-            "latest_vital": latest_vital,
+            "room": (location or {}).get("current_room") or event.room,
+            "env": latest_environment,
+            "vital": latest_vital,
         }
         candidate_input = {key: value for key, value in candidate_input.items() if value not in (None, [], {})}
         return {
@@ -608,13 +608,8 @@ class WorkflowRunner:
         return {
             key: value
             for key, value in {
-                "room": payload.get("room"),
                 "temperature": payload.get("temperature"),
                 "humidity": payload.get("humidity"),
-                "co2_ppm": payload.get("co2_ppm"),
-                "gas_ppm": payload.get("gas_ppm"),
-                "smoke_ppm": payload.get("smoke_ppm"),
-                "presence": payload.get("presence"),
             }.items()
             if value is not None
         }
@@ -630,8 +625,6 @@ class WorkflowRunner:
             for key, value in {
                 "heart_rate": payload.get("heart_rate"),
                 "spo2": payload.get("spo2"),
-                "body_temperature": payload.get("body_temperature"),
-                "room": payload.get("room"),
             }.items()
             if value is not None
         }
@@ -658,15 +651,12 @@ class WorkflowRunner:
         segment = segments[0]
         features = segment.get("features") if isinstance(segment.get("features"), dict) else {}
         summary = {
-            "segment_type": segment.get("segment_type"),
             "duration_seconds": segment.get("duration_seconds"),
-            "room": segment.get("room"),
             "room_sequence": features.get("rooms"),
             "returned_to_bedroom": features.get("returned_to_bedroom"),
             "bathroom_stay_seconds": features.get("bathroom_stay_seconds"),
             "metric": features.get("metric"),
             "latest_value": features.get("latest_value"),
-            "min": features.get("min"),
             "max": features.get("max"),
             "p10": features.get("p10"),
             "p90": features.get("p90"),
@@ -676,6 +666,12 @@ class WorkflowRunner:
     @staticmethod
     def _candidate_baseline_summary(candidate: dict[str, Any], baselines: list[dict[str, Any]]) -> dict[str, Any]:
         candidate_type = str(candidate.get("candidate_type") or "")
+        features = candidate.get("features") if isinstance(candidate.get("features"), dict) else {}
+        if (
+            (candidate_type == "night_behavior_anomaly" and "baseline_p90_seconds" in features)
+            or (candidate_type == "vital_baseline_anomaly" and ("baseline_p90" in features or "baseline_p10" in features))
+        ):
+            return {}
         wanted = (
             {"night_routine", "bathroom_routine"}
             if candidate_type == "night_behavior_anomaly"
@@ -687,25 +683,25 @@ class WorkflowRunner:
             if baseline_type not in wanted:
                 continue
             metrics = baseline.get("metrics") if isinstance(baseline.get("metrics"), dict) else {}
-            metric_summary = {
-                key: metrics.get(key)
-                for key in (
-                    "night_wake_count_p90",
-                    "night_wake_duration_p90_sec",
-                    "bathroom_stay_p90_sec",
-                    "returned_to_bedroom_rate",
-                    "p10",
-                    "p50",
-                    "p90",
-                    "daily_avg",
-                    "night_avg",
-                    "avg",
-                )
-                if key in metrics
-            }
-            if metric_summary:
-                result[baseline_type] = metric_summary
-        return {"baseline": result} if result else {}
+            prefix = {
+                "night_routine": "night",
+                "bathroom_routine": "bathroom",
+                "heart_rate_daily": "heart_rate",
+                "spo2_daily": "spo2",
+            }.get(baseline_type, baseline_type)
+            for key in (
+                "night_wake_count_p90",
+                "night_wake_duration_p90_sec",
+                "bathroom_stay_p90_sec",
+                "returned_to_bedroom_rate",
+                "p10",
+                "p90",
+                "daily_avg",
+                "avg",
+            ):
+                if key in metrics:
+                    result[f"{prefix}_{key}"] = metrics[key]
+        return result
 
     async def _complete_deterministic_p3(
         self,

@@ -33,23 +33,14 @@ Candidate 本地模型只接收摘要，不接收原始历史数据。
   "returned_to_bedroom": false,
   "bathroom_stay_seconds": 180,
   "room_sequence": ["bedroom", "bathroom", "living_room"],
-  "current_room": "living_room",
-  "latest_environment": {
-    "room": "living_room",
+  "room": "living_room",
+  "env": {
     "temperature": 25.0,
-    "humidity": 52,
-    "co2_ppm": 850,
-    "presence": true
+    "humidity": 52
   },
-  "latest_vital": {
+  "vital": {
     "heart_rate": 92,
     "spo2": 95
-  },
-  "baseline": {
-    "night_routine": {
-      "night_wake_duration_p90_sec": 480,
-      "night_wake_count_p90": 2
-    }
   }
 }
 ```
@@ -59,7 +50,7 @@ Candidate 本地模型只接收摘要，不接收原始历史数据。
 - 原始 observation 列表
 - devices 快照
 - 完整 behavior segment
-- 完整 personal baseline
+- 完整 personal baseline；只保留 candidate 自带或基线摘要中的 p90/p10 数值
 - 最近 20 组环境或生命体征
 - 历史 `local_result`
 - `dedupe_key`
