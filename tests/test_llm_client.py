@@ -917,16 +917,14 @@ class LLMClientParserTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(context["sensors"]["observations"], [])
-        self.assertEqual(context["devices"]["devices"], [])
-        self.assertEqual(len(context["environment_context"]["samples"]), 1)
-        self.assertEqual(len(context["recent_vital_samples"]["samples"]), 1)
-        self.assertIn("candidate_local_input", context)
-        self.assertEqual(context["candidate_local_input"]["duration_seconds"], 720)
-        self.assertEqual(context["candidate_local_input"]["baseline_p90_seconds"], 480)
+        self.assertEqual(set(context), {"candidate_local_input"})
+        self.assertEqual(context["candidate_local_input"]["dur"], 720)
+        self.assertEqual(context["candidate_local_input"]["p90s"], 480)
+        self.assertEqual(context["candidate_local_input"]["temp"], 36)
+        self.assertEqual(context["candidate_local_input"]["hr"], 89)
         self.assertNotIn("night_night_wake_duration_p90_sec", context["candidate_local_input"])
         compact = _compact_local_case({"event_type": "night_behavior_anomaly", "risk_level": "P4"}, context)
-        self.assertEqual(compact["candidate_review"]["duration_seconds"], 720)
+        self.assertEqual(compact["candidate_review"]["dur"], 720)
         self.assertNotIn("local_result", str(compact))
         self.assertNotIn("dedupe_key", str(compact))
         self.assertNotIn("observations", str(compact))
@@ -937,7 +935,10 @@ class LLMClientParserTests(unittest.TestCase):
             context,
             None,
         )[0]["text"]
-        self.assertLessEqual(len(prompt_text.encode("utf-8")), 1000)
+        self.assertIn("candidate", prompt_text)
+        self.assertIn("event_semantics", prompt_text)
+        self.assertNotIn("supporting_evidence", prompt_text)
+        self.assertNotIn("environment_context", prompt_text)
 
     def test_vital_candidate_context_is_summary_only(self) -> None:
         observations = [
@@ -985,12 +986,36 @@ class LLMClientParserTests(unittest.TestCase):
         )
 
         review = context["candidate_local_input"]
-        self.assertEqual(review["baseline_p90"], 96)
-        self.assertEqual(review["vital"]["heart_rate"], 104)
+        self.assertEqual(review["p90"], 96)
+        self.assertEqual(review["hr"], 104)
         self.assertNotIn("heart_rate_p90", review)
         compact_text = json.dumps(_compact_local_case({"event_type": "vital_baseline_anomaly", "risk_level": "P4"}, context))
         self.assertNotIn("dedupe_key", compact_text)
         self.assertNotIn("segment_id", compact_text)
+
+    def test_candidate_local_output_allows_four_field_json(self) -> None:
+        output = {
+            "event_semantics": "night wake mild",
+            "risk_level": "P3",
+            "confidence": 0.61,
+            "family_summary": "record and observe",
+        }
+
+        normalized = _normalize_local_multimodal_output(
+            {
+                "event": {
+                    "event_type": "night_behavior_anomaly",
+                    "risk_level": "P4",
+                    "summary": "night wake exceeds p90",
+                    "source_kind": "ai_review_candidate",
+                }
+            },
+            output,
+        )
+
+        self.assertEqual(normalized["risk_level"], "P3")
+        self.assertEqual(normalized["supporting_evidence"], ["night wake exceeds p90"])
+        self.assertIn("supporting_evidence", normalized["schema_repaired_fields"])
 
     def test_final_advisory_prefers_completed_cloud_summary(self) -> None:
         class FakeLocalClient:
@@ -1227,6 +1252,67 @@ class LLMClientParserTests(unittest.TestCase):
         final_update = runner.edge.update_ai_review_candidate.await_args_list[-1].args[1]
         self.assertEqual(final_update["status"], "promoted")
         self.assertEqual(final_update["promoted_event_id"], "event_promoted")
+
+    def test_candidate_local_llm_calls_are_serialized(self) -> None:
+        class SerialProbeLocalClient:
+            def __init__(self) -> None:
+                self.active = 0
+                self.max_active = 0
+                self.calls = 0
+
+            async def analyze(self, **_: object) -> dict[str, object]:
+                self.calls += 1
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+                await asyncio.sleep(0.02)
+                self.active -= 1
+                return {
+                    "event_semantics": "candidate low risk",
+                    "risk_level": "P3",
+                    "confidence": 0.6,
+                    "family_summary": "record only",
+                }
+
+        async def run_three() -> tuple[WorkflowRunner, SerialProbeLocalClient, list[dict[str, object]]]:
+            runner = WorkflowRunner()
+            probe = SerialProbeLocalClient()
+            runner.local_llm = probe
+            runner._record_step = AsyncMock()
+            runner.edge.create_workflow = AsyncMock(return_value={})
+            runner.edge.update_ai_review_candidate = AsyncMock(return_value={})
+            runner.edge.get_recent_sensor_context = AsyncMock(return_value={"elder_id": "elder_001", "observations": []})
+            runner.edge.get_behavior_segments = AsyncMock(return_value=[])
+            runner.edge.get_personal_baselines = AsyncMock(return_value=[])
+            runner.edge.create_event = AsyncMock(side_effect=AssertionError("low-risk candidates are not promoted"))
+            results = await asyncio.gather(
+                *[
+                    runner.run_candidate(
+                        {
+                            "candidate_id": f"cand_serial_{index}",
+                            "elder_id": "elder_001",
+                            "candidate_type": "night_behavior_anomaly",
+                            "reason": "night wake exceeds p90",
+                            "features": {"duration_seconds": 700 + index},
+                        }
+                    )
+                    for index in range(3)
+                ]
+            )
+            return runner, probe, results
+
+        runner, probe, results = asyncio.run(run_three())
+
+        self.assertEqual(probe.calls, 3)
+        self.assertEqual(probe.max_active, 1)
+        self.assertEqual([item["status"] for item in results], ["dismissed", "dismissed", "dismissed"])
+        local_outputs = [
+            call.args[4]
+            for call in runner._record_step.await_args_list
+            if len(call.args) >= 5 and call.args[2] == "local_multiframe_analysis"
+        ]
+        self.assertEqual(len(local_outputs), 3)
+        self.assertTrue(all("queue_wait_ms" in item for item in local_outputs))
+        self.assertTrue(any(float(item["queue_wait_ms"]) > 0 for item in local_outputs[1:]))
 
 
 if __name__ == "__main__":

@@ -50,6 +50,7 @@ class WorkflowRunner:
         self.local_llm = LocalMultimodalClient()
         self.cloud_llm = CloudLLMClient()
         self.llm_semaphore = asyncio.Semaphore(settings.llm_max_concurrent_workflows)
+        self.candidate_llm_lock = asyncio.Lock()
 
     async def run(self, event: NormalizedEventV2) -> dict[str, Any]:
         saved_event = await self.edge.create_event(event)
@@ -247,12 +248,20 @@ class WorkflowRunner:
         context = self._build_candidate_context(event, candidate, sensors, segments=segments, baselines=baselines)
         await self._record_step(workflow, event, "local_context_fusion", {"candidate": candidate}, context)
 
-        started = perf_counter()
+        queue_started = perf_counter()
+        started = queue_started
+        queue_wait_ms = 0.0
         try:
-            local = await self.local_llm.analyze(event=saved_event, context=context, contact_sheet=None)
+            async with self.candidate_llm_lock:
+                queue_wait_ms = round((perf_counter() - queue_started) * 1000, 1)
+                started = perf_counter()
+                local = await self.local_llm.analyze(event=saved_event, context=context, contact_sheet=None)
         except Exception as exc:
+            if queue_wait_ms == 0.0:
+                queue_wait_ms = round((perf_counter() - queue_started) * 1000, 1)
             local = self._fallback_result(event, exc)
         local["latency_ms"] = round((perf_counter() - started) * 1000, 1)
+        local["queue_wait_ms"] = queue_wait_ms
         await self._record_step(workflow, event, "local_multiframe_analysis", {"candidate": candidate}, local)
 
         local_risk = risk_text(local.get("risk_level", "P4"))
@@ -563,31 +572,17 @@ class WorkflowRunner:
         segment_summary = cls._candidate_segment_summary(matched_segments)
         baseline_summary = cls._candidate_baseline_summary(candidate, baselines or [])
         candidate_input = {
-            "candidate_type": candidate.get("candidate_type"),
-            "reason": candidate.get("reason"),
-            **cls._candidate_feature_summary(candidate),
+            "t": candidate.get("candidate_type"),
+            "r": candidate.get("reason"),
             **segment_summary,
             **baseline_summary,
+            **cls._candidate_feature_summary(candidate),
             "room": (location or {}).get("current_room") or event.room,
-            "env": latest_environment,
-            "vital": latest_vital,
+            **(latest_environment or {}),
+            **(latest_vital or {}),
         }
         candidate_input = {key: value for key, value in candidate_input.items() if value not in (None, [], {})}
-        return {
-            "candidate_local_input": candidate_input,
-            "elder_location": location
-            or {
-                "current_room": event.room,
-                "source": "event_room" if event.room else "unknown",
-                "observed_at": None,
-            },
-            "environment_context": {"samples": [latest_environment] if latest_environment else []},
-            "recent_vital_samples": {"samples": [latest_vital] if latest_vital else []},
-            "behavior_context": {"candidate_segments": [segment_summary] if segment_summary else []},
-            "baseline_context": baseline_summary,
-            "sensors": {"elder_id": event.elder_id, "observations": []},
-            "devices": {"devices": []},
-        }
+        return {"candidate_local_input": candidate_input}
 
     @classmethod
     def _latest_environment_summary(
@@ -608,8 +603,8 @@ class WorkflowRunner:
         return {
             key: value
             for key, value in {
-                "temperature": payload.get("temperature"),
-                "humidity": payload.get("humidity"),
+                "temp": payload.get("temperature"),
+                "hum": payload.get("humidity"),
             }.items()
             if value is not None
         }
@@ -623,7 +618,7 @@ class WorkflowRunner:
         return {
             key: value
             for key, value in {
-                "heart_rate": payload.get("heart_rate"),
+                "hr": payload.get("heart_rate"),
                 "spo2": payload.get("spo2"),
             }.items()
             if value is not None
@@ -632,17 +627,17 @@ class WorkflowRunner:
     @staticmethod
     def _candidate_feature_summary(candidate: dict[str, Any]) -> dict[str, Any]:
         features = candidate.get("features") if isinstance(candidate.get("features"), dict) else {}
-        keys = (
-            "duration_seconds",
-            "baseline_p90_seconds",
-            "baseline_p90",
-            "baseline_p10",
-            "latest_value",
-            "metric",
-            "returned_to_bedroom",
-            "bathroom_stay_seconds",
-        )
-        return {key: features[key] for key in keys if key in features}
+        key_map = {
+            "duration_seconds": "dur",
+            "baseline_p90_seconds": "p90s",
+            "baseline_p90": "p90",
+            "baseline_p10": "p10",
+            "latest_value": "latest",
+            "metric": "metric",
+            "returned_to_bedroom": "ret",
+            "bathroom_stay_seconds": "bath_s",
+        }
+        return {short: features[key] for key, short in key_map.items() if key in features}
 
     @staticmethod
     def _candidate_segment_summary(segments: list[dict[str, Any]]) -> dict[str, Any]:
@@ -651,12 +646,12 @@ class WorkflowRunner:
         segment = segments[0]
         features = segment.get("features") if isinstance(segment.get("features"), dict) else {}
         summary = {
-            "duration_seconds": segment.get("duration_seconds"),
-            "room_sequence": features.get("rooms"),
-            "returned_to_bedroom": features.get("returned_to_bedroom"),
-            "bathroom_stay_seconds": features.get("bathroom_stay_seconds"),
+            "dur": segment.get("duration_seconds"),
+            "rooms": features.get("rooms"),
+            "ret": features.get("returned_to_bedroom"),
+            "bath_s": features.get("bathroom_stay_seconds"),
             "metric": features.get("metric"),
-            "latest_value": features.get("latest_value"),
+            "latest": features.get("latest_value"),
             "max": features.get("max"),
             "p10": features.get("p10"),
             "p90": features.get("p90"),
@@ -700,7 +695,14 @@ class WorkflowRunner:
                 "avg",
             ):
                 if key in metrics:
-                    result[f"{prefix}_{key}"] = metrics[key]
+                    short_key = {
+                        "night_wake_count_p90": "wake_p90",
+                        "night_wake_duration_p90_sec": "p90s",
+                        "bathroom_stay_p90_sec": "bath_p90s",
+                        "returned_to_bedroom_rate": "ret_rate",
+                        "daily_avg": "avg",
+                    }.get(key, key)
+                    result[f"{prefix}_{short_key}"] = metrics[key]
         return result
 
     async def _complete_deterministic_p3(

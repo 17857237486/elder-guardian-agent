@@ -98,6 +98,12 @@ LOCAL_MULTIMODAL_REQUIRED_FIELDS = {
     "supporting_evidence",
     "family_summary",
 }
+CANDIDATE_LOCAL_REQUIRED_FIELDS = {
+    "event_semantics",
+    "risk_level",
+    "confidence",
+    "family_summary",
+}
 
 
 class LLMOutputError(ValueError):
@@ -207,6 +213,11 @@ def _event_type(payload: dict[str, Any]) -> str | None:
     if not isinstance(event, dict) or event.get("event_type") is None:
         return None
     return str(event["event_type"]).split(".")[-1].lower()
+
+
+def _is_candidate_payload(payload: dict[str, Any]) -> bool:
+    event = payload.get("event")
+    return isinstance(event, dict) and str(event.get("source_kind") or "") == "ai_review_candidate"
 
 
 def _minimum_allowed_risk(payload: dict[str, Any]) -> str:
@@ -600,9 +611,13 @@ def _normalize_multimodal_response(payload: dict[str, Any], raw_content: str) ->
 
 def _normalize_local_multimodal_output(payload: dict[str, Any], output: dict[str, Any]) -> dict[str, Any]:
     nested = output.get("output_template")
-    if isinstance(nested, dict) and LOCAL_MULTIMODAL_REQUIRED_FIELDS.issubset(nested):
+    if isinstance(nested, dict) and (
+        LOCAL_MULTIMODAL_REQUIRED_FIELDS.issubset(nested) or CANDIDATE_LOCAL_REQUIRED_FIELDS.issubset(nested)
+    ):
         output = nested
-    missing = sorted(LOCAL_MULTIMODAL_REQUIRED_FIELDS - output.keys())
+    candidate_mode = _is_candidate_payload(payload)
+    required = CANDIDATE_LOCAL_REQUIRED_FIELDS if candidate_mode else LOCAL_MULTIMODAL_REQUIRED_FIELDS
+    missing = sorted(required - output.keys())
     if missing:
         raise LLMOutputError(f"local multimodal output missing required fields: {', '.join(missing)}")
     if _contains_forbidden_action_key(output):
@@ -623,7 +638,12 @@ def _normalize_local_multimodal_output(payload: dict[str, Any], output: dict[str
         evidence = [evidence] if evidence.strip() else []
         repaired_fields.append("supporting_evidence")
     elif evidence is None:
-        evidence = []
+        if candidate_mode:
+            event = payload.get("event") if isinstance(payload.get("event"), dict) else {}
+            fallback_evidence = str(event.get("summary") or "candidate reason").strip()
+            evidence = [fallback_evidence] if fallback_evidence else []
+        else:
+            evidence = []
         repaired_fields.append("supporting_evidence")
     elif not isinstance(evidence, list):
         raise LLMOutputError("local multimodal supporting_evidence must be an array of strings")
@@ -763,6 +783,28 @@ def _compact_local_case(event: dict[str, Any], context: dict[str, Any]) -> dict[
     }
 
 
+def _build_candidate_local_prompt(event: dict[str, Any], context: dict[str, Any]) -> str:
+    candidate_input = context.get("candidate_local_input")
+    compact = candidate_input if isinstance(candidate_input, dict) else {}
+    return (
+        "判断老人安全candidate是否升级正式风险。"
+        "风险:P0即时生命危险,P1严重人身风险,P2需关注,P3轻微/记录,P4无风险。"
+        "只输出JSON:{event_semantics,risk_level,confidence,family_summary};"
+        "risk_level只能是P0/P1/P2/P3/P4之一,禁止复合等级和设备控制。"
+        "输入:"
+        + json.dumps(
+            {
+                "t": event.get("event_type"),
+                "min": event.get("risk_level", "P4"),
+                "c": compact,
+            },
+            ensure_ascii=False,
+            default=str,
+            separators=(",", ":"),
+        )
+    )
+
+
 def _multimodal_schema() -> dict[str, Any]:
     return {
         "required_fields": {
@@ -796,6 +838,9 @@ def _cloud_output_constraints(temporal_limit: int) -> str:
 def build_local_multimodal_content(
     event: dict[str, Any], context: dict[str, Any], contact_sheet: Path | None
 ) -> list[dict[str, Any]]:
+    if str(event.get("source_kind") or "") == "ai_review_candidate" or "candidate_local_input" in context:
+        return [{"type": "text", "text": _build_candidate_local_prompt(event, context)}]
+
     has_image = bool(contact_sheet and contact_sheet.is_file())
     minimum_risk = _minimum_allowed_risk({"event": event})
     analysis_instruction = LOCAL_VISUAL_INSTRUCTION if has_image else LOCAL_TEXT_INSTRUCTION
