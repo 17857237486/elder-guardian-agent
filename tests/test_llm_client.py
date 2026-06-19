@@ -1017,6 +1017,38 @@ class LLMClientParserTests(unittest.TestCase):
         self.assertEqual(normalized["supporting_evidence"], ["night wake exceeds p90"])
         self.assertIn("supporting_evidence", normalized["schema_repaired_fields"])
 
+    def test_candidate_local_output_repairs_confidence_words(self) -> None:
+        output = {
+            "event_semantics": "night wake mild",
+            "risk_level": "P3",
+            "confidence": "high",
+            "family_summary": "record and observe",
+        }
+
+        normalized = _normalize_local_multimodal_output(
+            {
+                "event": {
+                    "event_type": "night_behavior_anomaly",
+                    "risk_level": "P4",
+                    "summary": "night wake exceeds p90",
+                    "source_kind": "ai_review_candidate",
+                }
+            },
+            output,
+        )
+
+        self.assertEqual(normalized["confidence"], 0.8)
+        self.assertIn("confidence", normalized["schema_repaired_fields"])
+
+        with self.assertRaises(LLMOutputError):
+            _normalize_local_multimodal_output(
+                {"event": {"event_type": "long_static", "risk_level": "P2"}},
+                {
+                    **output,
+                    "supporting_evidence": [],
+                },
+            )
+
     def test_final_advisory_prefers_completed_cloud_summary(self) -> None:
         class FakeLocalClient:
             async def analyze(self, **_: object) -> dict[str, object]:

@@ -628,12 +628,19 @@ def _normalize_local_multimodal_output(payload: dict[str, Any], output: dict[str
         raise LLMOutputError(f"invalid risk level: {reviewed}")
     if RISK_ORDER[reviewed] < RISK_ORDER[original]:
         raise LLMOutputError(f"model attempted to downgrade risk from {original} to {reviewed}")
+    evidence = output.get("supporting_evidence")
+    repaired_fields: list[str] = []
     try:
         confidence = max(0.0, min(float(output.get("confidence", 0.0)), 1.0))
     except (TypeError, ValueError) as exc:
-        raise LLMOutputError("local multimodal confidence must be a number") from exc
-    evidence = output.get("supporting_evidence")
-    repaired_fields: list[str] = []
+        if not candidate_mode:
+            raise LLMOutputError("local multimodal confidence must be a number") from exc
+        confidence_text = str(output.get("confidence") or "").strip().lower()
+        confidence_map = {"high": 0.8, "medium": 0.6, "med": 0.6, "low": 0.4}
+        if confidence_text not in confidence_map:
+            raise LLMOutputError("local multimodal confidence must be a number") from exc
+        confidence = confidence_map[confidence_text]
+        repaired_fields.append("confidence")
     if isinstance(evidence, str):
         evidence = [evidence] if evidence.strip() else []
         repaired_fields.append("supporting_evidence")
@@ -790,7 +797,7 @@ def _build_candidate_local_prompt(event: dict[str, Any], context: dict[str, Any]
         "判断老人安全candidate是否升级正式风险。"
         "风险:P0即时生命危险,P1严重人身风险,P2需关注,P3轻微/记录,P4无风险。"
         "只输出JSON:{event_semantics,risk_level,confidence,family_summary};"
-        "risk_level只能是P0/P1/P2/P3/P4之一,禁止复合等级和设备控制。"
+        "risk_level只能是P0/P1/P2/P3/P4之一,confidence必须是0到1数字,禁止复合等级和设备控制。"
         "输入:"
         + json.dumps(
             {
