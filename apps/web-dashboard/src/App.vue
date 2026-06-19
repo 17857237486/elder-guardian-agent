@@ -31,13 +31,39 @@ const state = reactive<AnyRecord>({
 const loading = ref(false);
 const lastUpdated = ref("");
 const loadError = ref("");
+const clearNotice = ref("");
+const clearedAt = ref<string | null>(localStorage.getItem("dashboardClearedAt"));
 let refreshTimer: number | undefined;
 
-const latestEvent = computed(() => state.events?.[0] ?? null);
+const isCleared = computed(() => Boolean(clearedAt.value));
+
+function itemTimestamp(item?: AnyRecord | null): string {
+  if (!item) return "";
+  return item.completed_at ?? item.responded_at ?? item.updated_at ?? item.created_at ?? item.observed_at ?? "";
+}
+
+function isAfterClearTime(item?: AnyRecord | null): boolean {
+  if (!clearedAt.value) return true;
+  const timestamp = itemTimestamp(item);
+  if (!timestamp) return false;
+  return new Date(timestamp).getTime() > new Date(clearedAt.value).getTime();
+}
+
+const filteredEvents = computed(() => ((state.events ?? []) as AnyRecord[]).filter(isAfterClearTime));
+const filteredWorkflowSteps = computed(() => ((state.workflow_steps ?? []) as AnyRecord[]).filter(isAfterClearTime));
+const filteredToolCalls = computed(() => ((state.tool_calls ?? []) as AnyRecord[]).filter(isAfterClearTime));
+const filteredActionExecutions = computed(() => ((state.action_executions ?? []) as AnyRecord[]).filter(isAfterClearTime));
+const filteredPrompts = computed(() => ((state.hmi_prompts ?? []) as AnyRecord[]).filter(isAfterClearTime));
+const filteredResponses = computed(() => ((state.hmi_responses ?? []) as AnyRecord[]).filter(isAfterClearTime));
+const filteredAlerts = computed(() => ((state.alerts ?? []) as AnyRecord[]).filter(isAfterClearTime));
+const filteredDeviceReadings = computed(() => ((state.device_readings_latest ?? []) as AnyRecord[]).filter(isAfterClearTime));
+const filteredObservations = computed(() => ((state.observations ?? []) as AnyRecord[]).filter(isAfterClearTime));
+
+const latestEvent = computed(() => filteredEvents.value?.[0] ?? null);
 const activeDemoTarget = computed<DemoTarget>(() => {
-  const events = (state.events ?? []) as AnyRecord[];
-  const steps = (state.workflow_steps ?? []) as AnyRecord[];
-  const candidates = (state.ai_review_candidates ?? []) as AnyRecord[];
+  const events = filteredEvents.value;
+  const steps = filteredWorkflowSteps.value;
+  const candidates = ((state.ai_review_candidates ?? []) as AnyRecord[]).filter(isAfterClearTime);
   const activeStates = new Set(["event_detected", "rule_classified", "action_planned", "ask_elder", "wait_response", "family_alert", "emergency_alert", "escalated"]);
   const activeEvent = events.find((event) =>
     ["P0", "P1", "P2"].includes(String(event.final_risk_level ?? event.risk_level ?? "")) &&
@@ -57,7 +83,7 @@ const activeDemoTarget = computed<DemoTarget>(() => {
   return null;
 });
 const latestLocalAnalysis = computed(() =>
-  state.workflow_steps?.find(
+  filteredWorkflowSteps.value.find(
     (step: AnyRecord) =>
       step.event_id === latestEvent.value?.event_id && step.step_name === "local_multiframe_analysis"
   ) ?? null
@@ -81,7 +107,7 @@ const localSemanticStatus = computed(() => {
 });
 
 function eventTime(item: AnyRecord): string {
-  return item.completed_at ?? item.responded_at ?? item.updated_at ?? item.created_at ?? "";
+  return itemTimestamp(item);
 }
 
 function formatTime(value?: string): string {
@@ -135,7 +161,7 @@ function stepState(step?: AnyRecord | null): DemoNodeState {
 
 function targetSteps(target: DemoTarget): AnyRecord[] {
   if (!target) return [];
-  return (state.workflow_steps ?? []).filter((step: AnyRecord) => step.event_id === target.id);
+  return filteredWorkflowSteps.value.filter((step: AnyRecord) => step.event_id === target.id);
 }
 
 function findTargetStep(target: DemoTarget, name: string): AnyRecord | null {
@@ -144,7 +170,13 @@ function findTargetStep(target: DemoTarget, name: string): AnyRecord | null {
 
 function relatedItems(target: DemoTarget, key: string): AnyRecord[] {
   if (!target) return [];
-  return (state[key] ?? []).filter((item: AnyRecord) => item.event_id === target.id);
+  const source: Record<string, AnyRecord[]> = {
+    action_executions: filteredActionExecutions.value,
+    hmi_prompts: filteredPrompts.value,
+    hmi_responses: filteredResponses.value,
+    alerts: filteredAlerts.value
+  };
+  return (source[key] ?? []).filter((item: AnyRecord) => item.event_id === target.id);
 }
 
 function workflowSummary(step: AnyRecord): string {
@@ -217,7 +249,7 @@ const demoNodes = computed(() => {
   const item = target.item;
   const candidateStatus = String(item.status ?? "").toLowerCase();
   const risk = riskOf(item);
-  const dataTime = eventTime(item) || (state.observations?.[0] ? eventTime(state.observations[0]) : "");
+  const dataTime = eventTime(item) || (filteredObservations.value?.[0] ? eventTime(filteredObservations.value[0]) : "");
   const localOutput = localStep?.output ?? {};
   const localLatency = localOutput.latency_ms !== undefined ? ` · ${Math.round(Number(localOutput.latency_ms) / 1000)}s` : "";
   const queueWait = localOutput.queue_wait_ms ? ` · 排队${Math.round(Number(localOutput.queue_wait_ms) / 1000)}s` : "";
@@ -282,32 +314,32 @@ const demoNodes = computed(() => {
   ];
 });
 
-const riskEvents = computed(() => (state.events ?? []).slice(0, DISPLAY_LIMIT));
+const riskEvents = computed(() => filteredEvents.value.slice(0, DISPLAY_LIMIT));
 const workflowSteps = computed(() =>
-  (state.workflow_steps ?? [])
+  filteredWorkflowSteps.value
     .filter((step: AnyRecord) => IMPORTANT_STEPS.has(step.step_name) || step.status === "failed" || step.error)
     .slice(0, DISPLAY_LIMIT)
 );
-const policyExecutions = computed(() => {
-  const executions = (state.action_executions ?? []).map((item: AnyRecord) => ({ ...item, itemType: "execution" }));
-  const failedCalls = (state.tool_calls ?? [])
+const policyExecutions = computed<AnyRecord[]>(() => {
+  const executions = filteredActionExecutions.value.map((item: AnyRecord) => ({ ...item, itemType: "execution" }));
+  const failedCalls = filteredToolCalls.value
     .filter((item: AnyRecord) => !["accepted", "completed", "success"].includes(String(item.status).toLowerCase()))
     .map((item: AnyRecord) => ({ ...item, itemType: "tool" }));
   return [...executions, ...failedCalls]
     .sort((a, b) => new Date(eventTime(b)).getTime() - new Date(eventTime(a)).getTime())
     .slice(0, DISPLAY_LIMIT);
 });
-const hmiAlerts = computed(() => {
-  const prompts = (state.hmi_prompts ?? []).map((item: AnyRecord) => ({ ...item, itemType: "prompt" }));
-  const alerts = (state.alerts ?? []).map((item: AnyRecord) => ({ ...item, itemType: "alert" }));
+const hmiAlerts = computed<AnyRecord[]>(() => {
+  const prompts = filteredPrompts.value.map((item: AnyRecord) => ({ ...item, itemType: "prompt" }));
+  const alerts = filteredAlerts.value.map((item: AnyRecord) => ({ ...item, itemType: "alert" }));
   return [...prompts, ...alerts]
     .sort((a, b) => new Date(eventTime(b)).getTime() - new Date(eventTime(a)).getTime())
     .slice(0, DISPLAY_LIMIT);
 });
-const elderFeedback = computed(() => (state.hmi_responses ?? []).slice(0, DISPLAY_LIMIT));
-const realDevices = computed(() => (state.device_readings_latest ?? []).slice(0, DISPLAY_LIMIT));
+const elderFeedback = computed(() => filteredResponses.value.slice(0, DISPLAY_LIMIT));
+const realDevices = computed(() => filteredDeviceReadings.value.slice(0, DISPLAY_LIMIT));
 const latestContextFusion = computed(() =>
-  state.workflow_steps?.find(
+  filteredWorkflowSteps.value.find(
     (step: AnyRecord) =>
       step.event_id === latestEvent.value?.event_id && step.step_name === "local_context_fusion"
   ) ?? null
@@ -315,7 +347,7 @@ const latestContextFusion = computed(() =>
 const localAiRoom = computed(() => latestContextFusion.value?.output?.elder_location?.current_room ?? "--");
 const homeEnvironmentRooms = computed(() => {
   const rooms = new Map<string, AnyRecord>();
-  for (const observation of state.observations ?? []) {
+  for (const observation of filteredObservations.value) {
     const payload = observation.payload ?? {};
     const room = payload.room;
     if (!room) continue;
@@ -336,6 +368,19 @@ function metricValue(reading: AnyRecord, metric: string): string {
   if (value === undefined || value === null || value === "") return "--";
   const unit = reading.units?.[metric] ?? (metric === "temperature" ? "°C" : metric === "humidity" ? "%" : "");
   return `${value}${unit}`;
+}
+
+function clearDashboardDisplay() {
+  const value = new Date().toISOString();
+  clearedAt.value = value;
+  localStorage.setItem("dashboardClearedAt", value);
+  clearNotice.value = "已清空当前屏幕，等待新数据进入";
+}
+
+function restoreDashboardDisplay() {
+  clearedAt.value = null;
+  localStorage.removeItem("dashboardClearedAt");
+  clearNotice.value = "";
 }
 
 function deviceOnline(reading: AnyRecord): boolean {
@@ -385,17 +430,28 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
     <header>
       <div>
         <h1>居家老人健康守护 v2</h1>
-        <p>最近更新 {{ lastUpdated || "--" }} · 北京时间<span v-if="loadError" class="error"> · {{ loadError }}</span></p>
+        <p>
+          最近更新 {{ lastUpdated || "--" }} · 北京时间
+          <span v-if="isCleared"> · 已清屏 {{ formatTime(clearedAt || undefined) }}</span>
+          <span v-if="loadError" class="error"> · {{ loadError }}</span>
+        </p>
       </div>
-      <strong :class="state.current_risk_level">{{ state.current_risk_level }}</strong>
+      <div class="header-actions">
+        <button type="button" @click="clearDashboardDisplay">清空当前显示</button>
+        <button type="button" :disabled="!isCleared" @click="restoreDashboardDisplay">恢复显示全部</button>
+        <strong :class="latestEvent?.final_risk_level ?? state.current_risk_level">
+          {{ latestEvent?.final_risk_level ?? (isCleared ? "P4" : state.current_risk_level) }}
+        </strong>
+      </div>
     </header>
+    <p v-if="isCleared || clearNotice" class="clear-notice">{{ clearNotice || "已清空当前屏幕，等待新数据进入" }}</p>
 
     <section class="metrics">
       <article><span>老人 ID</span><b>{{ state.elder_id }}</b></article>
       <article><span>规则风险</span><b>{{ latestEvent?.rule_risk_level ?? "P4" }}</b></article>
       <article><span>本地模型</span><b>{{ latestEvent?.local_risk_level ?? "--" }}</b></article>
       <article><span>云端复核</span><b>{{ latestEvent?.cloud_risk_level ?? "--" }}</b></article>
-      <article><span>最终风险</span><b>{{ latestEvent?.final_risk_level ?? state.current_risk_level }}</b></article>
+      <article><span>最终风险</span><b>{{ latestEvent?.final_risk_level ?? (isCleared ? "P4" : state.current_risk_level) }}</b></article>
       <article><span>决策来源</span><b>{{ latestEvent?.decision_source ?? "rule" }}</b></article>
     </section>
 

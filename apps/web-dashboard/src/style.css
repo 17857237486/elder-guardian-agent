@@ -6,9 +6,14 @@ header { display: flex; align-items: center; justify-content: space-between; mar
 header h1 { font-size: 28px; }
 header p { margin-top: 7px; color: #687284; }
 .error { color: #b42318; font-weight: 700; }
-header > strong { min-width: 88px; padding: 14px 18px; border-radius: 8px; text-align: center; color: #fff; background: #118443; }
-header > strong.P0, header > strong.P1 { background: #c2410c; }
-header > strong.P2, header > strong.P3 { background: #b7791f; }
+.header-actions { display: flex; align-items: center; gap: 10px; }
+.header-actions button { height: 38px; padding: 0 13px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; color: #263246; font: inherit; font-weight: 700; cursor: pointer; }
+.header-actions button:hover:not(:disabled) { border-color: #1976b9; color: #125f93; }
+.header-actions button:disabled { cursor: not-allowed; opacity: 0.5; }
+.header-actions > strong { min-width: 88px; padding: 14px 18px; border-radius: 8px; text-align: center; color: #fff; background: #118443; }
+.header-actions > strong.P0, .header-actions > strong.P1 { background: #c2410c; }
+.header-actions > strong.P2, .header-actions > strong.P3 { background: #b7791f; }
+.clear-notice { margin: -6px 0 14px; padding: 10px 12px; border: 1px solid #bfdbfe; border-radius: 8px; background: #eff6ff; color: #175cd3; font-weight: 700; }
 .metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
 .metrics article, .panel { background: #fff; border: 1px solid #dfe5ec; border-radius: 9px; }
 .metrics article { padding: 14px; }
@@ -67,6 +72,8 @@ li small { display: block; margin-top: 5px; color: #1f5f8b; font-weight: 700; }
 @media (max-width: 760px) {
   .dashboard { padding: 16px; }
   header, .local-semantics, .demo-head { align-items: flex-start; flex-direction: column; }
+  .header-actions { align-items: stretch; flex-wrap: wrap; width: 100%; }
+  .header-actions button { flex: 1 1 140px; }
   .demo-head p { text-align: left; }
   .demo-steps { grid-template-columns: 1fr; }
   .demo-steps li { min-height: auto; }

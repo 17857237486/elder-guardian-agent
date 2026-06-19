@@ -41,6 +41,29 @@ button {
   font-weight: 700;
 }
 
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.topbar-right button {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid rgba(49, 64, 82, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #314052;
+  font-size: 18px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.topbar-right button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .network-message {
   position: fixed;
   top: 86px;
@@ -120,6 +143,22 @@ button {
 @media (max-width: 760px) {
   .screen {
     padding: 20px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .topbar-right {
+    align-items: stretch;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .topbar-right button {
+    flex: 1 1 140px;
   }
 
   .actions {

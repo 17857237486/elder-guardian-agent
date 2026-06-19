@@ -8,17 +8,45 @@ const initialLoading = ref(true);
 const refreshing = ref(false);
 const submitting = ref(false);
 const networkMessage = ref("");
+const clearMessage = ref("");
+const clearedAt = ref<string | null>(localStorage.getItem("hmiClearedAt"));
 let refreshTimer: number | undefined;
 
-const currentEvent = computed(() => state.events?.[0] ?? null);
-const currentPrompt = computed(() => state.current_hmi_prompt?.status === "waiting" ? state.current_hmi_prompt : null);
+const isCleared = computed(() => Boolean(clearedAt.value));
+
+function itemTimestamp(item?: AnyRecord | null): string {
+  if (!item) return "";
+  return item.completed_at ?? item.responded_at ?? item.updated_at ?? item.created_at ?? item.observed_at ?? "";
+}
+
+function isAfterClearTime(item?: AnyRecord | null): boolean {
+  if (!clearedAt.value) return true;
+  const timestamp = itemTimestamp(item);
+  if (!timestamp) return false;
+  return new Date(timestamp).getTime() > new Date(clearedAt.value).getTime();
+}
+
+const rawWaitingPrompt = computed(() => state.current_hmi_prompt?.status === "waiting" ? state.current_hmi_prompt : null);
+const currentEvent = computed(() => (state.events ?? []).find((event: AnyRecord) => isAfterClearTime(event)) ?? null);
+const currentPrompt = computed(() => rawWaitingPrompt.value ?? null);
+const visibleRiskLevel = computed(() => {
+  if (currentPrompt.value) return String(currentPrompt.value.risk_level ?? state.current_risk_level);
+  if (currentEvent.value) return String(currentEvent.value.final_risk_level ?? currentEvent.value.risk_level ?? state.current_risk_level);
+  if (isCleared.value && ["P0", "P1"].includes(String(state.current_risk_level ?? ""))) return String(state.current_risk_level);
+  return isCleared.value ? "P4" : String(state.current_risk_level ?? "P4");
+});
 const statusText = computed(() => {
-  if (state.current_risk_level === "P0" || state.current_risk_level === "P1") return "告警";
-  if (state.current_risk_level === "P2" || state.current_risk_level === "P3") return "注意";
+  if (visibleRiskLevel.value === "P0" || visibleRiskLevel.value === "P1") return "告警";
+  if (visibleRiskLevel.value === "P2" || visibleRiskLevel.value === "P3") return "注意";
   return "正常";
 });
 const statusClass = computed(() => statusText.value === "告警" ? "danger" : statusText.value === "注意" ? "warning" : "normal");
-const systemText = computed(() => currentPrompt.value?.message ?? currentEvent.value?.summary ?? "系统正常守护中");
+const systemText = computed(() => {
+  if (currentPrompt.value?.message) return currentPrompt.value.message;
+  if (currentEvent.value?.summary) return currentEvent.value.summary;
+  if (isCleared.value && ["P0", "P1"].includes(String(state.current_risk_level ?? ""))) return "存在高风险事件，请注意安全";
+  return "系统正常守护中";
+});
 
 async function loadState(options: { initial?: boolean } = {}) {
   if (refreshing.value) return;
@@ -66,6 +94,20 @@ async function respond(responseType: "safe" | "help" | "contact_family", respons
   }
 }
 
+function clearHmiDisplay() {
+  const value = new Date().toISOString();
+  clearedAt.value = value;
+  localStorage.setItem("hmiClearedAt", value);
+  networkMessage.value = "";
+  clearMessage.value = rawWaitingPrompt.value ? "已清除旧提示，当前待确认提示仍会保留" : "已清空提示，系统正常守护中";
+}
+
+function restoreHmiDisplay() {
+  clearedAt.value = null;
+  localStorage.removeItem("hmiClearedAt");
+  clearMessage.value = "";
+}
+
 function scheduleRefresh() {
   refreshTimer = window.setTimeout(async () => {
     await loadState();
@@ -84,10 +126,15 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
   <main class="screen" :class="statusClass">
     <section class="topbar">
       <span>居家健康守护 v2</span>
-      <span>{{ initialLoading ? "正在连接" : submitting ? "正在提交反馈" : "本地守护中" }}</span>
+      <div class="topbar-right">
+        <span>{{ initialLoading ? "正在连接" : submitting ? "正在提交反馈" : "本地守护中" }}</span>
+        <button type="button" @click="clearHmiDisplay">清空提示</button>
+        <button type="button" :disabled="!isCleared" @click="restoreHmiDisplay">恢复显示全部</button>
+      </div>
     </section>
 
     <p v-if="networkMessage" class="network-message">{{ networkMessage }}</p>
+    <p v-if="clearMessage" class="network-message">{{ clearMessage }}</p>
 
     <section class="status">
       <p>当前状态</p>
