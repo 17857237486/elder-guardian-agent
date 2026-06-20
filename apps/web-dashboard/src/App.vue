@@ -5,6 +5,7 @@ import { API_BASE } from "@elder-guardian/frontend-shared";
 type AnyRecord = Record<string, any>;
 type DemoNodeState = "idle" | "running" | "completed" | "skipped" | "failed";
 type DemoTarget = { kind: "event" | "candidate" | "normal_input"; id: string; item: AnyRecord } | null;
+type ObservationRiskHint = { event_type: string; risk_level: string; room?: string } | null;
 const DISPLAY_LIMIT = 10;
 const ROOM_ORDER = ["bedroom", "bathroom", "living_room", "kitchen"];
 const DEFAULT_HOME_ENV: Record<string, AnyRecord> = {
@@ -82,6 +83,52 @@ function latestInputObservationGroup(observation: AnyRecord | null): AnyRecord[]
     return !Number.isNaN(itemTime) && Math.abs(itemTime - timestamp) <= 5000;
   });
 }
+
+function numericPayloadValue(payload: AnyRecord, key: string): number | null {
+  const value = payload?.[key];
+  if (value === null || value === undefined || value === "") return null;
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function observationRiskHint(observation?: AnyRecord | null): ObservationRiskHint {
+  if (!observation) return null;
+  const kind = String(observation.kind ?? "").toLowerCase();
+  const payload = observation.payload && typeof observation.payload === "object" ? observation.payload : {};
+  const room = String(payload.room ?? observation.room ?? "");
+  if (kind === "environment") {
+    const gas = numericPayloadValue(payload, "gas_ppm");
+    const co2 = numericPayloadValue(payload, "co2_ppm");
+    const temperature = numericPayloadValue(payload, "temperature");
+    const humidity = numericPayloadValue(payload, "humidity");
+    if (gas !== null && gas >= 100) return { event_type: "gas_leak", risk_level: "P0", room };
+    if (co2 !== null && co2 >= 1500) return { event_type: "co2_high", risk_level: "P3", room };
+    if (temperature !== null && temperature >= 30) return { event_type: "temperature_high", risk_level: "P3", room };
+    if (temperature !== null && temperature <= 16) return { event_type: "temperature_low", risk_level: "P3", room };
+    if (humidity !== null && (humidity < 25 || humidity > 75)) return { event_type: "humidity_abnormal", risk_level: "P3", room };
+  }
+  if (kind === "vital") {
+    const spo2 = numericPayloadValue(payload, "spo2");
+    const heartRate = numericPayloadValue(payload, "heart_rate");
+    if (spo2 !== null && spo2 < 88) return { event_type: "spo2_low", risk_level: "P0", room };
+    if (spo2 !== null && spo2 < 92) return { event_type: "spo2_low", risk_level: "P1", room };
+    if (heartRate !== null && (heartRate < 45 || heartRate > 130)) return { event_type: "heart_rate_abnormal", risk_level: "P1", room };
+  }
+  return null;
+}
+
+function eventMatchesObservationRisk(event: AnyRecord | null, hint: ObservationRiskHint): boolean {
+  if (!event || !hint) return false;
+  const eventType = String(event.event_type ?? "");
+  const eventRisk = String(event.final_risk_level ?? event.risk_level ?? "");
+  const eventRoom = String(event.room ?? "");
+  return (
+    eventType === hint.event_type &&
+    eventRisk === hint.risk_level &&
+    (!hint.room || !eventRoom || eventRoom === hint.room)
+  );
+}
+
 const activeDemoTarget = computed<DemoTarget>(() => {
   const events = filteredEvents.value;
   const steps = filteredWorkflowSteps.value;
@@ -89,7 +136,25 @@ const activeDemoTarget = computed<DemoTarget>(() => {
   const latestObservation = latestInputObservation.value;
   const latestObservationTime = latestObservation ? new Date(eventTime(latestObservation)).getTime() : 0;
   const latestEventTime = latestEvent.value ? new Date(eventTime(latestEvent.value)).getTime() : 0;
-  if (latestObservation?.observation_id && latestObservationTime > latestEventTime) {
+  const latestObservationRisk = observationRiskHint(latestObservation);
+
+  const activeStates = new Set(["event_detected", "rule_classified", "action_planned", "ask_elder", "wait_response", "family_alert", "emergency_alert", "escalated"]);
+  const activeEvent = events.find((event) =>
+    ["P0", "P1", "P2"].includes(String(event.final_risk_level ?? event.risk_level ?? "")) &&
+    activeStates.has(String(event.state ?? "").toLowerCase())
+  );
+  if (activeEvent?.event_id) {
+    const activeEventTime = new Date(eventTime(activeEvent)).getTime();
+    if (latestObservationRisk || Number.isNaN(latestObservationTime) || activeEventTime >= latestObservationTime) {
+      return { kind: "event", id: String(activeEvent.event_id), item: activeEvent };
+    }
+  }
+
+  if (eventMatchesObservationRisk(latestEvent.value, latestObservationRisk)) {
+    return { kind: "event", id: String(latestEvent.value.event_id), item: latestEvent.value };
+  }
+
+  if (latestObservation?.observation_id && latestObservationTime > latestEventTime && !latestObservationRisk) {
     return {
       kind: "normal_input",
       id: String(latestObservation.observation_id),
@@ -103,13 +168,6 @@ const activeDemoTarget = computed<DemoTarget>(() => {
       }
     };
   }
-
-  const activeStates = new Set(["event_detected", "rule_classified", "action_planned", "ask_elder", "wait_response", "family_alert", "emergency_alert", "escalated"]);
-  const activeEvent = events.find((event) =>
-    ["P0", "P1", "P2"].includes(String(event.final_risk_level ?? event.risk_level ?? "")) &&
-    activeStates.has(String(event.state ?? "").toLowerCase())
-  );
-  if (activeEvent?.event_id) return { kind: "event", id: String(activeEvent.event_id), item: activeEvent };
 
   const workflowEvent = events.find((event) => steps.some((step) => step.event_id === event.event_id));
   if (workflowEvent?.event_id) return { kind: "event", id: String(workflowEvent.event_id), item: workflowEvent };
