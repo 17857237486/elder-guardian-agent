@@ -64,6 +64,7 @@ room_ac_temperature_targets: dict[str, float] = {}
 scenario_room_temperatures: dict[str, float] = {}
 downgraded_env_overrides: dict[str, dict[str, Any]] = {}
 scenario_task: asyncio.Task[None] | None = None
+FAST_SCENARIO_SAMPLE_DELAY_SEC = 0.1
 scenario_job: dict[str, Any] = {
     "run_id": None,
     "status": "idle",
@@ -647,6 +648,16 @@ async def sleep_until_next_sample(interval_sec: int) -> None:
         remaining -= step
 
 
+async def sleep_between_fast_samples() -> None:
+    remaining = FAST_SCENARIO_SAMPLE_DELAY_SEC
+    while remaining > 0:
+        if scenario_job["stop_requested"]:
+            return
+        step = min(0.05, remaining)
+        await asyncio.sleep(step)
+        remaining -= step
+
+
 async def run_scenario_job(request: ScenarioPublishRequest, samples: list[dict[str, Any]]) -> None:
     signal_published = False
     try:
@@ -660,8 +671,11 @@ async def run_scenario_job(request: ScenarioPublishRequest, samples: list[dict[s
                 scenario_job["published_messages"] += publish_risk_signal(request.event_type, request.elder_id, request.event_room)
                 signal_published = True
             scenario_job["sent_samples"] += 1
-            if request.realtime and index < len(samples) - 1:
-                await sleep_until_next_sample(request.interval_sec)
+            if index < len(samples) - 1:
+                if request.realtime:
+                    await sleep_until_next_sample(request.interval_sec)
+                else:
+                    await sleep_between_fast_samples()
         if scenario_job["status"] == "running":
             scenario_job["status"] = "completed"
     except Exception as exc:

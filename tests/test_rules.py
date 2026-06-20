@@ -11,6 +11,9 @@ sys.path.insert(0, str(ROOT / "packages" / "guardian-shared"))
 sys.path.insert(0, str(ROOT / "apps" / "guardian-orchestrator"))
 
 from app import rules
+from app.event_cooldown import P3EnvironmentCooldown
+from guardian_shared.enums import EventType, RiskLevel
+from guardian_shared.v2 import NormalizedEventV2
 
 
 class RuleTests(unittest.TestCase):
@@ -101,6 +104,56 @@ class RuleTests(unittest.TestCase):
             }
         )
         self.assertIsNone(event)
+
+    def test_p3_environment_cooldown_suppresses_same_room_duplicate(self) -> None:
+        now = 1000.0
+        cooldown = P3EnvironmentCooldown(120, clock=lambda: now)
+        event = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type="humidity_abnormal",
+            risk_level=RiskLevel.P3,
+            source_kind="environment",
+            room="living_room",
+        )
+
+        first = cooldown.check(event)
+        second = cooldown.check(event)
+
+        self.assertFalse(first.suppressed)
+        self.assertTrue(second.suppressed)
+        self.assertEqual(second.dedupe_key, "elder_001:humidity_abnormal:living_room")
+
+    def test_p3_environment_cooldown_is_per_room_and_expires(self) -> None:
+        clock = {"now": 1000.0}
+        cooldown = P3EnvironmentCooldown(120, clock=lambda: clock["now"])
+        living_room = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type="humidity_abnormal",
+            risk_level=RiskLevel.P3,
+            source_kind="environment",
+            room="living_room",
+        )
+        bedroom = living_room.model_copy(update={"room": "bedroom"})
+
+        self.assertFalse(cooldown.check(living_room).suppressed)
+        self.assertFalse(cooldown.check(bedroom).suppressed)
+        self.assertTrue(cooldown.check(living_room).suppressed)
+
+        clock["now"] = 1121.0
+        self.assertFalse(cooldown.check(living_room).suppressed)
+
+    def test_p3_environment_cooldown_does_not_suppress_p0_gas(self) -> None:
+        cooldown = P3EnvironmentCooldown(120, clock=lambda: 1000.0)
+        gas = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type=EventType.GAS_LEAK,
+            risk_level=RiskLevel.P0,
+            source_kind="environment",
+            room="kitchen",
+        )
+
+        self.assertFalse(cooldown.check(gas).suppressed)
+        self.assertFalse(cooldown.check(gas).suppressed)
 
 
 if __name__ == "__main__":

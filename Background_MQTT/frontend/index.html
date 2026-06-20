@@ -854,6 +854,7 @@
                 <input id="scenario-realtime" type="checkbox" />
                 <span>按真实时间发送</span>
               </label>
+              <span class="muted">未勾选时使用快速演示模式，每组约间隔 100ms。</span>
               <div class="scenario-action-right">
                 <button id="submit-scenario" class="primary" type="button">生成并发送风险事件时间轴</button>
                 <span id="scenario-submit-status" class="submit-status">等待选择风险事件</span>
@@ -1557,7 +1558,7 @@
         $("scenario-trigger-label").textContent = `第 ${triggerSecond} 秒`;
         setText(
           "scenario-method",
-          `生成 2 分钟基础 MQTT 数据，并在第 ${triggerSecond} 秒向 ${deviceLabel(eventRoom)} 注入 ${riskEventLabel(eventType)}；每 5 秒 1 组。`,
+          `生成 2 分钟基础 MQTT 数据，并在第 ${triggerSecond} 秒向 ${deviceLabel(eventRoom)} 注入 ${riskEventLabel(eventType)}；真实模式每 5 秒 1 组，快速演示模式每组约 100ms。`,
         );
         setText("scenario-event-room-note", `${deviceLabel(eventRoom)} (${eventRoom})`);
         setText("scenario-risk-level", riskLevelLabel(eventType));

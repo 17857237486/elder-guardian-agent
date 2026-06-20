@@ -7,12 +7,16 @@ from fastapi import FastAPI
 
 from guardian_shared.v2 import NormalizedEventV2
 
+from app.config import settings
+from app.event_cooldown import P3EnvironmentCooldown
 from app.rules import classify_observation
 from app.workflow import WorkflowRunner
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logger = logging.getLogger(__name__)
 
 runner = WorkflowRunner()
+p3_environment_cooldown = P3EnvironmentCooldown(settings.p3_environment_cooldown_sec)
 
 
 app = FastAPI(title="Elder Guardian Orchestrator", version="0.1.0")
@@ -41,6 +45,26 @@ async def handle_observation(observation: dict[str, Any]) -> dict[str, Any]:
             "confidence": max(event.confidence, event.risk_score, float(payload.get("confidence") or 0)),
         }
     )
+    cooldown = p3_environment_cooldown.check(event)
+    if cooldown.suppressed:
+        logger.info(
+            "suppressed duplicate P3 environment event",
+            extra={
+                "event_type": str(event.event_type),
+                "room": event.room,
+                "observation_id": observation.get("observation_id"),
+                "dedupe_key": cooldown.dedupe_key,
+                "remaining_sec": round(cooldown.remaining_sec, 3),
+            },
+        )
+        return {
+            "ok": True,
+            "triggered": False,
+            "suppressed": True,
+            "suppressed_reason": "p3_environment_cooldown",
+            "dedupe_key": cooldown.dedupe_key,
+            "remaining_sec": round(cooldown.remaining_sec, 3),
+        }
     result = await runner.run(event)
     return {"ok": True, "triggered": True, **result}
 

@@ -143,6 +143,8 @@ python Background_MQTT\generate_scenario_data.py --scene morning_getup --host lo
 
 这种方式会先生成 2 分钟基础 MQTT 数据，再在触发点前后向指定房间平滑注入风险事件。例如 `kitchen + 燃气异常 + 第 60 秒` 会让厨房燃气数据从低值逐步升高，并在触发点后超过 P0 阈值，而不是突然发送一条孤立异常值。
 
+未勾选 `按真实时间发送` 时，页面使用快速演示模式，每组数据约间隔 100ms 发布；勾选后按 `interval_sec` 的真实时间间隔发布。
+
 页面展示的 v2 处理链路为：
 
 ```text

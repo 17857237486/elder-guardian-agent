@@ -42,6 +42,7 @@ class Settings:
     cloud_llm_api_key: str
     cloud_llm_model: str
     cloud_llm_timeout_sec: int
+    p3_environment_cooldown_sec: int
 
 
 def get_settings() -> Settings:
@@ -65,6 +66,7 @@ def get_settings() -> Settings:
         cloud_llm_api_key=os.getenv("CLOUD_LLM_API_KEY", ""),
         cloud_llm_model=os.getenv("CLOUD_LLM_MODEL", ""),
         cloud_llm_timeout_sec=max(5, _env_int("CLOUD_LLM_TIMEOUT_SEC", 60)),
+        p3_environment_cooldown_sec=max(0, _env_int("P3_ENVIRONMENT_COOLDOWN_SEC", 120)),
     )
 
 
