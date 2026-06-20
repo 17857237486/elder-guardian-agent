@@ -799,17 +799,17 @@
             <div class="timeline-field">
               <label for="scenario-event">风险事件</label>
               <select id="scenario-event">
-                <option value="normal">正常状态</option>
-                <option value="spo2_critical">严重低血氧</option>
-                <option value="spo2_low">低血氧</option>
-                <option value="heart_rate_abnormal">心率异常</option>
-                <option value="suspected_fall">疑似跌倒</option>
-                <option value="long_static">长时间静止</option>
-                <option value="co2_high">CO2 偏高</option>
-                <option value="gas_leak" selected>燃气异常</option>
-                <option value="temperature_high">室温过高</option>
-                <option value="temperature_low">室温过低</option>
-                <option value="humidity_abnormal">湿度异常</option>
+                <option value="normal">P4 正常状态</option>
+                <option value="spo2_critical">P0 严重低血氧</option>
+                <option value="spo2_low">P1 低血氧</option>
+                <option value="heart_rate_abnormal">P1 心率异常</option>
+                <option value="suspected_fall">P1 疑似跌倒</option>
+                <option value="long_static">P2 长时间静止</option>
+                <option value="co2_high">P3 CO2 偏高</option>
+                <option value="gas_leak" selected>P0 燃气异常</option>
+                <option value="temperature_high">P3 室温过高</option>
+                <option value="temperature_low">P3 室温过低</option>
+                <option value="humidity_abnormal">P3 湿度异常</option>
               </select>
             </div>
             <div class="timeline-field">
@@ -842,6 +842,10 @@
               <span id="scenario-event-room-note">living_room</span>
             </div>
             <div class="scenario-summary-row">
+              <b>当前等级</b>
+              <span id="scenario-risk-level">P0 紧急风险</span>
+            </div>
+            <div class="scenario-summary-row">
               <b>预期触发</b>
               <span id="scenario-expected">燃气在触发点前后平滑升高，超过 100 ppm 后触发 gas_leak P0。</span>
             </div>
@@ -862,17 +866,17 @@
       <article class="panel">
         <h2>手动输入数据</h2>
         <div class="template-grid" aria-label="事件模板">
-          <button class="template-button active" type="button" data-template="normal">正常状态<br />P4 正常记录</button>
-          <button class="template-button" type="button" data-template="spo2_critical">严重低血氧<br />触发 P0 紧急风险</button>
-          <button class="template-button" type="button" data-template="spo2_low">低血氧<br />触发 P1 高风险</button>
-          <button class="template-button" type="button" data-template="heart_rate_abnormal">心率异常<br />触发本地询问</button>
-          <button class="template-button" type="button" data-template="suspected_fall">疑似跌倒<br />触发 P1 视觉事件</button>
-          <button class="template-button" type="button" data-template="long_static">长时间静止<br />触发 P2 视觉事件</button>
-          <button class="template-button" type="button" data-template="co2_high">CO2 偏高<br />触发通风建议</button>
-          <button class="template-button" type="button" data-template="gas_leak">燃气异常<br />触发 P0 告警</button>
-          <button class="template-button" type="button" data-template="temperature_high">室温过高<br />触发降温建议</button>
-          <button class="template-button" type="button" data-template="temperature_low">室温过低<br />触发升温建议</button>
-          <button class="template-button" type="button" data-template="humidity_abnormal">湿度异常<br />触发 P3 环境事件</button>
+          <button class="template-button active" type="button" data-template="normal">P4 正常状态<br />正常记录</button>
+          <button class="template-button" type="button" data-template="spo2_critical">P0 严重低血氧<br />紧急风险</button>
+          <button class="template-button" type="button" data-template="spo2_low">P1 低血氧<br />高风险确认</button>
+          <button class="template-button" type="button" data-template="heart_rate_abnormal">P1 心率异常<br />本地询问</button>
+          <button class="template-button" type="button" data-template="suspected_fall">P1 疑似跌倒<br />视觉事件</button>
+          <button class="template-button" type="button" data-template="long_static">P2 长时间静止<br />视觉事件</button>
+          <button class="template-button" type="button" data-template="co2_high">P3 CO2 偏高<br />通风建议</button>
+          <button class="template-button" type="button" data-template="gas_leak">P0 燃气异常<br />紧急告警</button>
+          <button class="template-button" type="button" data-template="temperature_high">P3 室温过高<br />降温建议</button>
+          <button class="template-button" type="button" data-template="temperature_low">P3 室温过低<br />升温建议</button>
+          <button class="template-button" type="button" data-template="humidity_abnormal">P3 湿度异常<br />环境事件</button>
         </div>
         <div class="template-note">
           <table>
@@ -1241,6 +1245,25 @@
         humidity_abnormal: "湿度在触发点前后升高，超过 75% 后触发 humidity_abnormal P3。",
       };
 
+      const riskLevelDescriptions = {
+        P0: "紧急风险",
+        P1: "高风险",
+        P2: "关注风险",
+        P3: "环境风险",
+        P4: "正常记录",
+      };
+
+      function riskEventLabel(eventType) {
+        const template = scenarioTemplates[eventType];
+        if (!template) return eventType;
+        return `${template.risk} ${template.name}`;
+      }
+
+      function riskLevelLabel(eventType) {
+        const risk = scenarioTemplates[eventType]?.risk ?? "--";
+        return `${risk} ${riskLevelDescriptions[risk] ?? ""}`.trim();
+      }
+
       const $ = (id) => document.getElementById(id);
 
       function formatTime(value) {
@@ -1382,7 +1405,7 @@
         const status = state.scenarioRunning ? "运行中" : "未运行";
         const triggerSecond = job.trigger_second ?? Number($("scenario-trigger")?.value ?? 60);
         $("current-scene-status").innerHTML = `
-          <div><span>当前风险事件</span><strong>${scenarioTemplates[eventType]?.name || eventType}</strong></div>
+          <div><span>当前风险事件</span><strong>${riskEventLabel(eventType)}</strong></div>
           <div><span>风险发生房间</span><strong>${deviceLabel(eventRoom)} (${eventRoom})</strong></div>
           <div><span>触发时间</span><strong>第 ${triggerSecond} 秒</strong></div>
           <div><span>发送状态</span><strong>${status}</strong></div>
@@ -1534,9 +1557,10 @@
         $("scenario-trigger-label").textContent = `第 ${triggerSecond} 秒`;
         setText(
           "scenario-method",
-          `生成 2 分钟基础 MQTT 数据，并在第 ${triggerSecond} 秒向 ${deviceLabel(eventRoom)} 注入 ${eventType} 风险事件；每 5 秒 1 组。`,
+          `生成 2 分钟基础 MQTT 数据，并在第 ${triggerSecond} 秒向 ${deviceLabel(eventRoom)} 注入 ${riskEventLabel(eventType)}；每 5 秒 1 组。`,
         );
         setText("scenario-event-room-note", `${deviceLabel(eventRoom)} (${eventRoom})`);
+        setText("scenario-risk-level", riskLevelLabel(eventType));
         setText("scenario-expected", eventExpectations[eventType]);
         setText("template-flow", V2_PROCESSING_FLOW);
         renderCurrentSceneStatus();
@@ -1616,7 +1640,7 @@
           button.classList.toggle("active", button.dataset.template === templateKey);
         });
 
-        setText("template-name", template.name);
+        setText("template-name", riskEventLabel(templateKey));
         setText("template-event", template.event);
         setText("template-risk", template.risk);
         setText("template-reason", template.reason);

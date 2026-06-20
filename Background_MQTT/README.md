@@ -15,17 +15,17 @@
 
 脚本支持的插入事件：
 
-- `normal`：正常状态
-- `spo2_critical`：严重低血氧，低于 88% 触发 P0
-- `spo2_low`：低血氧，88%-91% 触发 P1
-- `heart_rate_abnormal`：心率异常，高于 130 bpm 触发 P1
-- `suspected_fall`：疑似跌倒，发布视觉事件并触发 P1
-- `long_static`：长时间静止，发布视觉事件并触发 P2
-- `co2_high`：CO2 偏高，高于 1500 ppm 触发 P3
-- `gas_leak`：燃气异常，高于 100 ppm 触发 P0
-- `temperature_high`：室温过高，达到 30°C 及以上触发 P3
-- `temperature_low`：室温过低，达到 16°C 及以下触发 P3
-- `humidity_abnormal`：湿度低于 25% 或高于 75% 触发 P3
+- `normal`：P4 正常状态，只记录数据
+- `spo2_critical`：P0 严重低血氧，低于 88%
+- `spo2_low`：P1 低血氧，88%-91%
+- `heart_rate_abnormal`：P1 心率异常，高于 130 bpm
+- `suspected_fall`：P1 疑似跌倒，发布视觉事件
+- `long_static`：P2 长时间静止，发布视觉事件
+- `co2_high`：P3 CO2 偏高，高于 1500 ppm
+- `gas_leak`：P0 燃气异常，高于 100 ppm
+- `temperature_high`：P3 室温过高，达到 30°C 及以上
+- `temperature_low`：P3 室温过低，达到 16°C 及以下
+- `humidity_abnormal`：P3 湿度异常，低于 25% 或高于 75%
 
 默认采样策略：每 5 秒生成 1 条样本，每个场景 2 分钟共 24 条。每条样本会拆成两条主系统标准 MQTT 消息：
 
@@ -136,7 +136,7 @@ python Background_MQTT\generate_scenario_data.py --scene morning_getup --host lo
 
 网页还提供 `风险事件时间轴触发`：
 
-- 选择风险事件：`正常状态`、`严重低血氧`、`低血氧`、`心率异常`、`疑似跌倒`、`长时间静止`、`CO2 偏高`、`燃气异常`、`室温过高`、`室温过低`、`湿度异常`
+- 选择风险事件：下拉框会直接显示风险等级，例如 `P0 燃气异常`、`P1 心率异常`、`P3 CO2 偏高`、`P4 正常状态`
 - 选择风险发生房间：`bedroom`、`bathroom`、`living_room`、`kitchen`
 - 通过滑块选择触发时间，例如第 `60` 秒
 - 点击 `生成并发送风险事件时间轴`
