@@ -4,8 +4,15 @@ import { API_BASE } from "@elder-guardian/frontend-shared";
 
 type AnyRecord = Record<string, any>;
 type DemoNodeState = "idle" | "running" | "completed" | "skipped" | "failed";
-type DemoTarget = { kind: "event" | "candidate"; id: string; item: AnyRecord } | null;
+type DemoTarget = { kind: "event" | "candidate" | "normal_input"; id: string; item: AnyRecord } | null;
 const DISPLAY_LIMIT = 10;
+const ROOM_ORDER = ["bedroom", "bathroom", "living_room", "kitchen"];
+const DEFAULT_HOME_ENV: Record<string, AnyRecord> = {
+  bedroom: { room: "bedroom", temperature: 24.0, humidity: 50.0, co2_ppm: 820, gas_ppm: 0, smoke_ppm: 0, presence: false, is_default: true },
+  bathroom: { room: "bathroom", temperature: 24.0, humidity: 58.0, co2_ppm: 780, gas_ppm: 0, smoke_ppm: 0, presence: false, is_default: true },
+  living_room: { room: "living_room", temperature: 24.5, humidity: 49.0, co2_ppm: 850, gas_ppm: 0, smoke_ppm: 0, presence: false, is_default: true },
+  kitchen: { room: "kitchen", temperature: 25.0, humidity: 52.0, co2_ppm: 880, gas_ppm: 0, smoke_ppm: 0, presence: false, is_default: true }
+};
 const IMPORTANT_STEPS = new Set([
   "rule_gate",
   "frame_collection",
@@ -60,6 +67,21 @@ const filteredDeviceReadings = computed(() => ((state.device_readings_latest ?? 
 const filteredObservations = computed(() => ((state.observations ?? []) as AnyRecord[]).filter(isAfterClearTime));
 
 const latestEvent = computed(() => filteredEvents.value?.[0] ?? null);
+const latestInputObservation = computed(() =>
+  filteredObservations.value.find((observation: AnyRecord) =>
+    ["vital", "environment", "device_state"].includes(String(observation.kind ?? "").toLowerCase())
+  ) ?? null
+);
+function latestInputObservationGroup(observation: AnyRecord | null): AnyRecord[] {
+  if (!observation) return [];
+  const timestamp = new Date(eventTime(observation)).getTime();
+  if (Number.isNaN(timestamp)) return [observation];
+  return filteredObservations.value.filter((item: AnyRecord) => {
+    if (!["vital", "environment", "device_state"].includes(String(item.kind ?? "").toLowerCase())) return false;
+    const itemTime = new Date(eventTime(item)).getTime();
+    return !Number.isNaN(itemTime) && Math.abs(itemTime - timestamp) <= 5000;
+  });
+}
 const activeDemoTarget = computed<DemoTarget>(() => {
   const events = filteredEvents.value;
   const steps = filteredWorkflowSteps.value;
@@ -70,6 +92,24 @@ const activeDemoTarget = computed<DemoTarget>(() => {
     activeStates.has(String(event.state ?? "").toLowerCase())
   );
   if (activeEvent?.event_id) return { kind: "event", id: String(activeEvent.event_id), item: activeEvent };
+
+  const latestObservation = latestInputObservation.value;
+  const latestObservationTime = latestObservation ? new Date(eventTime(latestObservation)).getTime() : 0;
+  const latestEventTime = latestEvent.value ? new Date(eventTime(latestEvent.value)).getTime() : 0;
+  if (latestObservation?.observation_id && latestObservationTime > latestEventTime) {
+    return {
+      kind: "normal_input",
+      id: String(latestObservation.observation_id),
+      item: {
+        ...latestObservation,
+        event_type: "normal",
+        risk_level: "P4",
+        rule_risk_level: "P4",
+        final_risk_level: "P4",
+        decision_source: "rule"
+      }
+    };
+  }
 
   const workflowEvent = events.find((event) => steps.some((step) => step.event_id === event.event_id));
   if (workflowEvent?.event_id) return { kind: "event", id: String(workflowEvent.event_id), item: workflowEvent };
@@ -88,7 +128,11 @@ const latestLocalAnalysis = computed(() =>
       step.event_id === latestEvent.value?.event_id && step.step_name === "local_multiframe_analysis"
   ) ?? null
 );
+const isNormalInputDemo = computed(() => activeDemoTarget.value?.kind === "normal_input");
 const localSemanticStatus = computed(() => {
+  if (isNormalInputDemo.value) {
+    return { state: "completed", text: "P4 正常状态，无需本地模型" };
+  }
   const analysis = latestLocalAnalysis.value;
   if (analysis?.output?.reason === "deterministic_p3_rule") {
     return { state: "completed", text: "确定性规则处置，无需本地模型" };
@@ -139,6 +183,12 @@ function riskOf(item: AnyRecord): string {
   return String(item.final_risk_level ?? item.local_risk_level ?? item.rule_risk_level ?? item.risk_level ?? "--");
 }
 
+const summaryRisk = computed(() => (isNormalInputDemo.value ? "P4" : (latestEvent.value?.final_risk_level ?? (isCleared.value ? "P4" : state.current_risk_level))));
+const summaryRuleRisk = computed(() => (isNormalInputDemo.value ? "P4" : (latestEvent.value?.rule_risk_level ?? "P4")));
+const summaryLocalRisk = computed(() => (isNormalInputDemo.value ? "--" : (latestEvent.value?.local_risk_level ?? "--")));
+const summaryCloudRisk = computed(() => (isNormalInputDemo.value ? "--" : (latestEvent.value?.cloud_risk_level ?? "--")));
+const summaryDecisionSource = computed(() => (isNormalInputDemo.value ? "rule" : (latestEvent.value?.decision_source ?? "rule")));
+
 function nodeLabel(stateValue: DemoNodeState): string {
   return {
     idle: "未开始",
@@ -161,6 +211,7 @@ function stepState(step?: AnyRecord | null): DemoNodeState {
 
 function targetSteps(target: DemoTarget): AnyRecord[] {
   if (!target) return [];
+  if (target.kind === "normal_input") return [];
   return filteredWorkflowSteps.value.filter((step: AnyRecord) => step.event_id === target.id);
 }
 
@@ -170,6 +221,7 @@ function findTargetStep(target: DemoTarget, name: string): AnyRecord | null {
 
 function relatedItems(target: DemoTarget, key: string): AnyRecord[] {
   if (!target) return [];
+  if (target.kind === "normal_input") return [];
   const source: Record<string, AnyRecord[]> = {
     action_executions: filteredActionExecutions.value,
     hmi_prompts: filteredPrompts.value,
@@ -215,6 +267,9 @@ const demoTitle = computed(() => {
     const promoted = item.promoted_event_id ? ` · promoted ${item.promoted_event_id}` : "";
     return `当前演示：Candidate · ${item.candidate_type ?? "ai_review_candidate"} · ${item.status ?? "--"}${promoted}`;
   }
+  if (target.kind === "normal_input") {
+    return "当前演示：normal · P4 · 正常数据已记录";
+  }
   const item = target.item;
   const finalStep = findTargetStep(target, "final_advisory");
   const localStep = findTargetStep(target, "local_multiframe_analysis");
@@ -256,6 +311,63 @@ const demoNodes = computed(() => {
   const cloudOutput = cloudStep?.output ?? {};
   const hasHmi = Boolean(prompts.length || responses.length || alerts.length);
   const p12Waiting = ["P1", "P2"].includes(risk) && prompts.some((prompt) => String(prompt.status ?? "").toLowerCase() === "waiting");
+
+  if (target.kind === "normal_input") {
+    const group = latestInputObservationGroup(target.item);
+    const kinds = group.map((item) => item.kind).filter(Boolean).join(" / ") || target.item.kind || "observation";
+    const room = group.find((item) => item.kind === "environment")?.payload?.room ?? target.item.payload?.room ?? "--";
+    return [
+      {
+        key: "input",
+        name: "数据输入",
+        state: "completed" as DemoNodeState,
+        note: shortText(`收到正常 MQTT 数据：${kinds}`),
+        time: eventTime(target.item)
+      },
+      {
+        key: "edge",
+        name: "Edge MCP",
+        state: "completed" as DemoNodeState,
+        note: shortText(`已写入 v2_raw_observations · ${room}`),
+        time: eventTime(target.item)
+      },
+      {
+        key: "rule",
+        name: "规则判断",
+        state: "completed" as DemoNodeState,
+        note: "未命中风险规则，保持 P4",
+        time: eventTime(target.item)
+      },
+      {
+        key: "local",
+        name: "本地 AI / Candidate",
+        state: "skipped" as DemoNodeState,
+        note: "P4 正常状态，无需本地模型",
+        time: eventTime(target.item)
+      },
+      {
+        key: "cloud",
+        name: "云端复核",
+        state: "skipped" as DemoNodeState,
+        note: "P4 正常状态，无需云端复核",
+        time: eventTime(target.item)
+      },
+      {
+        key: "policy",
+        name: "设备策略",
+        state: "skipped" as DemoNodeState,
+        note: "无风险，不执行设备动作",
+        time: eventTime(target.item)
+      },
+      {
+        key: "hmi",
+        name: "HMI / 家属",
+        state: "skipped" as DemoNodeState,
+        note: "无需询问或告警",
+        time: eventTime(target.item)
+      }
+    ];
+  }
 
   return [
     {
@@ -344,23 +456,26 @@ const latestContextFusion = computed(() =>
       step.event_id === latestEvent.value?.event_id && step.step_name === "local_context_fusion"
   ) ?? null
 );
-const localAiRoom = computed(() => latestContextFusion.value?.output?.elder_location?.current_room ?? "--");
+const normalInputRoom = computed(() =>
+  latestInputObservationGroup(activeDemoTarget.value?.kind === "normal_input" ? activeDemoTarget.value.item : null)
+    .find((item) => item.kind === "environment")?.payload?.room
+);
+const localAiRoom = computed(() => isNormalInputDemo.value ? (normalInputRoom.value ?? "--") : (latestContextFusion.value?.output?.elder_location?.current_room ?? "--"));
 const homeEnvironmentRooms = computed(() => {
-  const rooms = new Map<string, AnyRecord>();
+  const rooms = new Map<string, AnyRecord>(ROOM_ORDER.map((room) => [room, { ...DEFAULT_HOME_ENV[room] }]));
   for (const observation of filteredObservations.value) {
     const payload = observation.payload ?? {};
     const room = payload.room;
     if (!room) continue;
     const current = rooms.get(room) ?? { room };
     if (observation.kind === "environment") {
-      rooms.set(room, { ...current, ...payload, observed_at: observation.observed_at });
+      rooms.set(room, { ...current, ...payload, observed_at: observation.observed_at, is_default: false });
     }
-    if (observation.kind === "device_state" && payload.device === "pir_presence") {
-      rooms.set(room, { ...current, presence: payload.present, presence_state: payload.state, presence_at: observation.observed_at });
+    if (observation.kind === "device_state" && ["pir_presence", "presence_sensor"].includes(String(payload.device ?? ""))) {
+      rooms.set(room, { ...current, presence: payload.present, presence_state: payload.state, presence_at: observation.observed_at, is_default: false });
     }
   }
-  const order = ["bedroom", "bathroom", "living_room", "kitchen"];
-  return order.map((room) => rooms.get(room) ?? { room });
+  return ROOM_ORDER.map((room) => rooms.get(room) ?? { ...DEFAULT_HOME_ENV[room] });
 });
 
 function metricValue(reading: AnyRecord, metric: string): string {
@@ -393,6 +508,11 @@ function deviceOnline(reading: AnyRecord): boolean {
 function roomMetric(room: AnyRecord, metric: string, unit = ""): string {
   const value = room?.[metric];
   return value === undefined || value === null || value === "" ? "--" : `${value}${unit}`;
+}
+
+function roomTimeLabel(room: AnyRecord): string {
+  if (room.is_default) return "默认值";
+  return formatTime(room.observed_at ?? room.presence_at);
 }
 
 async function loadState() {
@@ -439,8 +559,8 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
       <div class="header-actions">
         <button type="button" @click="clearDashboardDisplay">清空当前显示</button>
         <button type="button" :disabled="!isCleared" @click="restoreDashboardDisplay">恢复显示全部</button>
-        <strong :class="latestEvent?.final_risk_level ?? state.current_risk_level">
-          {{ latestEvent?.final_risk_level ?? (isCleared ? "P4" : state.current_risk_level) }}
+        <strong :class="summaryRisk">
+          {{ summaryRisk }}
         </strong>
       </div>
     </header>
@@ -448,11 +568,11 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
 
     <section class="metrics">
       <article><span>老人 ID</span><b>{{ state.elder_id }}</b></article>
-      <article><span>规则风险</span><b>{{ latestEvent?.rule_risk_level ?? "P4" }}</b></article>
-      <article><span>本地模型</span><b>{{ latestEvent?.local_risk_level ?? "--" }}</b></article>
-      <article><span>云端复核</span><b>{{ latestEvent?.cloud_risk_level ?? "--" }}</b></article>
-      <article><span>最终风险</span><b>{{ latestEvent?.final_risk_level ?? (isCleared ? "P4" : state.current_risk_level) }}</b></article>
-      <article><span>决策来源</span><b>{{ latestEvent?.decision_source ?? "rule" }}</b></article>
+      <article><span>规则风险</span><b>{{ summaryRuleRisk }}</b></article>
+      <article><span>本地模型</span><b>{{ summaryLocalRisk }}</b></article>
+      <article><span>云端复核</span><b>{{ summaryCloudRisk }}</b></article>
+      <article><span>最终风险</span><b>{{ summaryRisk }}</b></article>
+      <article><span>决策来源</span><b>{{ summaryDecisionSource }}</b></article>
     </section>
 
     <section class="demo-overview">
@@ -477,7 +597,7 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
 
     <section class="local-semantics" :class="localSemanticStatus.state">
       <div><span>第二级：RK3588 本地模型事件语义</span><strong>{{ localSemanticStatus.text }}</strong></div>
-      <p>{{ latestEvent?.event_type ?? "暂无事件" }} · 本地风险 {{ latestEvent?.local_risk_level ?? "--" }} · AI房间 {{ localAiRoom }}</p>
+      <p>{{ isNormalInputDemo ? "normal" : (latestEvent?.event_type ?? "暂无事件") }} · 本地风险 {{ summaryLocalRisk }} · AI房间 {{ localAiRoom }}</p>
     </section>
 
     <section class="grid">
@@ -549,7 +669,7 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
           <li v-for="room in homeEnvironmentRooms" :key="room.room">
             <div class="row-head">
               <strong :class="room.presence ? 'online' : 'offline'">{{ room.presence ? "有人" : "无人" }}</strong>
-              <time>{{ formatTime(room.observed_at ?? room.presence_at) }}</time>
+              <time>{{ roomTimeLabel(room) }}</time>
             </div>
             <b>{{ room.room }}</b>
             <p>温度 {{ roomMetric(room, "temperature", "°C") }} · 湿度 {{ roomMetric(room, "humidity", "%") }} · CO2 {{ roomMetric(room, "co2_ppm", "ppm") }}</p>
