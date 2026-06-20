@@ -59,6 +59,7 @@ event_loop: asyncio.AbstractEventLoop | None = None
 record_counter = 0
 device_states: dict[str, dict[str, Any]] = {}
 device_log: deque[dict[str, Any]] = deque(maxlen=100)
+DEVICE_ACTION_LOG_TYPES = {"device_command", "manual_command"}
 room_env_states: dict[str, dict[str, Any]] = {}
 room_ac_temperature_targets: dict[str, float] = {}
 scenario_room_temperatures: dict[str, float] = {}
@@ -227,6 +228,10 @@ def append_device_log(event_type: str, data: dict[str, Any]) -> dict[str, Any]:
     entry = {"type": event_type, "timestamp": utc_now(), "data": data}
     device_log.appendleft(entry)
     return entry
+
+
+def visible_device_log() -> list[dict[str, Any]]:
+    return [item for item in device_log if item.get("type") in DEVICE_ACTION_LOG_TYPES]
 
 
 def upsert_device_state(data: dict[str, Any], *, log: bool = True) -> dict[str, Any]:
@@ -577,9 +582,9 @@ def handle_device_set(topic: str, payload: dict[str, Any]) -> None:
     ack = {"cmd_id": payload.get("cmd_id"), "status": "acked", "room": room, "device": device, "timestamp": utc_now()}
     publish_json(home_device_ack(room, device), ack)
     publish_json(home_device_state(room, device), state)
-    broadcast_from_mqtt({"type": "device_command", "data": command, "devices": sorted_devices(), "device_log": list(device_log)})
-    broadcast_from_mqtt({"type": "device_state", "data": updated, "devices": sorted_devices(), "device_log": list(device_log)})
-    broadcast_from_mqtt({"type": "device_ack", "data": ack, "devices": sorted_devices(), "device_log": list(device_log)})
+    broadcast_from_mqtt({"type": "device_command", "data": command, "devices": sorted_devices(), "device_log": visible_device_log()})
+    broadcast_from_mqtt({"type": "device_state", "data": updated, "devices": sorted_devices(), "device_log": visible_device_log()})
+    broadcast_from_mqtt({"type": "device_ack", "data": ack, "devices": sorted_devices(), "device_log": visible_device_log()})
 
 
 def handle_device_state(topic: str, payload: dict[str, Any]) -> None:
@@ -588,7 +593,7 @@ def handle_device_state(topic: str, payload: dict[str, Any]) -> None:
         payload.setdefault("room", parts[1])
         payload.setdefault("device", parts[2])
     updated = upsert_device_state(payload)
-    broadcast_from_mqtt({"type": "device_state", "data": updated, "devices": sorted_devices(), "device_log": list(device_log)})
+    broadcast_from_mqtt({"type": "device_state", "data": updated, "devices": sorted_devices(), "device_log": visible_device_log()})
 
 
 def handle_device_ack(topic: str, payload: dict[str, Any]) -> None:
@@ -598,7 +603,7 @@ def handle_device_ack(topic: str, payload: dict[str, Any]) -> None:
         payload.setdefault("device", parts[2])
     payload.setdefault("timestamp", utc_now())
     append_device_log("device_ack", payload)
-    broadcast_from_mqtt({"type": "device_ack", "data": payload, "devices": sorted_devices(), "device_log": list(device_log)})
+    broadcast_from_mqtt({"type": "device_ack", "data": payload, "devices": sorted_devices(), "device_log": visible_device_log()})
 
 
 def simulate_local_device_command(payload: dict[str, Any]) -> dict[str, Any]:
@@ -787,7 +792,7 @@ async def list_records(limit: int = 300) -> dict[str, Any]:
 @app.get("/api/devices")
 async def list_devices() -> dict[str, Any]:
     await sync_devices_from_guardian_core()
-    return {"devices": sorted_devices(), "device_log": list(device_log), "room_env": room_env_snapshot()}
+    return {"devices": sorted_devices(), "device_log": visible_device_log(), "room_env": room_env_snapshot()}
 
 
 @app.post("/api/device/command")
@@ -796,7 +801,7 @@ async def command_device(request: DeviceCommandRequest) -> dict[str, Any]:
     key = device_key(request.room, request.device)
     if key not in guardian_core_device_keys:
         result = simulate_local_device_command({**payload, "elder_id": ELDER_ID})
-        await broadcast({"type": "manual_command", "data": {"payload": payload, "result": result}, "devices": sorted_devices(), "device_log": list(device_log)})
+        await broadcast({"type": "manual_command", "data": {"payload": payload, "result": result}, "devices": sorted_devices(), "device_log": visible_device_log()})
         return result
     try:
         async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
@@ -806,10 +811,10 @@ async def command_device(request: DeviceCommandRequest) -> dict[str, Any]:
     except httpx.HTTPError as exc:
         error = {"message": "guardian-core command failed", "error": str(exc), "payload": payload}
         append_device_log("error", error)
-        await broadcast({"type": "device_error", "data": error, "devices": sorted_devices(), "device_log": list(device_log)})
+        await broadcast({"type": "device_error", "data": error, "devices": sorted_devices(), "device_log": visible_device_log()})
         raise HTTPException(status_code=502, detail=error)
     append_device_log("manual_command", {"payload": payload, "result": result})
-    await broadcast({"type": "manual_command", "data": {"payload": payload, "result": result}, "devices": sorted_devices(), "device_log": list(device_log)})
+    await broadcast({"type": "manual_command", "data": {"payload": payload, "result": result}, "devices": sorted_devices(), "device_log": visible_device_log()})
     return result
 
 
@@ -899,7 +904,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             "data": list(records)[:300],
             "total": len(records),
             "devices": sorted_devices(),
-            "device_log": list(device_log),
+            "device_log": visible_device_log(),
             "room_env": room_env_snapshot(),
         }
     )

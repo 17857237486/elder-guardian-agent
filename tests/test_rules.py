@@ -31,6 +31,19 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(str(event.event_type), "heart_rate_abnormal")
         self.assertEqual(str(event.risk_level), "P1")
 
+    def test_mild_heart_rate_variation_does_not_create_fixed_p2_event(self) -> None:
+        for heart_rate in (50, 115):
+            event = rules.classify_observation(
+                {
+                    "observation_id": f"obs-heart-rate-{heart_rate}",
+                    "elder_id": "elder_001",
+                    "kind": "vital",
+                    "payload": {"room": "living_room", "heart_rate": heart_rate, "spo2": 96},
+                    "observed_at": datetime(2026, 6, 14, 15, 30, tzinfo=timezone.utc).isoformat(),
+                }
+            )
+            self.assertIsNone(event)
+
     def test_abnormal_humidity_is_screened_at_level_one(self) -> None:
         event = rules.classify_observation(
             {

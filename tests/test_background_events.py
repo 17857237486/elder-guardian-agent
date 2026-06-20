@@ -19,7 +19,7 @@ sys.modules.setdefault("paho", paho)
 sys.modules.setdefault("paho.mqtt", paho_mqtt)
 sys.modules.setdefault("paho.mqtt.client", paho_client)
 
-from Background_MQTT.generate_scenario_data import EVENT_LABELS, build_event_samples
+from Background_MQTT.generate_scenario_data import EVENT_LABELS, build_event_samples, classify_hint
 
 
 EXPECTED_EVENTS = {
@@ -62,6 +62,20 @@ class BackgroundEventTests(unittest.TestCase):
         self.assertEqual(sample["vital"]["heart_rate"], 138)
         self.assertGreaterEqual(sample["vital"]["spo2"], 92)
         self.assertEqual(sample["risk_hint"]["level"], "P1")
+
+    def test_mild_heart_rate_variation_is_record_only_in_scenario_hint(self) -> None:
+        env = {"gas_ppm": 0, "co2_ppm": 800, "temperature": 24}
+        for heart_rate in (50, 115):
+            with self.subTest(heart_rate=heart_rate):
+                hint = classify_hint("dinner", heart_rate, 96, env, "walking")
+                self.assertEqual(hint["level"], "P4")
+
+    def test_device_log_is_filtered_to_actions(self) -> None:
+        backend = (ROOT / "Background_MQTT" / "backend.py").read_text(encoding="utf-8")
+        html = (ROOT / "Background_MQTT" / "frontend" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('DEVICE_ACTION_LOG_TYPES = {"device_command", "manual_command"}', backend)
+        self.assertIn("visible_device_log()", backend)
+        self.assertIn('new Set(["device_command", "manual_command"])', html)
 
 
 if __name__ == "__main__":

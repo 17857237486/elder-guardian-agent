@@ -940,7 +940,7 @@
             <div class="rule-hints">
               <h4>规则提示</h4>
               <div class="hint-grid">
-                <div class="hint-item"><strong>心率 heart_rate</strong><span>55-110 bpm：正常；&lt;55 或 &gt;110：P2；&lt;45 或 &gt;130：P1。</span></div>
+                <div class="hint-item"><strong>心率 heart_rate</strong><span>&lt;45 或 &gt;130：P1；轻度波动只记录，后续可进入个人基线候选分析。</span></div>
                 <div class="hint-item"><strong>血氧 spo2</strong><span>&ge;92%：正常；&lt;92%：P1；&lt;88%：P0 紧急风险。</span></div>
                 <div class="hint-item"><strong>血压</strong><span>当前主系统只记录展示，暂不参与规则分级。</span></div>
                 <div class="hint-item"><strong>体温</strong><span>当前主系统只记录展示，暂不参与规则分级。</span></div>
@@ -1121,6 +1121,7 @@
       };
 
       const roomOrder = ["bedroom", "kitchen", "living_room", "bathroom"];
+      const deviceActionLogTypes = new Set(["device_command", "manual_command"]);
 
       const deviceLabels = {
         bedroom: "Bedroom",
@@ -1414,7 +1415,7 @@
       }
 
       function setDeviceLog(log) {
-        state.deviceLog = log ?? [];
+        state.deviceLog = (log ?? []).filter((item) => deviceActionLogTypes.has(item?.type));
         renderDeviceLog();
       }
 
@@ -1499,10 +1500,12 @@
       }
 
       function renderDeviceLog() {
-        $("device-log").innerHTML = state.deviceLog
-          .slice(0, 80)
+        const actionLogs = state.deviceLog.filter((item) => deviceActionLogTypes.has(item?.type)).slice(0, 80);
+        $("device-log").innerHTML = actionLogs.length
+          ? actionLogs
           .map((item) => `<div class="device-log-item ${item.type}">${formatTime(item.timestamp)} ${describeDeviceLog(item)}</div>`)
-          .join("");
+          .join("")
+          : `<div class="empty">No device actions yet.</div>`;
       }
 
       async function commandDevice(room, device, action, value = null) {

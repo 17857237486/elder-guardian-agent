@@ -27,7 +27,11 @@ DEFAULT_NIGHT_WAKE_P90 = 600
 DEFAULT_WAKE_COUNT_P90 = 2
 DEFAULT_BATHROOM_STAY_P90 = 480
 DEFAULT_HEART_RATE_P90 = 100
+DEFAULT_HEART_RATE_P10 = 60
 DEFAULT_SPO2_P10 = 94
+HEART_RATE_P1_LOW = 45
+HEART_RATE_P1_HIGH = 130
+SPO2_P1_LOW = 92
 
 
 def _parse_time(value: Any) -> datetime:
@@ -428,8 +432,11 @@ def build_candidates(
     night_p90 = float((baseline_map.get("night_routine", {}).get("metrics") or {}).get("night_wake_duration_p90_sec") or DEFAULT_NIGHT_WAKE_P90)
     night_count_p90 = float((baseline_map.get("night_routine", {}).get("metrics") or {}).get("night_wake_count_p90") or DEFAULT_WAKE_COUNT_P90)
     bathroom_p90 = float((baseline_map.get("bathroom_routine", {}).get("metrics") or {}).get("bathroom_stay_p90_sec") or DEFAULT_BATHROOM_STAY_P90)
-    heart_p90 = float((baseline_map.get("heart_rate_daily", {}).get("metrics") or {}).get("p90") or DEFAULT_HEART_RATE_P90)
-    spo2_p10 = float((baseline_map.get("spo2_daily", {}).get("metrics") or {}).get("p10") or DEFAULT_SPO2_P10)
+    heart_metrics = baseline_map.get("heart_rate_daily", {}).get("metrics") or {}
+    spo2_metrics = baseline_map.get("spo2_daily", {}).get("metrics") or {}
+    heart_p90 = float(heart_metrics.get("p90") or DEFAULT_HEART_RATE_P90)
+    heart_p10 = float(heart_metrics.get("p10") or DEFAULT_HEART_RATE_P10)
+    spo2_p10 = float(spo2_metrics.get("p10") or DEFAULT_SPO2_P10)
     candidates: list[AiReviewCandidateV2] = []
     night_wakes_by_night: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for segment in segments:
@@ -486,12 +493,89 @@ def build_candidates(
                         features={"dedupe_key": key, "duration_seconds": segment.get("duration_seconds"), "baseline_p90_seconds": bathroom_p90, "segment": segment},
                     )
                 )
-        if segment.get("segment_type") == "heart_rate_window" and float(features.get("p90") or 0) > heart_p90:
+        if False and segment.get("segment_type") == "heart_rate_window" and float(features.get("p90") or 0) > heart_p90:
             key = f"vital_baseline_anomaly:{segment_id}"
             if key not in existing_keys:
                 candidates.append(AiReviewCandidateV2(elder_id=elder_id, candidate_type="vital_baseline_anomaly", reason="心率窗口高于个人90分位", source_segment_ids=[segment_id], features={"dedupe_key": key, "segment": segment, "baseline_p90": heart_p90}))
-        if segment.get("segment_type") == "spo2_window" and float(features.get("p10") or 100) < spo2_p10:
+        if False and segment.get("segment_type") == "spo2_window" and float(features.get("p10") or 100) < spo2_p10:
             key = f"vital_baseline_anomaly:{segment_id}"
             if key not in existing_keys:
                 candidates.append(AiReviewCandidateV2(elder_id=elder_id, candidate_type="vital_baseline_anomaly", reason="血氧窗口低于个人10分位", source_segment_ids=[segment_id], features={"dedupe_key": key, "segment": segment, "baseline_p10": spo2_p10}))
+        if segment.get("segment_type") == "heart_rate_window":
+            min_value = float(features.get("min") or 0)
+            max_value = float(features.get("max") or 0)
+            if max_value <= HEART_RATE_P1_HIGH and float(features.get("p90") or 0) > heart_p90:
+                key = f"vital_baseline_anomaly:{segment_id}:heart_rate:high"
+                if key not in existing_keys:
+                    candidates.append(
+                        AiReviewCandidateV2(
+                            elder_id=elder_id,
+                            candidate_type="vital_baseline_anomaly",
+                            reason="heart rate window above personal p90",
+                            source_segment_ids=[segment_id],
+                            features=_vital_candidate_features(segment, "heart_rate", "high", key, baseline_p90=heart_p90),
+                        )
+                    )
+            if min_value >= HEART_RATE_P1_LOW and float(features.get("p10") or 999) < heart_p10:
+                key = f"vital_baseline_anomaly:{segment_id}:heart_rate:low"
+                if key not in existing_keys:
+                    candidates.append(
+                        AiReviewCandidateV2(
+                            elder_id=elder_id,
+                            candidate_type="vital_baseline_anomaly",
+                            reason="heart rate window below personal p10",
+                            source_segment_ids=[segment_id],
+                            features=_vital_candidate_features(segment, "heart_rate", "low", key, baseline_p10=heart_p10),
+                        )
+                    )
+        if segment.get("segment_type") == "spo2_window":
+            min_value = float(features.get("min") or 100)
+            if min_value >= SPO2_P1_LOW and float(features.get("p10") or 100) < spo2_p10:
+                key = f"vital_baseline_anomaly:{segment_id}:spo2:low"
+                if key not in existing_keys:
+                    candidates.append(
+                        AiReviewCandidateV2(
+                            elder_id=elder_id,
+                            candidate_type="vital_baseline_anomaly",
+                            reason="spo2 window below personal p10",
+                            source_segment_ids=[segment_id],
+                            features=_vital_candidate_features(segment, "spo2", "low", key, baseline_p10=spo2_p10),
+                        )
+                    )
     return candidates
+
+
+def _vital_candidate_features(
+    segment: dict[str, Any],
+    metric: str,
+    direction: str,
+    dedupe_key: str,
+    *,
+    baseline_p90: float | None = None,
+    baseline_p10: float | None = None,
+) -> dict[str, Any]:
+    features = segment.get("features") if isinstance(segment.get("features"), dict) else {}
+    summary = {
+        "segment_id": segment.get("segment_id"),
+        "segment_type": segment.get("segment_type"),
+        "start_at": segment.get("start_at"),
+        "end_at": segment.get("end_at"),
+    }
+    result = {
+        "dedupe_key": dedupe_key,
+        "metric": metric,
+        "direction": direction,
+        "latest_value": features.get("latest_value"),
+        "min": features.get("min"),
+        "max": features.get("max"),
+        "p10": features.get("p10"),
+        "p90": features.get("p90"),
+        "sample_count": features.get("sample_count"),
+        "window_seconds": segment.get("duration_seconds") or WINDOW_SECONDS,
+        "segment_summary": {key: value for key, value in summary.items() if value is not None},
+    }
+    if baseline_p90 is not None:
+        result["baseline_p90"] = baseline_p90
+    if baseline_p10 is not None:
+        result["baseline_p10"] = baseline_p10
+    return {key: value for key, value in result.items() if value is not None}

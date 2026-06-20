@@ -294,8 +294,6 @@ def classify_hint(scene: str, heart_rate: int, spo2: int, env: dict[str, Any], m
         return {"level": "P1", "reason": "血氧明显偏低。"}
     if heart_rate < 45 or heart_rate > 130:
         return {"level": "P1", "reason": "心率明显异常。"}
-    if heart_rate < 55 or heart_rate > 110:
-        return {"level": "P2", "reason": "心率轻度异常，建议询问老人状态。"}
     if env["co2_ppm"] >= 1500:
         return {"level": "P3", "reason": "CO2 偏高，建议通风。"}
     if env["temperature"] >= 30:

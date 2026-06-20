@@ -117,7 +117,7 @@ python Background_MQTT\generate_scenario_data.py --scene morning_getup --host lo
 
 手动录入页面会展示当前 v2 真实生效的阈值：
 
-- 心率：55-110 bpm 正常；低于 55 或高于 110 触发 P2；低于 45 或高于 130 触发 P1
+- 心率：低于 45 或高于 130 触发 P1；轻度波动只记录，后续可进入个人基线候选分析
 - 血氧：大于等于 92% 正常；低于 92% 触发 P1；低于 88% 触发 P0
 - CO2：低于 1500 ppm 正常；大于等于 1500 ppm 触发 P3
 - 燃气：低于 100 ppm 正常；大于等于 100 ppm 触发 P0

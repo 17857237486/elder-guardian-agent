@@ -162,3 +162,36 @@ local_multiframe_analysis.output.latency_ms <= 35000
 ```
 
 如果 `queue_wait_ms` 大于 0，说明串行队列正在保护本地模型；这不计入单次推理耗时。
+# Mild Vital Candidate Input
+
+轻度生命体征 candidate 使用同一个 `vital_baseline_anomaly` 类型，但 `candidate_local_input` 会用短字段区分指标和方向：
+
+```json
+{
+  "candidate_local_input": {
+    "t": "vital_baseline_anomaly",
+    "r": "heart rate window above personal p90",
+    "metric": "heart_rate",
+    "dir": "high",
+    "latest": 115,
+    "min": 112,
+    "max": 116,
+    "p90": 116,
+    "bp90": 100,
+    "n": 6,
+    "win_s": 300,
+    "hr": 115,
+    "spo2": 96
+  }
+}
+```
+
+字段说明：
+
+- `metric`: `heart_rate` 或 `spo2`。
+- `dir`: `high` 或 `low`。
+- `p10/p90`: 当前 5 分钟窗口分位数。
+- `bp10/bp90`: 个人基线分位数。
+- `latest/min/max/n/win_s`: 最新值、窗口极值、样本数和窗口秒数。
+
+硬规则数据不会进入轻度 candidate：心率 `<45` 或 `>130`、血氧 `<92` 仍由正式风险事件链路处理。

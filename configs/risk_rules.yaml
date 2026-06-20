@@ -3,8 +3,6 @@ vital:
   spo2_p1_below: 92
   heart_rate_p1_low: 45
   heart_rate_p1_high: 130
-  heart_rate_p2_low: 55
-  heart_rate_p2_high: 110
 environment:
   co2_p3_above: 1500
   temperature_high_above: 30

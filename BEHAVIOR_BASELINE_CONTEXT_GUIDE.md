@@ -233,3 +233,81 @@ curl "http://192.168.10.64:8010/api/v2/workflow-steps?elder_id=elder_001&limit=2
 如果 AI 判断低风险，应看到 candidate `status=dismissed`。
 
 如果 AI 判断 `P2/P1/P0`，应看到 candidate `status=promoted`，并带有 `promoted_event_id`。
+## 11. Mild Vital Candidate
+
+轻度心率和轻度血氧不会直接生成正式风险事件。它们先进入 `vital_baseline_anomaly` candidate：
+
+- 心率高：5 分钟 `heart_rate_window.p90` 高于个人 `heart_rate_daily.p90`，且窗口最大值 `<=130`。
+- 心率低：5 分钟 `heart_rate_window.p10` 低于个人 `heart_rate_daily.p10`，且窗口最小值 `>=45`。
+- 血氧低：5 分钟 `spo2_window.p10` 低于个人 `spo2_daily.p10`，且窗口最小值 `>=92`。
+
+硬规则仍优先：
+
+- 心率 `<45` 或 `>130` 直接进入 `heart_rate_abnormal P1`。
+- 血氧 `<92` 直接进入正式血氧风险事件，其中 `<88` 为 P0。
+
+手动设置生命体征基线：
+
+```bash
+curl -X POST http://192.168.10.64:8010/api/v2/personal-baselines \
+  -H "Content-Type: application/json" \
+  -d '{
+    "elder_id": "elder_001",
+    "baseline_type": "heart_rate_daily",
+    "quality": "stable",
+    "sample_count": 20,
+    "metrics": {"p10": 58, "p50": 76, "p90": 100}
+  }'
+
+curl -X POST http://192.168.10.64:8010/api/v2/personal-baselines \
+  -H "Content-Type: application/json" \
+  -d '{
+    "elder_id": "elder_001",
+    "baseline_type": "spo2_daily",
+    "quality": "stable",
+    "sample_count": 20,
+    "metrics": {"p10": 95, "p50": 96, "p90": 98}
+  }'
+```
+
+模拟轻度心率偏高：
+
+```bash
+for i in 1 2 3 4 5 6; do
+  mosquitto_pub -h 192.168.10.64 -p 1883 \
+    -t elder/elder_001/sensor/vital \
+    -m '{"elder_id":"elder_001","heart_rate":115,"spo2":96}'
+  sleep 1
+done
+```
+
+模拟轻度心率偏低：
+
+```bash
+for i in 1 2 3 4 5 6; do
+  mosquitto_pub -h 192.168.10.64 -p 1883 \
+    -t elder/elder_001/sensor/vital \
+    -m '{"elder_id":"elder_001","heart_rate":50,"spo2":96}'
+  sleep 1
+done
+```
+
+模拟轻度血氧下降：
+
+```bash
+for i in 1 2 3 4 5 6; do
+  mosquitto_pub -h 192.168.10.64 -p 1883 \
+    -t elder/elder_001/sensor/vital \
+    -m '{"elder_id":"elder_001","heart_rate":78,"spo2":94}'
+  sleep 1
+done
+```
+
+等待 worker 后查看：
+
+```bash
+curl "http://192.168.10.64:8010/api/v2/behavior-segments?elder_id=elder_001&limit=20"
+curl "http://192.168.10.64:8010/api/v2/ai-review-candidates?elder_id=elder_001&limit=20"
+```
+
+预期 candidate `features` 包含 `metric`、`direction`、`latest_value`、`p10/p90`、`baseline_p10/baseline_p90`、`sample_count` 和 `window_seconds`。

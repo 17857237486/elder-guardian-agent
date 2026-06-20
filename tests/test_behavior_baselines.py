@@ -177,6 +177,63 @@ class BehaviorBaselineTests(unittest.TestCase):
         result = run_edge_script(script)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_mild_vital_baseline_anomalies_create_candidates_without_hard_rule_duplicates(self) -> None:
+        script = textwrap.dedent(
+            """
+            from datetime import datetime, timedelta, timezone
+
+            from app.behavior_worker import build_candidates, build_vital_segments
+
+            elder_id = "elder_001"
+            base = datetime(2026, 6, 20, 9, 0, tzinfo=timezone.utc)
+
+            def obs(obs_id, seconds, heart_rate, spo2):
+                return {
+                    "observation_id": obs_id,
+                    "elder_id": elder_id,
+                    "kind": "vital",
+                    "payload": {"heart_rate": heart_rate, "spo2": spo2},
+                    "observed_at": (base + timedelta(seconds=seconds)).isoformat(),
+                }
+
+            observations = []
+            for index in range(6):
+                observations.append(obs(f"hr_high_{index}", index * 10, 115, 96))
+                observations.append(obs(f"hr_low_{index}", 300 + index * 10, 50, 96))
+                observations.append(obs(f"spo2_low_{index}", 600 + index * 10, 78, 94))
+                observations.append(obs(f"hard_hr_{index}", 900 + index * 10, 138, 96))
+                observations.append(obs(f"hard_spo2_{index}", 1200 + index * 10, 80, 90))
+
+            segments = [item.model_dump(mode="json") for item in build_vital_segments(observations)]
+            baselines = [
+                {"baseline_type": "heart_rate_daily", "metrics": {"p10": 58, "p90": 100}},
+                {"baseline_type": "spo2_daily", "metrics": {"p10": 95}},
+            ]
+            candidates = build_candidates(elder_id, segments, baselines, [], now=base + timedelta(hours=1))
+            vital_candidates = [item for item in candidates if item.candidate_type == "vital_baseline_anomaly"]
+            keys = {item.features["dedupe_key"] for item in vital_candidates}
+            features = {(item.features["metric"], item.features["direction"]) for item in vital_candidates}
+
+            assert ("heart_rate", "high") in features, features
+            assert ("heart_rate", "low") in features, features
+            assert ("spo2", "low") in features, features
+            assert all("hard_hr" not in key for key in keys), keys
+            assert all("hard_spo2" not in key for key in keys), keys
+            assert all("segment" not in item.features for item in vital_candidates), vital_candidates
+
+            repeated = build_candidates(
+                elder_id,
+                segments,
+                baselines,
+                [item.model_dump(mode="json") for item in vital_candidates],
+                now=base + timedelta(hours=1),
+            )
+            assert not [item for item in repeated if item.candidate_type == "vital_baseline_anomaly"], repeated
+            """
+        )
+        result = run_edge_script(script)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

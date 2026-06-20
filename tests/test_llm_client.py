@@ -956,11 +956,13 @@ class LLMClientParserTests(unittest.TestCase):
             "source_segment_ids": ["seg_hr"],
             "features": {
                 "dedupe_key": "very-long-key",
-                "segment": {
-                    "segment_id": "seg_hr",
-                    "segment_type": "heart_rate_window",
-                    "features": {"metric": "heart_rate", "latest_value": 104, "max": 106, "p90": 102},
-                },
+                "metric": "heart_rate",
+                "direction": "high",
+                "latest_value": 104,
+                "max": 106,
+                "p90": 102,
+                "sample_count": 6,
+                "window_seconds": 300,
                 "baseline_p90": 96,
             },
         }
@@ -986,7 +988,11 @@ class LLMClientParserTests(unittest.TestCase):
         )
 
         review = context["candidate_local_input"]
-        self.assertEqual(review["p90"], 96)
+        self.assertEqual(review["p90"], 102)
+        self.assertEqual(review["bp90"], 96)
+        self.assertEqual(review["dir"], "high")
+        self.assertEqual(review["n"], 6)
+        self.assertEqual(review["win_s"], 300)
         self.assertEqual(review["hr"], 104)
         self.assertNotIn("heart_rate_p90", review)
         compact_text = json.dumps(_compact_local_case({"event_type": "vital_baseline_anomaly", "risk_level": "P4"}, context))
