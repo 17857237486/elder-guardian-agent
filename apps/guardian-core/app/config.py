@@ -84,7 +84,7 @@ def get_settings() -> Settings:
         llm_base_url=os.getenv("LLM_BASE_URL", "http://localhost:11434/v1"),
         llm_api_key=os.getenv("LLM_API_KEY", "change-me"),
         llm_model=os.getenv("LLM_MODEL", "qwen2.5:7b"),
-        llm_mock=_env_bool("LLM_MOCK", True),
+        llm_mock=_env_bool("CORE_LLM_MOCK", _env_bool("LLM_MOCK", True)),
         llm_timeout_sec=_env_int("LLM_TIMEOUT_SEC", 120),
         llm_max_tokens=_env_int("LLM_MAX_TOKENS", 512),
         hmi_response_timeout_sec=_env_int("HMI_RESPONSE_TIMEOUT_SEC", 30),

@@ -920,8 +920,8 @@ class LLMClientParserTests(unittest.TestCase):
         self.assertEqual(set(context), {"candidate_local_input"})
         self.assertEqual(context["candidate_local_input"]["dur"], 720)
         self.assertEqual(context["candidate_local_input"]["p90s"], 480)
-        self.assertEqual(context["candidate_local_input"]["temp"], 36)
-        self.assertEqual(context["candidate_local_input"]["hr"], 89)
+        self.assertNotIn("temp", context["candidate_local_input"])
+        self.assertNotIn("hr", context["candidate_local_input"])
         self.assertNotIn("night_night_wake_duration_p90_sec", context["candidate_local_input"])
         compact = _compact_local_case({"event_type": "night_behavior_anomaly", "risk_level": "P4"}, context)
         self.assertEqual(compact["candidate_review"]["dur"], 720)
@@ -993,7 +993,7 @@ class LLMClientParserTests(unittest.TestCase):
         self.assertEqual(review["dir"], "high")
         self.assertEqual(review["n"], 6)
         self.assertEqual(review["win_s"], 300)
-        self.assertEqual(review["hr"], 104)
+        self.assertNotIn("hr", review)
         self.assertNotIn("heart_rate_p90", review)
         compact_text = json.dumps(_compact_local_case({"event_type": "vital_baseline_anomaly", "risk_level": "P4"}, context))
         self.assertNotIn("dedupe_key", compact_text)
@@ -1351,6 +1351,55 @@ class LLMClientParserTests(unittest.TestCase):
         self.assertEqual(len(local_outputs), 3)
         self.assertTrue(all("queue_wait_ms" in item for item in local_outputs))
         self.assertTrue(any(float(item["queue_wait_ms"]) > 0 for item in local_outputs[1:]))
+
+    def test_candidate_busy_503_is_retried_before_fallback(self) -> None:
+        class BusyThenOkLocalClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def analyze(self, **_: object) -> dict[str, object]:
+                self.calls += 1
+                if self.calls < 3:
+                    request = httpx.Request("POST", "http://local/v1/chat/completions")
+                    response = httpx.Response(503, request=request, json={"detail": "VLM worker is busy"})
+                    raise httpx.HTTPStatusError("busy", request=request, response=response)
+                return {
+                    "event_semantics": "candidate normal",
+                    "risk_level": "P4",
+                    "confidence": 0.7,
+                    "family_summary": "record only",
+                }
+
+        async def run_once() -> tuple[WorkflowRunner, BusyThenOkLocalClient, dict[str, object]]:
+            runner = WorkflowRunner()
+            probe = BusyThenOkLocalClient()
+            runner.local_llm = probe
+            runner._record_step = AsyncMock()
+            runner.edge.create_workflow = AsyncMock(return_value={})
+            runner.edge.update_ai_review_candidate = AsyncMock(return_value={})
+            runner.edge.get_recent_sensor_context = AsyncMock(return_value={"elder_id": "elder_001", "observations": []})
+            runner.edge.get_behavior_segments = AsyncMock(return_value=[])
+            runner.edge.get_personal_baselines = AsyncMock(return_value=[])
+            runner.edge.create_event = AsyncMock(side_effect=AssertionError("P4 candidate must not be promoted"))
+            with patch("app.workflow.asyncio.sleep", new=AsyncMock()):
+                result = await runner.run_candidate(
+                    {
+                        "candidate_id": "cand_busy_retry",
+                        "elder_id": "elder_001",
+                        "candidate_type": "vital_baseline_anomaly",
+                        "reason": "heart rate window above personal p90",
+                        "features": {"metric": "heart_rate", "direction": "high", "latest_value": 115, "baseline_p90": 100},
+                    }
+                )
+            return runner, probe, result
+
+        runner, probe, result = asyncio.run(run_once())
+
+        self.assertEqual(probe.calls, 3)
+        self.assertEqual(result["status"], "dismissed")
+        final_update = runner.edge.update_ai_review_candidate.await_args_list[-1].args[1]
+        self.assertEqual(final_update["status"], "dismissed")
+        self.assertFalse(final_update["features"]["local_result"].get("fallback", False))
 
 
 if __name__ == "__main__":

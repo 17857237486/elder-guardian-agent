@@ -31,6 +31,7 @@ services:
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
       DATABASE_URL: sqlite:////app/data/guardian.db
+      CORE_LLM_MOCK: ${CORE_LLM_MOCK:-true}
       LLM_MOCK: ${LLM_MOCK:-false}
     ports:
       - "${CORE_PUBLIC_PORT:-8000}:8000"

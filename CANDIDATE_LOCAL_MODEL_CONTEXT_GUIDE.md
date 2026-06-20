@@ -32,12 +32,7 @@ workflow 只保存并发送一个短对象：
     "p90s": 480,
     "ret": false,
     "bath_s": 180,
-    "rooms": ["bedroom", "bathroom", "living_room"],
-    "room": "living_room",
-    "temp": 25.0,
-    "hum": 52,
-    "hr": 92,
-    "spo2": 95
+    "rooms": ["bedroom", "bathroom", "living_room"]
   }
 }
 ```
@@ -179,9 +174,7 @@ local_multiframe_analysis.output.latency_ms <= 35000
     "p90": 116,
     "bp90": 100,
     "n": 6,
-    "win_s": 300,
-    "hr": 115,
-    "spo2": 96
+    "win_s": 300
   }
 }
 ```
@@ -195,3 +188,33 @@ local_multiframe_analysis.output.latency_ms <= 35000
 - `latest/min/max/n/win_s`: 最新值、窗口极值、样本数和窗口秒数。
 
 硬规则数据不会进入轻度 candidate：心率 `<45` 或 `>130`、血氧 `<92` 仍由正式风险事件链路处理。
+
+## 8. v1 LLM 禁用与 35 秒口径
+
+部署后 `guardian-core` 默认使用 `CORE_LLM_MOCK=true`，因此 v1 仍保留 8000 API、设备状态和兼容接口，但不会再请求 RK3588 本地 `8001` VLM。v2 `guardian-orchestrator` 继续使用 `LLM_MOCK=false` 调用本地模型。
+
+candidate 本地模型输入只保留短摘要字段：
+
+```json
+{
+  "t": "vital_baseline_anomaly",
+  "r": "heart rate window above personal p90",
+  "metric": "heart_rate",
+  "dir": "high",
+  "latest": 115,
+  "min": 112,
+  "max": 116,
+  "p90": 116,
+  "bp90": 100,
+  "n": 6,
+  "win_s": 300
+}
+```
+
+不再发送原始 observation 列表、完整 behavior segment、完整 personal baseline、旧 `local_result`、设备快照或 20 组环境/生命体征样本。
+
+验收时：
+
+- `latency_ms` 表示真正调用本地模型的耗时，目标为 `<=35000`。
+- `queue_wait_ms` 表示等待前一个本地模型请求完成的时间，不计入 35 秒推理口径。
+- 如果本地模型短暂返回 `VLM worker is busy`，Orchestrator 会在本地模型锁内短退避重试；最终仍要求 `fallback=false`。

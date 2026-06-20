@@ -50,7 +50,7 @@ class WorkflowRunner:
         self.local_llm = LocalMultimodalClient()
         self.cloud_llm = CloudLLMClient()
         self.llm_semaphore = asyncio.Semaphore(settings.llm_max_concurrent_workflows)
-        self.candidate_llm_lock = asyncio.Lock()
+        self.local_model_lock = asyncio.Lock()
 
     async def run(self, event: NormalizedEventV2) -> dict[str, Any]:
         saved_event = await self.edge.create_event(event)
@@ -135,7 +135,8 @@ class WorkflowRunner:
 
         local_started = perf_counter()
         try:
-            local = await self.local_llm.analyze(event=saved_event, context=context, contact_sheet=contact_sheet)
+            async with self.local_model_lock:
+                local = await self.local_llm.analyze(event=saved_event, context=context, contact_sheet=contact_sheet)
         except Exception as exc:
             local = self._fallback_result(event, exc)
         local["latency_ms"] = round((perf_counter() - local_started) * 1000, 1)
@@ -252,10 +253,10 @@ class WorkflowRunner:
         started = queue_started
         queue_wait_ms = 0.0
         try:
-            async with self.candidate_llm_lock:
+            async with self.local_model_lock:
                 queue_wait_ms = round((perf_counter() - queue_started) * 1000, 1)
                 started = perf_counter()
-                local = await self.local_llm.analyze(event=saved_event, context=context, contact_sheet=None)
+                local = await self._analyze_candidate_with_busy_retry(saved_event, context)
         except Exception as exc:
             if queue_wait_ms == 0.0:
                 queue_wait_ms = round((perf_counter() - queue_started) * 1000, 1)
@@ -304,6 +305,25 @@ class WorkflowRunner:
         )
         await self._record_step(workflow, event, "candidate_decision", local, output)
         return {"candidate_id": candidate_id, "workflow_id": workflow.workflow_id, **output}
+
+    async def _analyze_candidate_with_busy_retry(self, event: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        retry_delays = [1.5, 3.0]
+        for attempt in range(len(retry_delays) + 1):
+            try:
+                return await self.local_llm.analyze(event=event, context=context, contact_sheet=None)
+            except httpx.HTTPStatusError as exc:
+                if not self._is_local_model_busy(exc) or attempt >= len(retry_delays):
+                    raise
+                await asyncio.sleep(retry_delays[attempt])
+        raise RuntimeError("candidate local model retry exhausted")
+
+    @staticmethod
+    def _is_local_model_busy(error: httpx.HTTPStatusError) -> bool:
+        response = error.response
+        if response.status_code != 503:
+            return False
+        text = response.text.lower()
+        return "busy" in text and "worker" in text
 
     async def _get_behavior_context_sources(self, elder_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         try:
@@ -547,10 +567,6 @@ class WorkflowRunner:
         segments: list[dict[str, Any]] | None = None,
         baselines: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        observations = sensors.get("observations", []) if isinstance(sensors, dict) else []
-        observations = [item for item in observations if isinstance(item, dict)]
-        observations_desc = sorted(observations, key=cls._observation_time, reverse=True)
-        location = cls._current_presence_room(observations_desc)
         source_ids = {
             str(item)
             for item in (candidate.get("source_segment_ids") or [])
@@ -567,8 +583,6 @@ class WorkflowRunner:
             if isinstance(embedded, dict):
                 matched_segments = [embedded]
 
-        latest_environment = cls._latest_environment_summary(observations_desc, location)
-        latest_vital = cls._latest_vital_summary(observations_desc)
         segment_summary = cls._candidate_segment_summary(matched_segments)
         baseline_summary = cls._candidate_baseline_summary(candidate, baselines or [])
         candidate_input = {
@@ -577,9 +591,6 @@ class WorkflowRunner:
             **segment_summary,
             **baseline_summary,
             **cls._candidate_feature_summary(candidate),
-            "room": (location or {}).get("current_room") or event.room,
-            **(latest_environment or {}),
-            **(latest_vital or {}),
         }
         candidate_input = {key: value for key, value in candidate_input.items() if value not in (None, [], {})}
         return {"candidate_local_input": candidate_input}

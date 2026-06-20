@@ -794,10 +794,10 @@ def _build_candidate_local_prompt(event: dict[str, Any], context: dict[str, Any]
     candidate_input = context.get("candidate_local_input")
     compact = candidate_input if isinstance(candidate_input, dict) else {}
     return (
-        "判断老人安全candidate是否升级正式风险。"
-        "风险:P0即时生命危险,P1严重人身风险,P2需关注,P3轻微/记录,P4无风险。"
+        "判断老人安全candidate候选是否升级。"
+        "等级:P0生命危险;P1严重风险;P2需关注;P3轻微记录;P4无风险。"
         "只输出JSON:{event_semantics,risk_level,confidence,family_summary};"
-        "risk_level只能是P0/P1/P2/P3/P4之一,confidence必须是0到1数字,禁止复合等级和设备控制。"
+        "risk_level只能是P0/P1/P2/P3/P4之一,禁止复合等级和设备控制。"
         "输入:"
         + json.dumps(
             {
@@ -930,11 +930,12 @@ class LocalMultimodalClient:
                 "mock": True,
             }
         content = build_local_multimodal_content(event, context, contact_sheet)
+        is_candidate = str(event.get("source_kind") or "") == "ai_review_candidate" or "candidate_local_input" in context
         body = {
             "model": settings.llm_model,
             "messages": [{"role": "user", "content": content}],
             "temperature": 0.1,
-            "max_tokens": min(settings.llm_max_tokens, 128),
+            "max_tokens": 64 if is_candidate else min(settings.llm_max_tokens, 128),
             "response_format": {"type": "json_object"},
             "enable_thinking": False,
         }
