@@ -86,13 +86,6 @@ const activeDemoTarget = computed<DemoTarget>(() => {
   const events = filteredEvents.value;
   const steps = filteredWorkflowSteps.value;
   const candidates = ((state.ai_review_candidates ?? []) as AnyRecord[]).filter(isAfterClearTime);
-  const activeStates = new Set(["event_detected", "rule_classified", "action_planned", "ask_elder", "wait_response", "family_alert", "emergency_alert", "escalated"]);
-  const activeEvent = events.find((event) =>
-    ["P0", "P1", "P2"].includes(String(event.final_risk_level ?? event.risk_level ?? "")) &&
-    activeStates.has(String(event.state ?? "").toLowerCase())
-  );
-  if (activeEvent?.event_id) return { kind: "event", id: String(activeEvent.event_id), item: activeEvent };
-
   const latestObservation = latestInputObservation.value;
   const latestObservationTime = latestObservation ? new Date(eventTime(latestObservation)).getTime() : 0;
   const latestEventTime = latestEvent.value ? new Date(eventTime(latestEvent.value)).getTime() : 0;
@@ -110,6 +103,13 @@ const activeDemoTarget = computed<DemoTarget>(() => {
       }
     };
   }
+
+  const activeStates = new Set(["event_detected", "rule_classified", "action_planned", "ask_elder", "wait_response", "family_alert", "emergency_alert", "escalated"]);
+  const activeEvent = events.find((event) =>
+    ["P0", "P1", "P2"].includes(String(event.final_risk_level ?? event.risk_level ?? "")) &&
+    activeStates.has(String(event.state ?? "").toLowerCase())
+  );
+  if (activeEvent?.event_id) return { kind: "event", id: String(activeEvent.event_id), item: activeEvent };
 
   const workflowEvent = events.find((event) => steps.some((step) => step.event_id === event.event_id));
   if (workflowEvent?.event_id) return { kind: "event", id: String(workflowEvent.event_id), item: workflowEvent };
@@ -181,6 +181,36 @@ function shortText(value: unknown, length = 40): string {
 
 function riskOf(item: AnyRecord): string {
   return String(item.final_risk_level ?? item.local_risk_level ?? item.rule_risk_level ?? item.risk_level ?? "--");
+}
+
+const RULE_RESULT_STATES = new Set([
+  "event_detected",
+  "rule_classified",
+  "action_planned",
+  "ask_elder",
+  "wait_response",
+  "family_alert",
+  "emergency_alert",
+  "escalated",
+  "resolved"
+]);
+
+function hasEventRuleResult(item: AnyRecord, risk: string): boolean {
+  const stateValue = String(item.state ?? "").toLowerCase();
+  const eventType = String(item.event_type ?? "");
+  return Boolean(eventType && ["P0", "P1", "P2", "P3"].includes(risk) && RULE_RESULT_STATES.has(stateValue));
+}
+
+function ruleNodeState(item: AnyRecord, risk: string, step?: AnyRecord | null): DemoNodeState {
+  if (step) return stepState(step);
+  return hasEventRuleResult(item, risk) ? "completed" : "idle";
+}
+
+function ruleNodeNote(item: AnyRecord, risk: string, step?: AnyRecord | null): string {
+  if (step?.output?.accepted) return `规则命中 ${risk}`;
+  if (step) return "规则处理中";
+  if (hasEventRuleResult(item, risk)) return `规则命中 ${item.event_type ?? "risk_event"} · ${risk}`;
+  return "规则处理中";
 }
 
 const summaryRisk = computed(() => (isNormalInputDemo.value ? "P4" : (latestEvent.value?.final_risk_level ?? (isCleared.value ? "P4" : state.current_risk_level))));
@@ -387,8 +417,8 @@ const demoNodes = computed(() => {
     {
       key: "rule",
       name: "规则判断",
-      state: isCandidate ? "skipped" as DemoNodeState : stepState(ruleStep),
-      note: isCandidate ? "非硬规则，进入候选复核" : shortText(ruleStep?.output?.accepted ? `规则命中 ${risk}` : "规则处理中"),
+      state: isCandidate ? "skipped" as DemoNodeState : ruleNodeState(item, risk, ruleStep),
+      note: isCandidate ? "非硬规则，进入候选复核" : shortText(ruleNodeNote(item, risk, ruleStep)),
       time: eventTime(ruleStep ?? item)
     },
     {
