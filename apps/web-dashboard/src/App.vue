@@ -310,11 +310,36 @@ function stepState(step?: AnyRecord | null): DemoNodeState {
 function targetSteps(target: DemoTarget): AnyRecord[] {
   if (!target) return [];
   if (target.kind === "normal_input") return [];
-  return filteredWorkflowSteps.value.filter((step: AnyRecord) => step.event_id === target.id);
+  const ids = targetWorkflowIds(target);
+  return filteredWorkflowSteps.value.filter((step: AnyRecord) => ids.includes(String(step.event_id ?? "")));
 }
 
 function findTargetStep(target: DemoTarget, name: string): AnyRecord | null {
   return targetSteps(target).find((step) => step.step_name === name) ?? null;
+}
+
+function promotedCandidateIdForEvent(event: AnyRecord): string | null {
+  const fromList = ((state.ai_review_candidates ?? []) as AnyRecord[]).find(
+    (candidate) => candidate.promoted_event_id === event.event_id
+  )?.candidate_id;
+  if (fromList) return String(fromList);
+  for (const evidence of event.evidence ?? []) {
+    const candidateId = evidence?.candidate?.candidate_id;
+    if (candidateId) return String(candidateId);
+  }
+  return null;
+}
+
+function isCandidatePromotedEvent(item: AnyRecord): boolean {
+  return String(item.source_kind ?? "") === "ai_review_candidate" || Boolean(promotedCandidateIdForEvent(item));
+}
+
+function targetWorkflowIds(target: DemoTarget): string[] {
+  if (!target) return [];
+  if (target.kind === "normal_input") return [];
+  if (target.kind === "candidate") return [target.id];
+  const candidateId = promotedCandidateIdForEvent(target.item);
+  return candidateId ? [target.id, candidateId] : [target.id];
 }
 
 function relatedItems(target: DemoTarget, key: string): AnyRecord[] {
@@ -400,6 +425,7 @@ const demoNodes = computed(() => {
   const alerts = relatedItems(target, "alerts");
   const isCandidate = target.kind === "candidate";
   const item = target.item;
+  const isPromotedCandidateEvent = target.kind === "event" && isCandidatePromotedEvent(item);
   const candidateStatus = String(item.status ?? "").toLowerCase();
   const risk = riskOf(item);
   const dataTime = eventTime(item) || (filteredObservations.value?.[0] ? eventTime(filteredObservations.value[0]) : "");
@@ -485,8 +511,12 @@ const demoNodes = computed(() => {
     {
       key: "rule",
       name: "规则判断",
-      state: isCandidate ? "skipped" as DemoNodeState : ruleNodeState(item, risk, ruleStep),
-      note: isCandidate ? "非硬规则，进入候选复核" : shortText(ruleNodeNote(item, risk, ruleStep)),
+      state: isCandidate || isPromotedCandidateEvent ? "skipped" as DemoNodeState : ruleNodeState(item, risk, ruleStep),
+      note: isCandidate
+        ? "非硬规则，进入候选复核"
+        : isPromotedCandidateEvent
+          ? "Candidate 复核升级，非硬规则"
+          : shortText(ruleNodeNote(item, risk, ruleStep)),
       time: eventTime(ruleStep ?? item)
     },
     {
