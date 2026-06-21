@@ -12,11 +12,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run_edge_script(script: str, *, timeout: int = 30) -> subprocess.CompletedProcess[str]:
+def run_edge_script(script: str, *, timeout: int = 30, env_overrides: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     with tempfile.TemporaryDirectory() as directory:
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite:///{Path(directory, 'behavior.db').as_posix()}"
         env["ORCHESTRATOR_URL"] = ""
+        if env_overrides:
+            env.update(env_overrides)
         paths = [ROOT / "apps" / "edge-mcp-server", ROOT / "packages" / "guardian-shared"]
         env["PYTHONPATH"] = os.pathsep.join(str(path) for path in paths)
         return subprocess.run(
@@ -232,6 +234,64 @@ class BehaviorBaselineTests(unittest.TestCase):
             """
         )
         result = run_edge_script(script)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_manual_baseline_mode_does_not_auto_overwrite_baselines_but_keeps_candidates(self) -> None:
+        script = textwrap.dedent(
+            """
+            from datetime import datetime, timedelta, timezone
+
+            from app import repository
+            from app.behavior_worker import BehaviorAnalyticsWorker, build_vital_segments
+            from app.database import Base, SessionLocal, engine
+            from guardian_shared.v2 import PersonalBaselineV2
+
+            Base.metadata.create_all(bind=engine)
+            elder_id = "elder_001"
+            base = datetime(2026, 6, 20, 9, 0, tzinfo=timezone.utc)
+
+            def obs(obs_id, seconds, heart_rate, spo2):
+                return {
+                    "observation_id": obs_id,
+                    "elder_id": elder_id,
+                    "kind": "vital",
+                    "payload": {"heart_rate": heart_rate, "spo2": spo2},
+                    "observed_at": (base + timedelta(seconds=seconds)).isoformat(),
+                }
+
+            observations = [obs(f"hr_high_{index}", index * 10, 115, 96) for index in range(6)]
+            segments = build_vital_segments(observations)
+            with SessionLocal() as db:
+                for segment in segments:
+                    repository.upsert_behavior_segment(db, segment)
+                repository.create_personal_baseline(
+                    db,
+                    PersonalBaselineV2(
+                        elder_id=elder_id,
+                        baseline_type="heart_rate_daily",
+                        sample_count=1,
+                        quality="stable",
+                        metrics={"p10": 58, "p50": 76, "p90": 100, "manual_marker": "keep"},
+                    ),
+                )
+
+            worker = BehaviorAnalyticsWorker()
+            worker.run_baseline_once()
+
+            with SessionLocal() as db:
+                baselines = repository.list_personal_baselines(db, elder_id)
+                candidates = repository.list_ai_review_candidates(db, elder_id, limit=20)
+
+            heart = [item for item in baselines if item["baseline_type"] == "heart_rate_daily"][0]
+            assert heart["metrics"]["manual_marker"] == "keep", heart
+            assert heart["metrics"]["p90"] == 100, heart
+            assert any(item["candidate_type"] == "vital_baseline_anomaly" for item in candidates), candidates
+            """
+        )
+        result = run_edge_script(
+            script,
+            env_overrides={"AUTO_PERSONAL_BASELINE_ENABLED": "false", "AUTO_CANDIDATE_ENABLED": "true"},
+        )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 

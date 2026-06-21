@@ -29,6 +29,7 @@ MQTT_HOST = os.getenv("BACKGROUND_MQTT_HOST", os.getenv("MQTT_HOST", "localhost"
 MQTT_PORT = int(os.getenv("BACKGROUND_MQTT_PORT", os.getenv("MQTT_PORT", "1883")))
 MQTT_TOPICS = ("elder/+/sensor/vital", "elder/+/sensor/env", "elder/+/vision/event", "home/+/+/set", "home/+/+/state", "home/+/+/ack")
 GUARDIAN_CORE_URL = os.getenv("GUARDIAN_CORE_URL", "http://localhost:8000").rstrip("/")
+EDGE_API_BASE = os.getenv("EDGE_API_BASE", "http://edge-mcp-server:8010").rstrip("/")
 ELDER_ID = os.getenv("ELDER_ID", "elder_001")
 MAX_RECORDS = int(os.getenv("BACKGROUND_MAX_RECORDS", "1000"))
 SCENARIO_TEMPERATURE_STEP_C = 0.5
@@ -105,6 +106,17 @@ class ManualRiskEventRequest(BaseModel):
     event_type: str
     elder_id: str = "elder_001"
     room: str = "living_room"
+
+
+class PersonalBaselineRequest(BaseModel):
+    elder_id: str = "elder_001"
+    baseline_type: str
+    scope: str = "default"
+    timezone: str = "Asia/Shanghai"
+    lookback_days: int = 14
+    sample_count: int = 1
+    quality: str = "stable"
+    metrics: dict[str, Any] = Field(default_factory=dict)
 
 
 DEFAULT_DEVICES: list[dict[str, Any]] = [
@@ -793,6 +805,28 @@ async def list_records(limit: int = 300) -> dict[str, Any]:
 async def list_devices() -> dict[str, Any]:
     await sync_devices_from_guardian_core()
     return {"devices": sorted_devices(), "device_log": visible_device_log(), "room_env": room_env_snapshot()}
+
+
+@app.get("/api/personal-baselines")
+async def list_personal_baselines(elder_id: str = ELDER_ID) -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+            response = await client.get(f"{EDGE_API_BASE}/api/v2/personal-baselines", params={"elder_id": elder_id})
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail={"message": "edge personal baseline query failed", "error": str(exc)})
+
+
+@app.post("/api/personal-baselines")
+async def create_personal_baseline(request: PersonalBaselineRequest) -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+            response = await client.post(f"{EDGE_API_BASE}/api/v2/personal-baselines", json=request.model_dump())
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail={"message": "edge personal baseline save failed", "error": str(exc)})
 
 
 @app.post("/api/device/command")

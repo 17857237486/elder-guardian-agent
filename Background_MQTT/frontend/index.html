@@ -223,6 +223,45 @@
         padding: 16px;
       }
 
+      .baseline-panel {
+        padding: 16px;
+      }
+
+      .baseline-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(260px, 1fr));
+        gap: 16px;
+      }
+
+      .baseline-card {
+        border: 1px solid #d9e2ee;
+        border-radius: 8px;
+        padding: 14px;
+        background: #fbfdff;
+      }
+
+      .baseline-card h3 {
+        margin: 0 0 10px;
+      }
+
+      .baseline-fields {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .baseline-fields label {
+        display: block;
+        color: #4e5f75;
+        font-weight: 700;
+      }
+
+      .baseline-fields span {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 13px;
+      }
+
       .template-grid {
         display: grid;
         grid-template-columns: repeat(7, minmax(135px, 1fr));
@@ -865,6 +904,63 @@
       </article>
 
       <article class="panel">
+        <h2>个人基线设置</h2>
+        <div class="baseline-panel">
+          <p class="muted">当前阶段个人基线由此处手动设置，Edge MCP 不再自动覆盖；轻度心率、轻度血氧和起夜 candidate 会读取这些基线。</p>
+          <div class="form-actions">
+            <button id="load-baselines" type="button">读取当前基线</button>
+            <button id="fill-baseline-defaults" type="button">填写建议默认值</button>
+            <span id="baseline-submit-status" class="submit-status">等待设置</span>
+          </div>
+          <div class="baseline-grid">
+            <section class="baseline-card">
+              <h3>心率基线 heart_rate_daily</h3>
+              <div class="baseline-fields">
+                <label><span>老人 ID</span><input id="baseline-elder" value="elder_001" /></label>
+                <label><span>样本数</span><input id="baseline-sample-count" type="number" min="1" step="1" value="1" /></label>
+                <label><span>p10</span><input id="hr-p10" type="number" step="1" value="60" /></label>
+                <label><span>p50</span><input id="hr-p50" type="number" step="1" value="76" /></label>
+                <label><span>p90</span><input id="hr-p90" type="number" step="1" value="100" /></label>
+                <label><span>night_avg</span><input id="hr-night-avg" type="number" step="1" value="68" /></label>
+                <label><span>daily_avg</span><input id="hr-daily-avg" type="number" step="1" value="78" /></label>
+              </div>
+              <div class="form-actions">
+                <button id="save-heart-baseline" class="primary" type="button">保存心率基线</button>
+              </div>
+            </section>
+
+            <section class="baseline-card">
+              <h3>血氧基线 spo2_daily</h3>
+              <div class="baseline-fields">
+                <label><span>p10</span><input id="spo2-p10" type="number" min="0" max="100" step="1" value="95" /></label>
+                <label><span>p50</span><input id="spo2-p50" type="number" min="0" max="100" step="1" value="96" /></label>
+                <label><span>p90</span><input id="spo2-p90" type="number" min="0" max="100" step="1" value="98" /></label>
+                <label><span>night_avg</span><input id="spo2-night-avg" type="number" min="0" max="100" step="1" value="95" /></label>
+                <label><span>avg</span><input id="spo2-avg" type="number" min="0" max="100" step="1" value="96" /></label>
+              </div>
+              <div class="form-actions">
+                <button id="save-spo2-baseline" class="primary" type="button">保存血氧基线</button>
+              </div>
+            </section>
+
+            <section class="baseline-card">
+              <h3>夜间起夜基线 night_routine</h3>
+              <div class="baseline-fields">
+                <label><span>usual_sleep_start</span><input id="night-sleep-start" value="22:35" /></label>
+                <label><span>usual_sleep_end</span><input id="night-sleep-end" value="06:18" /></label>
+                <label><span>night_wake_count_p90</span><input id="night-wake-count-p90" type="number" min="0" step="1" value="2" /></label>
+                <label><span>night_wake_duration_p90_sec</span><input id="night-wake-duration-p90" type="number" min="0" step="1" value="480" /></label>
+                <label><span>returned_to_bedroom_rate</span><input id="returned-rate" type="number" min="0" max="1" step="0.01" value="0.94" /></label>
+              </div>
+              <div class="form-actions">
+                <button id="save-night-baseline" class="primary" type="button">保存起夜基线</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel">
         <h2>手动输入数据</h2>
         <div class="template-grid" aria-label="事件模板">
           <button class="template-button active" type="button" data-template="normal">P4 正常状态<br />正常记录</button>
@@ -1253,6 +1349,19 @@
         P2: "关注风险",
         P3: "环境风险",
         P4: "正常记录",
+      };
+
+      const baselineDefaults = {
+        heart_rate_daily: { daily_avg: 78, night_avg: 68, p10: 60, p50: 76, p90: 100, sample_count: 1 },
+        spo2_daily: { avg: 96, night_avg: 95, p10: 95, p50: 96, p90: 98, sample_count: 1 },
+        night_routine: {
+          usual_sleep_start: "22:35",
+          usual_sleep_end: "06:18",
+          night_wake_count_p90: 2,
+          night_wake_duration_p90_sec: 480,
+          returned_to_bedroom_rate: 0.94,
+          sample_count: 1,
+        },
       };
 
       function riskEventLabel(eventType) {
@@ -1678,6 +1787,138 @@
         return data;
       }
 
+      async function loadPersonalBaselines() {
+        const elderId = $("baseline-elder").value.trim() || $("manual-vital-elder").value.trim() || "elder_001";
+        $("baseline-elder").value = elderId;
+        const response = await fetch(`/api/personal-baselines?elder_id=${encodeURIComponent(elderId)}`);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail ?? data);
+          throw new Error(detail || `HTTP ${response.status}`);
+        }
+        applyBaselines(data.personal_baselines ?? []);
+        return data;
+      }
+
+      function baselineByType(items, type) {
+        return (items ?? []).find((item) => item.baseline_type === type) ?? null;
+      }
+
+      function applyBaselines(items) {
+        const heart = baselineByType(items, "heart_rate_daily");
+        const spo2 = baselineByType(items, "spo2_daily");
+        const night = baselineByType(items, "night_routine");
+        if (heart) {
+          const metrics = heart.metrics ?? {};
+          setInputValue("hr-p10", metrics.p10 ?? baselineDefaults.heart_rate_daily.p10);
+          setInputValue("hr-p50", metrics.p50 ?? baselineDefaults.heart_rate_daily.p50);
+          setInputValue("hr-p90", metrics.p90 ?? baselineDefaults.heart_rate_daily.p90);
+          setInputValue("hr-night-avg", metrics.night_avg ?? baselineDefaults.heart_rate_daily.night_avg);
+          setInputValue("hr-daily-avg", metrics.daily_avg ?? baselineDefaults.heart_rate_daily.daily_avg);
+          setInputValue("baseline-sample-count", heart.sample_count || baselineDefaults.heart_rate_daily.sample_count);
+        }
+        if (spo2) {
+          const metrics = spo2.metrics ?? {};
+          setInputValue("spo2-p10", metrics.p10 ?? baselineDefaults.spo2_daily.p10);
+          setInputValue("spo2-p50", metrics.p50 ?? baselineDefaults.spo2_daily.p50);
+          setInputValue("spo2-p90", metrics.p90 ?? baselineDefaults.spo2_daily.p90);
+          setInputValue("spo2-night-avg", metrics.night_avg ?? baselineDefaults.spo2_daily.night_avg);
+          setInputValue("spo2-avg", metrics.avg ?? baselineDefaults.spo2_daily.avg);
+        }
+        if (night) {
+          const metrics = night.metrics ?? {};
+          setInputValue("night-sleep-start", metrics.usual_sleep_start ?? baselineDefaults.night_routine.usual_sleep_start);
+          setInputValue("night-sleep-end", metrics.usual_sleep_end ?? baselineDefaults.night_routine.usual_sleep_end);
+          setInputValue("night-wake-count-p90", metrics.night_wake_count_p90 ?? baselineDefaults.night_routine.night_wake_count_p90);
+          setInputValue("night-wake-duration-p90", metrics.night_wake_duration_p90_sec ?? baselineDefaults.night_routine.night_wake_duration_p90_sec);
+          setInputValue("returned-rate", metrics.returned_to_bedroom_rate ?? baselineDefaults.night_routine.returned_to_bedroom_rate);
+        }
+      }
+
+      function fillBaselineDefaults() {
+        const heart = baselineDefaults.heart_rate_daily;
+        const spo2 = baselineDefaults.spo2_daily;
+        const night = baselineDefaults.night_routine;
+        setInputValue("baseline-elder", $("manual-vital-elder").value.trim() || "elder_001");
+        setInputValue("baseline-sample-count", heart.sample_count);
+        setInputValue("hr-p10", heart.p10);
+        setInputValue("hr-p50", heart.p50);
+        setInputValue("hr-p90", heart.p90);
+        setInputValue("hr-night-avg", heart.night_avg);
+        setInputValue("hr-daily-avg", heart.daily_avg);
+        setInputValue("spo2-p10", spo2.p10);
+        setInputValue("spo2-p50", spo2.p50);
+        setInputValue("spo2-p90", spo2.p90);
+        setInputValue("spo2-night-avg", spo2.night_avg);
+        setInputValue("spo2-avg", spo2.avg);
+        setInputValue("night-sleep-start", night.usual_sleep_start);
+        setInputValue("night-sleep-end", night.usual_sleep_end);
+        setInputValue("night-wake-count-p90", night.night_wake_count_p90);
+        setInputValue("night-wake-duration-p90", night.night_wake_duration_p90_sec);
+        setInputValue("returned-rate", night.returned_to_bedroom_rate);
+      }
+
+      function baselineBase(type, metrics) {
+        return {
+          elder_id: $("baseline-elder").value.trim() || "elder_001",
+          baseline_type: type,
+          scope: "default",
+          timezone: "Asia/Shanghai",
+          lookback_days: 14,
+          sample_count: Number($("baseline-sample-count").value || 1),
+          quality: "stable",
+          metrics,
+        };
+      }
+
+      function buildHeartBaseline() {
+        return baselineBase("heart_rate_daily", {
+          p10: Number($("hr-p10").value),
+          p50: Number($("hr-p50").value),
+          p90: Number($("hr-p90").value),
+          night_avg: Number($("hr-night-avg").value),
+          daily_avg: Number($("hr-daily-avg").value),
+          sample_count: Number($("baseline-sample-count").value || 1),
+        });
+      }
+
+      function buildSpo2Baseline() {
+        return baselineBase("spo2_daily", {
+          p10: Number($("spo2-p10").value),
+          p50: Number($("spo2-p50").value),
+          p90: Number($("spo2-p90").value),
+          night_avg: Number($("spo2-night-avg").value),
+          avg: Number($("spo2-avg").value),
+          sample_count: Number($("baseline-sample-count").value || 1),
+        });
+      }
+
+      function buildNightBaseline() {
+        return baselineBase("night_routine", {
+          usual_sleep_start: $("night-sleep-start").value.trim(),
+          usual_sleep_end: $("night-sleep-end").value.trim(),
+          night_wake_count_p90: Number($("night-wake-count-p90").value),
+          night_wake_duration_p90_sec: Number($("night-wake-duration-p90").value),
+          returned_to_bedroom_rate: Number($("returned-rate").value),
+          sample_count: Number($("baseline-sample-count").value || 1),
+        });
+      }
+
+      async function saveBaseline(kind, builder) {
+        const button = $(kind);
+        button.disabled = true;
+        setSubmitStatus("baseline-submit-status", "保存中");
+        try {
+          await postJson("/api/personal-baselines", builder());
+          setSubmitStatus("baseline-submit-status", "基线已保存到 Edge MCP", "ok");
+          await loadPersonalBaselines();
+        } catch (error) {
+          setSubmitStatus("baseline-submit-status", `保存失败：${error.message}`, "error");
+        } finally {
+          button.disabled = false;
+        }
+      }
+
       function renderKeyTable() {
         const latestVital = latestByKind("vital");
         const latestEnv = latestByKind("env");
@@ -1901,6 +2142,25 @@
         }
       });
 
+      $("load-baselines").addEventListener("click", async () => {
+        setSubmitStatus("baseline-submit-status", "读取中");
+        try {
+          await loadPersonalBaselines();
+          setSubmitStatus("baseline-submit-status", "当前基线已读取", "ok");
+        } catch (error) {
+          setSubmitStatus("baseline-submit-status", `读取失败：${error.message}`, "error");
+        }
+      });
+
+      $("fill-baseline-defaults").addEventListener("click", () => {
+        fillBaselineDefaults();
+        setSubmitStatus("baseline-submit-status", "已填写建议默认值");
+      });
+
+      $("save-heart-baseline").addEventListener("click", () => saveBaseline("save-heart-baseline", buildHeartBaseline));
+      $("save-spo2-baseline").addEventListener("click", () => saveBaseline("save-spo2-baseline", buildSpo2Baseline));
+      $("save-night-baseline").addEventListener("click", () => saveBaseline("save-night-baseline", buildNightBaseline));
+
       $("clear-local").addEventListener("click", () => {
         setRecords([]);
       });
@@ -1915,10 +2175,14 @@
       });
 
       applyTemplate(state.activeTemplate);
+      fillBaselineDefaults();
       updateScenarioPreview();
       loadSnapshot();
       loadDevices().catch((error) => {
         setSubmitStatus("device-submit-status", `Device load failed: ${error.message}`, "error");
+      });
+      loadPersonalBaselines().catch((error) => {
+        setSubmitStatus("baseline-submit-status", `基线读取失败：${error.message}`, "error");
       });
       refreshScenarioStatus().catch(() => {});
       connectWs();

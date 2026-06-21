@@ -129,9 +129,12 @@ class BehaviorAnalyticsWorker:
     def run_baseline_once(self) -> None:
         with SessionLocal() as db:
             segments = repository.list_behavior_segments(db, settings.elder_id, limit=5000)
-            for baseline in build_baselines(settings.elder_id, segments, now=datetime.now(timezone.utc)):
-                repository.create_personal_baseline(db, baseline)
+            if settings.auto_personal_baseline_enabled:
+                for baseline in build_baselines(settings.elder_id, segments, now=datetime.now(timezone.utc)):
+                    repository.create_personal_baseline(db, baseline)
             baselines = repository.list_personal_baselines(db, settings.elder_id)
+            if not settings.auto_candidate_enabled:
+                return
             existing = repository.list_ai_review_candidates(db, settings.elder_id, limit=200)
             for candidate in build_candidates(settings.elder_id, segments, baselines, existing, now=datetime.now(timezone.utc)):
                 record = repository.create_ai_review_candidate(db, candidate)

@@ -1,5 +1,35 @@
 # Behavior Baseline Context Guide
 
+## Current Manual Baseline Mode
+
+当前演示阶段默认停用自动个人基线生成：
+
+```dotenv
+AUTO_PERSONAL_BASELINE_ENABLED=false
+AUTO_CANDIDATE_ENABLED=true
+```
+
+含义：
+
+- Edge MCP 仍会持续生成 `behavior_segments`，例如 `night_wake`、`heart_rate_window`、`spo2_window`。
+- Edge MCP 不再自动调用 `build_baselines()` 覆盖 `v2_personal_baselines`。
+- 个人基线由 8090 的“个人基线设置”面板手动写入，或通过 `POST /api/v2/personal-baselines` 写入。
+- Candidate 仍会自动生成，并且只读取当前数据库中已有的手动基线。
+
+8090 页面可设置：
+
+- 心率基线 `heart_rate_daily`：`p10 / p50 / p90 / night_avg / daily_avg`
+- 血氧基线 `spo2_daily`：`p10 / p50 / p90 / night_avg / avg`
+- 夜间起夜基线 `night_routine`：`usual_sleep_start / usual_sleep_end / night_wake_count_p90 / night_wake_duration_p90_sec / returned_to_bedroom_rate`
+
+保存后可用以下接口确认：
+
+```bash
+curl "http://192.168.10.64:8010/api/v2/personal-baselines?elder_id=elder_001"
+```
+
+如果未来需要恢复自动统计基线，将 `AUTO_PERSONAL_BASELINE_ENABLED=true` 后重启 `edge-mcp-server` 即可。
+
 本文说明 v2 的长期行为片段、个人基线摘要和 AI review candidate 如何使用与验证。
 
 ## 1. 数据链路

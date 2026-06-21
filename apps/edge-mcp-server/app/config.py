@@ -47,6 +47,8 @@ class Settings:
     database_url: str
     orchestrator_url: str | None
     simulate_device_when_mqtt_unavailable: bool
+    auto_personal_baseline_enabled: bool
+    auto_candidate_enabled: bool
     config_dir: Path
     data_dir: Path
 
@@ -62,6 +64,8 @@ def get_settings() -> Settings:
         database_url=_normalize_sqlite_url(os.getenv("DATABASE_URL", default_db)),
         orchestrator_url=os.getenv("ORCHESTRATOR_URL") or None,
         simulate_device_when_mqtt_unavailable=_env_bool("SIMULATE_DEVICE_WHEN_MQTT_UNAVAILABLE", True),
+        auto_personal_baseline_enabled=_env_bool("AUTO_PERSONAL_BASELINE_ENABLED", False),
+        auto_candidate_enabled=_env_bool("AUTO_CANDIDATE_ENABLED", True),
         config_dir=CONFIG_DIR,
         data_dir=DATA_DIR,
     )
