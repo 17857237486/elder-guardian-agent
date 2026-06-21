@@ -87,7 +87,7 @@ class ScenarioPublishRequest(BaseModel):
     trigger_second: int = Field(default=60, ge=0, le=120)
     elder_id: str = Field(default="elder_001")
     duration_sec: int = Field(default=120, ge=5, le=600)
-    interval_sec: int = Field(default=5, ge=1, le=60)
+    interval_sec: int = Field(default=2, ge=1, le=60)
     realtime: bool = False
 
 
@@ -445,6 +445,55 @@ def publish_risk_signal(event_type: str, elder_id: str, room: str) -> int:
     return 0
 
 
+async def current_heart_rate_p90(elder_id: str) -> int:
+    try:
+        async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+            response = await client.get(f"{EDGE_API_BASE}/api/v2/personal-baselines", params={"elder_id": elder_id})
+            response.raise_for_status()
+            baselines = response.json().get("personal_baselines", [])
+    except httpx.HTTPError:
+        return 100
+    for baseline in baselines:
+        if baseline.get("baseline_type") == "heart_rate_daily":
+            try:
+                return int(float(baseline.get("metrics", {}).get("p90", 100)))
+            except (TypeError, ValueError):
+                return 100
+    return 100
+
+
+async def create_heart_rate_candidate(elder_id: str, room: str, *, latest_value: int = 115) -> dict[str, Any]:
+    baseline_p90 = await current_heart_rate_p90(elder_id)
+    candidate = {
+        "elder_id": elder_id,
+        "candidate_type": "vital_baseline_anomaly",
+        "priority": "medium",
+        "status": "pending",
+        "reason": "heart rate window above personal p90",
+        "source_segment_ids": [],
+        "baseline_refs": ["heart_rate_daily:default"],
+        "features": {
+            "metric": "heart_rate",
+            "direction": "high",
+            "latest_value": latest_value,
+            "min": latest_value,
+            "max": latest_value,
+            "p10": latest_value,
+            "p90": latest_value,
+            "baseline_p90": baseline_p90,
+            "sample_count": 1,
+            "window_seconds": 300,
+            "room": room,
+            "demo_source": "background_mqtt_timeline",
+            "dedupe_key": f"demo-heart-rate-high-{elder_id}-{room}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
+        },
+    }
+    async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+        response = await client.post(f"{EDGE_API_BASE}/api/v2/ai-review-candidates", json=candidate)
+        response.raise_for_status()
+        return response.json()
+
+
 def manual_risk_samples(event_type: str, elder_id: str, room: str) -> tuple[SensorVitalSample, SensorEnvSample]:
     vital = {"heart_rate": 78, "spo2": 96, "systolic_bp": 128, "diastolic_bp": 80, "body_temperature": 36.6}
     env = {"temperature": 25.0, "humidity": 50.0, "co2_ppm": 900, "gas_ppm": 0, "smoke_ppm": 0}
@@ -454,6 +503,8 @@ def manual_risk_samples(event_type: str, elder_id: str, room: str) -> tuple[Sens
         vital.update(heart_rate=88, spo2=90)
     elif event_type == "heart_rate_abnormal":
         vital.update(heart_rate=138)
+    elif event_type == "heart_rate_baseline_anomaly":
+        vital.update(heart_rate=115, systolic_bp=136, diastolic_bp=84)
     elif event_type == "co2_high":
         env.update(co2_ppm=1800)
     elif event_type == "gas_leak":
@@ -619,6 +670,8 @@ async def run_scenario_job(request: ScenarioPublishRequest, samples: list[dict[s
             scenario_job["published_messages"] += publish_sample_pair(sample)
             if not signal_published and int(sample.get("time_offset_sec", 0)) >= request.trigger_second:
                 scenario_job["published_messages"] += publish_risk_signal(request.event_type, request.elder_id, request.event_room)
+                if request.event_type == "heart_rate_baseline_anomaly":
+                    await create_heart_rate_candidate(request.elder_id, request.event_room)
                 signal_published = True
             scenario_job["sent_samples"] += 1
             if index < len(samples) - 1:
@@ -855,6 +908,8 @@ async def submit_manual_risk_event(request: ManualRiskEventRequest) -> dict[str,
     publish_model(elder_sensor_vital(request.elder_id), vital)
     publish_model(elder_sensor_env(request.elder_id), env)
     messages = 2 + publish_risk_signal(request.event_type, request.elder_id, request.room)
+    if request.event_type == "heart_rate_baseline_anomaly":
+        await create_heart_rate_candidate(request.elder_id, request.room)
     return {"ok": True, "event_type": request.event_type, "elder_id": request.elder_id, "messages": messages}
 
 

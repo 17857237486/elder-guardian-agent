@@ -34,6 +34,7 @@ EVENT_LABELS = {
     "spo2_critical": "严重低血氧",
     "spo2_low": "低血氧",
     "heart_rate_abnormal": "心率异常",
+    "heart_rate_baseline_anomaly": "P2 心率基线异常",
     "suspected_fall": "疑似跌倒",
     "long_static": "长时间静止",
     "co2_high": "CO2 偏高",
@@ -350,6 +351,10 @@ def inject_event(
             vital["heart_rate"] = round(lerp(vital["heart_rate"], 138, intensity))
             vital["systolic_bp"] = round(lerp(vital["systolic_bp"], 145, intensity))
             vital["diastolic_bp"] = round(lerp(vital["diastolic_bp"], 88, intensity))
+        elif event_type == "heart_rate_baseline_anomaly":
+            vital["heart_rate"] = round(lerp(vital["heart_rate"], 115, intensity))
+            vital["systolic_bp"] = round(lerp(vital["systolic_bp"], 136, intensity))
+            vital["diastolic_bp"] = round(lerp(vital["diastolic_bp"], 84, intensity))
         elif event_type == "co2_high":
             env["co2_ppm"] = round(lerp(env["co2_ppm"], 1800, intensity))
             env["temperature"] = round(lerp(env["temperature"], max(env["temperature"], 26.0), intensity), 1)
@@ -372,6 +377,8 @@ def inject_event(
             env,
             sample["activity"]["motion_state"],
         )
+        if event_type == "heart_rate_baseline_anomaly":
+            sample["risk_hint"] = {"level": "P2", "reason": "心率持续高于个人 p90，进入 Candidate 本地复核。"}
         sample["note"] = f"{sample['scene_label']} 场景中在第 {trigger_second} 秒注入 {EVENT_LABELS[event_type]} 事件。"
     return samples
 
@@ -444,7 +451,7 @@ def main() -> None:
     parser.add_argument("--trigger-second", type=int, default=60)
     parser.add_argument("--event-room", choices=ROOM_KEYS, default="living_room")
     parser.add_argument("--duration-sec", type=int, default=120)
-    parser.add_argument("--interval-sec", type=int, default=5)
+    parser.add_argument("--interval-sec", type=int, default=2)
     parser.add_argument("--elder-id", default="elder_001")
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", type=int, default=1883)

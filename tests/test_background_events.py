@@ -27,6 +27,7 @@ EXPECTED_EVENTS = {
     "spo2_critical",
     "spo2_low",
     "heart_rate_abnormal",
+    "heart_rate_baseline_anomaly",
     "suspected_fall",
     "long_static",
     "co2_high",
@@ -62,6 +63,13 @@ class BackgroundEventTests(unittest.TestCase):
         self.assertEqual(sample["vital"]["heart_rate"], 138)
         self.assertGreaterEqual(sample["vital"]["spo2"], 92)
         self.assertEqual(sample["risk_hint"]["level"], "P1")
+
+    def test_heart_rate_candidate_scenario_stays_below_hard_rule(self) -> None:
+        sample = build_event_samples("dinner", "heart_rate_baseline_anomaly", 0, 10, 5, "elder_001")[-1]
+        self.assertEqual(sample["vital"]["heart_rate"], 115)
+        self.assertGreaterEqual(sample["vital"]["heart_rate"], 45)
+        self.assertLessEqual(sample["vital"]["heart_rate"], 130)
+        self.assertEqual(sample["risk_hint"]["level"], "P2")
 
     def test_mild_heart_rate_variation_is_record_only_in_scenario_hint(self) -> None:
         env = {"gas_ppm": 0, "co2_ppm": 800, "temperature": 24}

@@ -117,6 +117,15 @@ function observationRiskHint(observation?: AnyRecord | null): ObservationRiskHin
   return null;
 }
 
+const RISK_PRIORITY: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3, P4: 4 };
+
+function observationGroupRiskHint(observations: AnyRecord[]): ObservationRiskHint {
+  return observations
+    .map((observation) => observationRiskHint(observation))
+    .filter((hint): hint is NonNullable<ObservationRiskHint> => Boolean(hint))
+    .sort((a, b) => (RISK_PRIORITY[a.risk_level] ?? 99) - (RISK_PRIORITY[b.risk_level] ?? 99))[0] ?? null;
+}
+
 function eventMatchesObservationRisk(event: AnyRecord | null, hint: ObservationRiskHint): boolean {
   if (!event || !hint) return false;
   const eventType = String(event.event_type ?? "");
@@ -136,7 +145,8 @@ const activeDemoTarget = computed<DemoTarget>(() => {
   const latestObservation = latestInputObservation.value;
   const latestObservationTime = latestObservation ? new Date(eventTime(latestObservation)).getTime() : 0;
   const latestEventTime = latestEvent.value ? new Date(eventTime(latestEvent.value)).getTime() : 0;
-  const latestObservationRisk = observationRiskHint(latestObservation);
+  const latestObservationGroup = latestInputObservationGroup(latestObservation);
+  const latestObservationRisk = observationGroupRiskHint(latestObservationGroup);
 
   const activeStates = new Set(["event_detected", "rule_classified", "action_planned", "ask_elder", "wait_response", "family_alert", "emergency_alert", "escalated"]);
   const activeEvent = events.find((event) =>
