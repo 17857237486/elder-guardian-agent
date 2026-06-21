@@ -446,21 +446,36 @@ def publish_risk_signal(event_type: str, elder_id: str, room: str) -> int:
     return 0
 
 
-async def current_heart_rate_p90(elder_id: str) -> int:
+async def current_vital_baseline_value(elder_id: str, baseline_type: str, metric_key: str, default: int) -> int:
     try:
         async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
             response = await client.get(f"{EDGE_API_BASE}/api/v2/personal-baselines", params={"elder_id": elder_id})
             response.raise_for_status()
             baselines = response.json().get("personal_baselines", [])
     except httpx.HTTPError:
-        return 100
+        return default
     for baseline in baselines:
-        if baseline.get("baseline_type") == "heart_rate_daily":
+        if baseline.get("baseline_type") == baseline_type:
             try:
-                return int(float(baseline.get("metrics", {}).get("p90", 100)))
+                return int(float(baseline.get("metrics", {}).get(metric_key, default)))
             except (TypeError, ValueError):
-                return 100
-    return 100
+                return default
+    return default
+
+
+async def current_heart_rate_p90(elder_id: str) -> int:
+    return await current_vital_baseline_value(elder_id, "heart_rate_daily", "p90", 100)
+
+
+async def current_spo2_p10(elder_id: str) -> int:
+    return await current_vital_baseline_value(elder_id, "spo2_daily", "p10", 95)
+
+
+async def post_vital_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+        response = await client.post(f"{EDGE_API_BASE}/api/v2/ai-review-candidates", json=candidate)
+        response.raise_for_status()
+        return response.json()
 
 
 async def create_heart_rate_candidate(elder_id: str, room: str, *, latest_value: int = 115) -> dict[str, Any]:
@@ -482,17 +497,43 @@ async def create_heart_rate_candidate(elder_id: str, room: str, *, latest_value:
             "p10": latest_value,
             "p90": latest_value,
             "baseline_p90": baseline_p90,
-            "sample_count": 1,
+            "sample_count": 24,
             "window_seconds": 300,
             "room": room,
             "demo_source": "background_mqtt_timeline",
             "dedupe_key": f"demo-heart-rate-high-{elder_id}-{room}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
         },
     }
-    async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
-        response = await client.post(f"{EDGE_API_BASE}/api/v2/ai-review-candidates", json=candidate)
-        response.raise_for_status()
-        return response.json()
+    return await post_vital_candidate(candidate)
+
+
+async def create_spo2_candidate(elder_id: str, room: str, *, latest_value: int = 94) -> dict[str, Any]:
+    baseline_p10 = await current_spo2_p10(elder_id)
+    candidate = {
+        "elder_id": elder_id,
+        "candidate_type": "vital_baseline_anomaly",
+        "priority": "medium",
+        "status": "pending",
+        "reason": "spo2 window below personal p10",
+        "source_segment_ids": [],
+        "baseline_refs": ["spo2_daily:default"],
+        "features": {
+            "metric": "spo2",
+            "direction": "low",
+            "latest_value": latest_value,
+            "min": latest_value,
+            "max": latest_value,
+            "p10": latest_value,
+            "p90": latest_value,
+            "baseline_p10": baseline_p10,
+            "sample_count": 24,
+            "window_seconds": 300,
+            "room": room,
+            "demo_source": "background_mqtt_timeline",
+            "dedupe_key": f"demo-spo2-low-{elder_id}-{room}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
+        },
+    }
+    return await post_vital_candidate(candidate)
 
 
 def manual_risk_samples(event_type: str, elder_id: str, room: str) -> tuple[SensorVitalSample, SensorEnvSample]:
@@ -506,6 +547,8 @@ def manual_risk_samples(event_type: str, elder_id: str, room: str) -> tuple[Sens
         vital.update(heart_rate=138)
     elif event_type == "heart_rate_baseline_anomaly":
         vital.update(heart_rate=115, systolic_bp=136, diastolic_bp=84)
+    elif event_type == "spo2_baseline_anomaly":
+        vital.update(heart_rate=86, spo2=94)
     elif event_type == "co2_high":
         env.update(co2_ppm=1800)
     elif event_type == "gas_leak":
@@ -673,6 +716,8 @@ async def run_scenario_job(request: ScenarioPublishRequest, samples: list[dict[s
                 scenario_job["published_messages"] += publish_risk_signal(request.event_type, request.elder_id, request.event_room)
                 if request.event_type == "heart_rate_baseline_anomaly":
                     await create_heart_rate_candidate(request.elder_id, request.event_room)
+                elif request.event_type == "spo2_baseline_anomaly":
+                    await create_spo2_candidate(request.elder_id, request.event_room)
                 signal_published = True
             scenario_job["sent_samples"] += 1
             if index < len(samples) - 1:
@@ -913,6 +958,8 @@ async def submit_manual_risk_event(request: ManualRiskEventRequest) -> dict[str,
     messages = 2 + publish_risk_signal(request.event_type, request.elder_id, request.room)
     if request.event_type == "heart_rate_baseline_anomaly":
         await create_heart_rate_candidate(request.elder_id, request.room)
+    elif request.event_type == "spo2_baseline_anomaly":
+        await create_spo2_candidate(request.elder_id, request.room)
     return {"ok": True, "event_type": request.event_type, "elder_id": request.elder_id, "messages": messages}
 
 

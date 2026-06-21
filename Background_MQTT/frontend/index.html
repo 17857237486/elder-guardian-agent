@@ -843,6 +843,7 @@
                 <option value="spo2_low">P1 低血氧</option>
                 <option value="heart_rate_abnormal">P1 心率异常</option>
                 <option value="heart_rate_baseline_anomaly">P2 心率基线异常（Candidate复核）</option>
+                <option value="spo2_baseline_anomaly">P2 血氧基线异常（Candidate复核）</option>
                 <option value="suspected_fall">P1 疑似跌倒</option>
                 <option value="long_static">P2 长时间静止</option>
                 <option value="co2_high">P3 CO2 偏高</option>
@@ -969,6 +970,7 @@
           <button class="template-button" type="button" data-template="spo2_low">P1 低血氧<br />高风险确认</button>
           <button class="template-button" type="button" data-template="heart_rate_abnormal">P1 心率异常<br />本地询问</button>
           <button class="template-button" type="button" data-template="heart_rate_baseline_anomaly">P2 心率基线异常<br />Candidate复核</button>
+          <button class="template-button" type="button" data-template="spo2_baseline_anomaly">P2 血氧基线异常<br />Candidate复核</button>
           <button class="template-button" type="button" data-template="suspected_fall">P1 疑似跌倒<br />视觉事件</button>
           <button class="template-button" type="button" data-template="long_static">P2 长时间静止<br />视觉事件</button>
           <button class="template-button" type="button" data-template="co2_high">P3 CO2 偏高<br />通风建议</button>
@@ -1277,6 +1279,14 @@
           vital: { heart_rate: 115, spo2: 96, systolic_bp: 136, diastolic_bp: 84, body_temperature: 36.7 },
           env: { room: "living_room", temperature: 25.0, humidity: 50.0, co2_ppm: 920, gas_ppm: 0, smoke_ppm: 0 },
         },
+        spo2_baseline_anomaly: {
+          name: "血氧基线异常",
+          event: "vital_baseline_anomaly",
+          risk: "P2",
+          reason: "血氧约 94%，未达到 P1/P0 硬规则，但低于个人 p10，创建 Candidate 交给本地模型复核。",
+          vital: { heart_rate: 86, spo2: 94, systolic_bp: 128, diastolic_bp: 80, body_temperature: 36.6 },
+          env: { room: "living_room", temperature: 25.0, humidity: 50.0, co2_ppm: 920, gas_ppm: 0, smoke_ppm: 0 },
+        },
         suspected_fall: {
           name: "疑似跌倒",
           event: "suspected_fall",
@@ -1345,6 +1355,7 @@
         spo2_low: "血氧平滑下降到 88%-91%，触发 spo2_low P1。",
         heart_rate_abnormal: "心率在触发点前后升高，高于 130 bpm 后触发 heart_rate_abnormal P1。",
         heart_rate_baseline_anomaly: "心率在触发点后维持约 115 bpm，不触发硬规则；8090 创建 vital_baseline_anomaly Candidate，由本地模型判断是否升级为 P2。",
+        spo2_baseline_anomaly: "血氧在触发点后维持约 94%，不触发 spo2_low P1/P0；8090 创建 vital_baseline_anomaly Candidate，由本地模型判断是否升级为 P2。",
         suspected_fall: "在触发点发布 suspected_fall 视觉事件，触发 P1；无关键帧时本地视觉模型会安全降级。",
         long_static: "在触发点发布 long_static 视觉事件，触发 P2；用于模拟一级视觉检测器上报。",
         co2_high: "CO2 在触发点前后升高，超过 1500 ppm 后触发 co2_high P3。",

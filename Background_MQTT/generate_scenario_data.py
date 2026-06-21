@@ -35,6 +35,7 @@ EVENT_LABELS = {
     "spo2_low": "低血氧",
     "heart_rate_abnormal": "心率异常",
     "heart_rate_baseline_anomaly": "P2 心率基线异常",
+    "spo2_baseline_anomaly": "P2 血氧基线异常",
     "suspected_fall": "疑似跌倒",
     "long_static": "长时间静止",
     "co2_high": "CO2 偏高",
@@ -355,6 +356,9 @@ def inject_event(
             vital["heart_rate"] = round(lerp(vital["heart_rate"], 115, intensity))
             vital["systolic_bp"] = round(lerp(vital["systolic_bp"], 136, intensity))
             vital["diastolic_bp"] = round(lerp(vital["diastolic_bp"], 84, intensity))
+        elif event_type == "spo2_baseline_anomaly":
+            vital["spo2"] = round(lerp(vital["spo2"], 94, intensity))
+            vital["heart_rate"] = round(lerp(vital["heart_rate"], max(vital["heart_rate"], 86), intensity))
         elif event_type == "co2_high":
             env["co2_ppm"] = round(lerp(env["co2_ppm"], 1800, intensity))
             env["temperature"] = round(lerp(env["temperature"], max(env["temperature"], 26.0), intensity), 1)
@@ -379,6 +383,8 @@ def inject_event(
         )
         if event_type == "heart_rate_baseline_anomaly":
             sample["risk_hint"] = {"level": "P2", "reason": "心率持续高于个人 p90，进入 Candidate 本地复核。"}
+        if event_type == "spo2_baseline_anomaly":
+            sample["risk_hint"] = {"level": "P2", "reason": "血氧持续低于个人 p10，进入 Candidate 本地复核。"}
         sample["note"] = f"{sample['scene_label']} 场景中在第 {trigger_second} 秒注入 {EVENT_LABELS[event_type]} 事件。"
     return samples
 

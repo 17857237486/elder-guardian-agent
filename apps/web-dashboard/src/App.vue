@@ -148,9 +148,17 @@ const activeDemoTarget = computed<DemoTarget>(() => {
   const latestObservation = latestInputObservation.value;
   const latestObservationTime = latestObservation ? new Date(eventTime(latestObservation)).getTime() : 0;
   const latestEventTime = latestEvent.value ? new Date(eventTime(latestEvent.value)).getTime() : 0;
+  const latestCandidate = candidates[0];
+  const latestCandidateTime = latestCandidate ? new Date(eventTime(latestCandidate)).getTime() : 0;
+  const activeCandidate = candidates.find((candidate) => ["pending", "reviewing"].includes(String(candidate.status ?? "").toLowerCase()));
+  const activeCandidateTime = activeCandidate ? new Date(eventTime(activeCandidate)).getTime() : 0;
   const latestObservationGroup = latestInputObservationGroup(latestObservation);
   const latestObservationRisk = observationGroupRiskHint(latestObservationGroup);
   const latestEventRisk = latestEvent.value ? riskOf(latestEvent.value) : "";
+
+  if (activeCandidate?.candidate_id && activeCandidateTime > latestEventTime) {
+    return { kind: "candidate", id: String(activeCandidate.candidate_id), item: activeCandidate };
+  }
 
   const activeStates = new Set(["event_detected", "rule_classified", "action_planned", "ask_elder", "wait_response", "family_alert", "emergency_alert", "escalated"]);
   const activeEvent = events.find((event) =>
@@ -163,6 +171,10 @@ const activeDemoTarget = computed<DemoTarget>(() => {
 
   if (eventMatchesObservationRisk(latestEvent.value, latestObservationRisk)) {
     return { kind: "event", id: String(latestEvent.value.event_id), item: latestEvent.value };
+  }
+
+  if (latestCandidate?.candidate_id && latestCandidateTime > latestEventTime) {
+    return { kind: "candidate", id: String(latestCandidate.candidate_id), item: latestCandidate };
   }
 
   if (
@@ -188,12 +200,11 @@ const activeDemoTarget = computed<DemoTarget>(() => {
   const workflowEvent = events.find((event) => steps.some((step) => step.event_id === event.event_id));
   if (workflowEvent?.event_id) return { kind: "event", id: String(workflowEvent.event_id), item: workflowEvent };
 
-  const activeCandidate = candidates.find((candidate) => ["pending", "reviewing"].includes(String(candidate.status ?? "").toLowerCase()));
   if (activeCandidate?.candidate_id) return { kind: "candidate", id: String(activeCandidate.candidate_id), item: activeCandidate };
 
-  const latestCandidate = candidates[0];
-  if (latestCandidate?.candidate_id) return { kind: "candidate", id: String(latestCandidate.candidate_id), item: latestCandidate };
+  if (latestCandidate?.candidate_id && latestCandidateTime > latestEventTime) return { kind: "candidate", id: String(latestCandidate.candidate_id), item: latestCandidate };
   if (latestEvent.value?.event_id) return { kind: "event", id: String(latestEvent.value.event_id), item: latestEvent.value };
+  if (latestCandidate?.candidate_id) return { kind: "candidate", id: String(latestCandidate.candidate_id), item: latestCandidate };
   return null;
 });
 const latestLocalAnalysis = computed(() =>

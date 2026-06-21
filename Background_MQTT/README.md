@@ -20,6 +20,7 @@
 - `spo2_low`：P1 低血氧，88%-91%
 - `heart_rate_abnormal`：P1 心率异常，高于 130 bpm
 - `heart_rate_baseline_anomaly`：P2 心率基线异常，约 115 bpm，创建 `vital_baseline_anomaly` Candidate 交给本地模型复核
+- `spo2_baseline_anomaly`：P2 血氧基线异常，约 94%，不触发硬规则，创建 `vital_baseline_anomaly` Candidate 交给本地模型复核
 - `suspected_fall`：P1 疑似跌倒，发布视觉事件
 - `long_static`：P2 长时间静止，发布视觉事件
 - `co2_high`：P3 CO2 偏高，高于 1500 ppm
@@ -131,6 +132,7 @@ python Background_MQTT\generate_scenario_data.py --scene morning_getup --host lo
 - `血氧异常`：血氧低于 88%，触发 `spo2_low` 紧急风险
 - `心率异常`：心率高于 130，触发 `heart_rate_abnormal`
 - `心率基线异常`：心率约 115 bpm，不触发硬规则；创建 `vital_baseline_anomaly` Candidate，由本地模型复核是否升级为 P2
+- `血氧基线异常`：血氧约 94%，不触发 `spo2_low` 硬规则；创建 `vital_baseline_anomaly` Candidate，由本地模型复核是否升级为 P2
 - `CO2 偏高`：CO2 高于 1500 ppm，触发 `co2_high`
 - `燃气泄漏`：燃气高于 100 ppm，触发 `gas_leak` P0 告警
 
