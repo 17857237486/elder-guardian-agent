@@ -40,10 +40,12 @@ const loading = ref(false);
 const lastUpdated = ref("");
 const loadError = ref("");
 const clearNotice = ref("");
-const clearedAt = ref<string | null>(localStorage.getItem("dashboardClearedAt"));
+const clearing = ref(false);
+const clearedAt = ref<string | null>(null);
+localStorage.removeItem("dashboardClearedAt");
 let refreshTimer: number | undefined;
 
-const isCleared = computed(() => Boolean(clearedAt.value));
+const isCleared = computed(() => Boolean(clearNotice.value));
 
 function itemTimestamp(item?: AnyRecord | null): string {
   if (!item) return "";
@@ -51,10 +53,7 @@ function itemTimestamp(item?: AnyRecord | null): string {
 }
 
 function isAfterClearTime(item?: AnyRecord | null): boolean {
-  if (!clearedAt.value) return true;
-  const timestamp = itemTimestamp(item);
-  if (!timestamp) return false;
-  return new Date(timestamp).getTime() > new Date(clearedAt.value).getTime();
+  return Boolean(item);
 }
 
 const filteredEvents = computed(() => ((state.events ?? []) as AnyRecord[]).filter(isAfterClearTime));
@@ -119,6 +118,10 @@ function observationRiskHint(observation?: AnyRecord | null): ObservationRiskHin
 
 const RISK_PRIORITY: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3, P4: 4 };
 
+function riskPriority(risk: string): number {
+  return RISK_PRIORITY[risk] ?? 99;
+}
+
 function observationGroupRiskHint(observations: AnyRecord[]): ObservationRiskHint {
   return observations
     .map((observation) => observationRiskHint(observation))
@@ -147,6 +150,7 @@ const activeDemoTarget = computed<DemoTarget>(() => {
   const latestEventTime = latestEvent.value ? new Date(eventTime(latestEvent.value)).getTime() : 0;
   const latestObservationGroup = latestInputObservationGroup(latestObservation);
   const latestObservationRisk = observationGroupRiskHint(latestObservationGroup);
+  const latestEventRisk = latestEvent.value ? riskOf(latestEvent.value) : "";
 
   const activeStates = new Set(["event_detected", "rule_classified", "action_planned", "ask_elder", "wait_response", "family_alert", "emergency_alert", "escalated"]);
   const activeEvent = events.find((event) =>
@@ -154,17 +158,19 @@ const activeDemoTarget = computed<DemoTarget>(() => {
     activeStates.has(String(event.state ?? "").toLowerCase())
   );
   if (activeEvent?.event_id) {
-    const activeEventTime = new Date(eventTime(activeEvent)).getTime();
-    if (latestObservationRisk || Number.isNaN(latestObservationTime) || activeEventTime >= latestObservationTime) {
-      return { kind: "event", id: String(activeEvent.event_id), item: activeEvent };
-    }
+    return { kind: "event", id: String(activeEvent.event_id), item: activeEvent };
   }
 
   if (eventMatchesObservationRisk(latestEvent.value, latestObservationRisk)) {
     return { kind: "event", id: String(latestEvent.value.event_id), item: latestEvent.value };
   }
 
-  if (latestObservation?.observation_id && latestObservationTime > latestEventTime && !latestObservationRisk) {
+  if (
+    latestObservation?.observation_id &&
+    latestObservationTime > latestEventTime &&
+    !latestObservationRisk &&
+    (!latestEvent.value || riskPriority(latestEventRisk) >= riskPriority("P3"))
+  ) {
     return {
       kind: "normal_input",
       id: String(latestObservation.observation_id),
@@ -260,7 +266,11 @@ const RULE_RESULT_STATES = new Set([
   "family_alert",
   "emergency_alert",
   "escalated",
-  "resolved"
+  "resolved",
+  "completed",
+  "handled",
+  "closed",
+  "final_advisory"
 ]);
 
 function hasEventRuleResult(item: AnyRecord, risk: string): boolean {
@@ -272,6 +282,14 @@ function hasEventRuleResult(item: AnyRecord, risk: string): boolean {
 function ruleNodeState(item: AnyRecord, risk: string, step?: AnyRecord | null): DemoNodeState {
   if (step) return stepState(step);
   return hasEventRuleResult(item, risk) ? "completed" : "idle";
+}
+
+function isDeterministicRuleOnlyEvent(item: AnyRecord, risk: string): boolean {
+  const eventType = String(item.event_type ?? "");
+  return (
+    (risk === "P0" && eventType === "gas_leak") ||
+    (risk === "P3" && ["co2_high", "temperature_high", "temperature_low", "humidity_abnormal"].includes(eventType))
+  );
 }
 
 function ruleNodeNote(item: AnyRecord, risk: string, step?: AnyRecord | null): string {
@@ -394,6 +412,15 @@ const demoTitle = computed(() => {
     return "当前演示：normal · P4 · 正常数据已记录";
   }
   const item = target.item;
+  const risk = riskOf(item);
+  if (isDeterministicRuleOnlyEvent(item, risk)) {
+    const actions = relatedItems(target, "action_executions");
+    const alerts = relatedItems(target, "alerts");
+    const phase = hasEventRuleResult(item, risk) || actions.length || alerts.length
+      ? "rule handling completed"
+      : "rule processing";
+    return `Current demo: ${item.event_type ?? "--"} · ${risk} · ${phase}`;
+  }
   const finalStep = findTargetStep(target, "final_advisory");
   const localStep = findTargetStep(target, "local_multiframe_analysis");
   const phase = finalStep ? "最终建议已生成" : localStep ? "本地模型已处理" : "规则处理中";
@@ -435,6 +462,7 @@ const demoNodes = computed(() => {
   const cloudOutput = cloudStep?.output ?? {};
   const hasHmi = Boolean(prompts.length || responses.length || alerts.length);
   const p12Waiting = ["P1", "P2"].includes(risk) && prompts.some((prompt) => String(prompt.status ?? "").toLowerCase() === "waiting");
+  const deterministicRuleOnly = target.kind === "event" && isDeterministicRuleOnlyEvent(item, risk);
 
   if (target.kind === "normal_input") {
     const group = latestInputObservationGroup(target.item);
@@ -522,7 +550,7 @@ const demoNodes = computed(() => {
     {
       key: "local",
       name: "本地 AI / Candidate",
-      state: stepState(localStep),
+      state: deterministicRuleOnly ? "skipped" as DemoNodeState : stepState(localStep),
       note: shortText(
         localOutput.reason === "deterministic_p3_rule"
           ? "P3 确定性规则，无需本地模型"
@@ -533,7 +561,7 @@ const demoNodes = computed(() => {
     {
       key: "cloud",
       name: "云端复核",
-      state: stepState(cloudStep),
+      state: deterministicRuleOnly ? "skipped" as DemoNodeState : stepState(cloudStep),
       note: shortText(cloudOutput.reason === "deterministic_p3_rule" ? "确定性规则跳过云端" : `${cloudOutput.status ?? "等待复核"}${cloudOutput.risk_level ? ` · ${cloudOutput.risk_level}` : ""}`),
       time: eventTime(cloudStep ?? item)
     },
@@ -626,6 +654,53 @@ function restoreDashboardDisplay() {
   clearNotice.value = "";
 }
 
+function resetRuntimeState() {
+  state.current_risk_level = "P4";
+  state.events = [];
+  state.observations = [];
+  state.device_readings = [];
+  state.device_readings_latest = [];
+  state.ai_review_candidates = [];
+  state.workflows = [];
+  state.workflow_steps = [];
+  state.tool_calls = [];
+  state.action_executions = [];
+  state.hmi_prompts = [];
+  state.hmi_responses = [];
+  state.current_hmi_prompt = null;
+  state.alerts = [];
+}
+
+async function clearDashboardHistory() {
+  if (clearing.value) return;
+  clearing.value = true;
+  loadError.value = "";
+  try {
+    const response = await fetch(`${API_BASE}/api/v2/dashboard/clear`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ elder_id: state.elder_id ?? "elder_001" })
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    resetRuntimeState();
+    clearedAt.value = new Date().toISOString();
+    const total = Object.values(result.deleted ?? {}).reduce((sum: number, value) => sum + Number(value || 0), 0);
+    clearNotice.value = `演示历史已清除，共删除 ${total} 条记录，等待新数据进入`;
+    lastUpdated.value = formatTime(new Date().toISOString());
+  } catch (error) {
+    loadError.value = `清除失败：${error instanceof Error ? error.message : "请求失败"}`;
+  } finally {
+    clearing.value = false;
+  }
+}
+
+async function refreshDashboardDisplay() {
+  clearNotice.value = "";
+  clearedAt.value = null;
+  await loadState();
+}
+
 function deviceOnline(reading: AnyRecord): boolean {
   if (typeof reading.online === "boolean") return reading.online;
   const observed = new Date(reading.observed_at ?? reading.created_at ?? "");
@@ -685,8 +760,8 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
         </p>
       </div>
       <div class="header-actions">
-        <button type="button" @click="clearDashboardDisplay">清空当前显示</button>
-        <button type="button" :disabled="!isCleared" @click="restoreDashboardDisplay">恢复显示全部</button>
+        <button type="button" :disabled="clearing" @click="clearDashboardHistory">{{ clearing ? "清除中..." : "清除演示历史" }}</button>
+        <button type="button" @click="refreshDashboardDisplay">刷新当前状态</button>
         <strong :class="summaryRisk">
           {{ summaryRisk }}
         </strong>

@@ -664,6 +664,38 @@ def list_hmi_responses(db: Session, elder_id: str, limit: int = 10) -> list[dict
     return [row_to_dict(row) for row in rows]
 
 
+def clear_demo_runtime_history(
+    db: Session,
+    elder_id: str,
+    *,
+    clear_before: datetime | None = None,
+) -> dict[str, int]:
+    cutoff = clear_before or datetime.now(timezone.utc)
+    targets: list[tuple[str, Any, Any]] = [
+        ("hmi_responses", models.HmiResponseModel, models.HmiResponseModel.created_at),
+        ("hmi_prompts", models.HmiPromptModel, models.HmiPromptModel.created_at),
+        ("alert_records", models.AlertRecordModel, models.AlertRecordModel.created_at),
+        ("action_executions", models.ActionExecutionModel, models.ActionExecutionModel.created_at),
+        ("tool_calls", models.ToolCallModel, models.ToolCallModel.created_at),
+        ("workflow_steps", models.WorkflowStepModel, models.WorkflowStepModel.created_at),
+        ("workflows", models.WorkflowModel, models.WorkflowModel.created_at),
+        ("ai_review_candidates", models.AiReviewCandidateModel, models.AiReviewCandidateModel.created_at),
+        ("normalized_events", models.NormalizedEventModel, models.NormalizedEventModel.created_at),
+        ("device_readings", models.DeviceReadingModel, models.DeviceReadingModel.created_at),
+        ("raw_observations", models.RawObservationModel, models.RawObservationModel.observed_at),
+    ]
+    counts: dict[str, int] = {}
+    for name, model, timestamp_column in targets:
+        deleted = (
+            db.query(model)
+            .filter(model.elder_id == elder_id, timestamp_column <= cutoff)
+            .delete(synchronize_session=False)
+        )
+        counts[name] = int(deleted or 0)
+    db.commit()
+    return counts
+
+
 def dashboard_state(db: Session, elder_id: str) -> dict[str, Any]:
     events = list_events(db, elder_id=elder_id, limit=30)
     observations = recent_observations(db, elder_id=elder_id, limit=20)

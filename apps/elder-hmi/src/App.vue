@@ -7,12 +7,14 @@ const state = reactive<AnyRecord>({ current_risk_level: "P4", events: [], curren
 const initialLoading = ref(true);
 const refreshing = ref(false);
 const submitting = ref(false);
+const clearing = ref(false);
 const networkMessage = ref("");
 const clearMessage = ref("");
-const clearedAt = ref<string | null>(localStorage.getItem("hmiClearedAt"));
+const clearedAt = ref<string | null>(null);
+localStorage.removeItem("hmiClearedAt");
 let refreshTimer: number | undefined;
 
-const isCleared = computed(() => Boolean(clearedAt.value));
+const isCleared = computed(() => Boolean(clearMessage.value));
 
 function itemTimestamp(item?: AnyRecord | null): string {
   if (!item) return "";
@@ -20,10 +22,7 @@ function itemTimestamp(item?: AnyRecord | null): string {
 }
 
 function isAfterClearTime(item?: AnyRecord | null): boolean {
-  if (!clearedAt.value) return true;
-  const timestamp = itemTimestamp(item);
-  if (!timestamp) return false;
-  return new Date(timestamp).getTime() > new Date(clearedAt.value).getTime();
+  return Boolean(item);
 }
 
 const rawWaitingPrompt = computed(() => state.current_hmi_prompt?.status === "waiting" ? state.current_hmi_prompt : null);
@@ -108,6 +107,43 @@ function restoreHmiDisplay() {
   clearMessage.value = "";
 }
 
+function resetHmiState() {
+  state.current_risk_level = "P4";
+  state.events = [];
+  state.current_hmi_prompt = null;
+  state.hmi_prompts = [];
+  state.hmi_responses = [];
+  state.alerts = [];
+}
+
+async function clearHmiHistory() {
+  if (clearing.value) return;
+  clearing.value = true;
+  networkMessage.value = "";
+  try {
+    const response = await fetch(`${API_BASE}/api/v2/hmi/clear`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ elder_id: state.elder_id ?? "elder_001" })
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    await response.json();
+    resetHmiState();
+    clearedAt.value = new Date().toISOString();
+    clearMessage.value = "演示提示已清除，系统正常守护中";
+  } catch (error) {
+    networkMessage.value = `清除失败：${error instanceof Error ? error.message : "请求失败"}`;
+  } finally {
+    clearing.value = false;
+  }
+}
+
+async function refreshHmiDisplay() {
+  clearMessage.value = "";
+  clearedAt.value = null;
+  await loadState();
+}
+
 function scheduleRefresh() {
   refreshTimer = window.setTimeout(async () => {
     await loadState();
@@ -128,8 +164,8 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
       <span>居家健康守护 v2</span>
       <div class="topbar-right">
         <span>{{ initialLoading ? "正在连接" : submitting ? "正在提交反馈" : "本地守护中" }}</span>
-        <button type="button" @click="clearHmiDisplay">清空提示</button>
-        <button type="button" :disabled="!isCleared" @click="restoreHmiDisplay">恢复显示全部</button>
+        <button type="button" :disabled="clearing" @click="clearHmiHistory">{{ clearing ? "清除中..." : "清除提示历史" }}</button>
+        <button type="button" @click="refreshHmiDisplay">刷新当前状态</button>
       </div>
     </section>
 

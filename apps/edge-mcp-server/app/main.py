@@ -81,6 +81,22 @@ async def dashboard_state(elder_id: str | None = None) -> dict[str, Any]:
         return repository.dashboard_state(db, elder_id or settings.elder_id)
 
 
+@app.post("/api/v2/dashboard/clear")
+async def clear_dashboard_history(payload: dict[str, Any] | None = None, elder_id: str | None = None) -> dict[str, Any]:
+    target_elder_id = elder_id or (payload or {}).get("elder_id") or settings.elder_id
+    with SessionLocal() as db:
+        counts = repository.clear_demo_runtime_history(db, str(target_elder_id))
+    return {"ok": True, "elder_id": target_elder_id, "deleted": counts}
+
+
+@app.post("/api/v2/hmi/clear")
+async def clear_hmi_history(payload: dict[str, Any] | None = None, elder_id: str | None = None) -> dict[str, Any]:
+    target_elder_id = elder_id or (payload or {}).get("elder_id") or settings.elder_id
+    with SessionLocal() as db:
+        counts = repository.clear_demo_runtime_history(db, str(target_elder_id))
+    return {"ok": True, "elder_id": target_elder_id, "deleted": counts}
+
+
 @app.get("/api/v2/observations")
 async def list_observations(elder_id: str | None = None, limit: int = 100) -> dict[str, Any]:
     with SessionLocal() as db:
