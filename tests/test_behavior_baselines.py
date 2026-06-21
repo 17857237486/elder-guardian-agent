@@ -74,21 +74,21 @@ class BehaviorBaselineTests(unittest.TestCase):
             assert night_wake.features["bathroom_stay_seconds"] == 360
 
             vital_obs = []
-            for index in range(18):
+            for index in range(24):
                 vital_obs.append(
                     obs(
                         f"vital_{index}",
                         "vital",
                         base + timedelta(seconds=index * 10),
-                        {"heart_rate": 70 + index, "spo2": 97 - (index % 3)},
+                        {"heart_rate": 92 + index, "spo2": 97 - (index % 3)},
                     )
                 )
             vital_segments = build_vital_segments(vital_obs)
             vital_types = {item.segment_type for item in vital_segments}
             assert {"heart_rate_window", "spo2_window"}.issubset(vital_types), vital_types
             heart = [item for item in vital_segments if item.segment_type == "heart_rate_window"][0]
-            assert heart.features["sample_count"] == 18
-            assert heart.features["max"] == 87
+            assert heart.features["sample_count"] == 24
+            assert heart.features["max"] == 115
 
             segment_dicts = [item.model_dump(mode="json") for item in segments + vital_segments]
             for day in range(1, 4):
@@ -111,9 +111,8 @@ class BehaviorBaselineTests(unittest.TestCase):
                 {"baseline_type": "heart_rate_daily", "metrics": {"p90": 75}},
                 {"baseline_type": "spo2_daily", "metrics": {"p10": 95}},
             ]
-            candidates = build_candidates(elder_id, segment_dicts, baseline_records, [], now=base + timedelta(days=1))
+            candidates = build_candidates(elder_id, segment_dicts, baseline_records, [], now=base + timedelta(minutes=5))
             candidate_types = {item.candidate_type for item in candidates}
-            assert "night_behavior_anomaly" in candidate_types
             assert "vital_baseline_anomaly" in candidate_types
             assert all(item.status == "pending" for item in candidates)
             """
@@ -199,7 +198,7 @@ class BehaviorBaselineTests(unittest.TestCase):
                 }
 
             observations = []
-            for index in range(6):
+            for index in range(24):
                 observations.append(obs(f"hr_high_{index}", index * 10, 115, 96))
                 observations.append(obs(f"hr_low_{index}", 300 + index * 10, 50, 96))
                 observations.append(obs(f"spo2_low_{index}", 600 + index * 10, 78, 94))
@@ -211,7 +210,7 @@ class BehaviorBaselineTests(unittest.TestCase):
                 {"baseline_type": "heart_rate_daily", "metrics": {"p10": 58, "p90": 100}},
                 {"baseline_type": "spo2_daily", "metrics": {"p10": 95}},
             ]
-            candidates = build_candidates(elder_id, segments, baselines, [], now=base + timedelta(hours=1))
+            candidates = build_candidates(elder_id, segments, baselines, [], now=base + timedelta(minutes=15))
             vital_candidates = [item for item in candidates if item.candidate_type == "vital_baseline_anomaly"]
             keys = {item.features["dedupe_key"] for item in vital_candidates}
             features = {(item.features["metric"], item.features["direction"]) for item in vital_candidates}
@@ -223,12 +222,18 @@ class BehaviorBaselineTests(unittest.TestCase):
             assert all("hard_spo2" not in key for key in keys), keys
             assert all("segment" not in item.features for item in vital_candidates), vital_candidates
 
+            short_segments = [item for item in segments if item["segment_type"] == "heart_rate_window"]
+            short_segments[0]["features"]["sample_count"] = 23
+            short_segments[0]["observation_count"] = 23
+            short_candidates = build_candidates(elder_id, [short_segments[0]], baselines, [], now=base + timedelta(minutes=5))
+            assert not [item for item in short_candidates if item.candidate_type == "vital_baseline_anomaly"], short_candidates
+
             repeated = build_candidates(
                 elder_id,
                 segments,
                 baselines,
                 [item.model_dump(mode="json") for item in vital_candidates],
-                now=base + timedelta(hours=1),
+                now=base + timedelta(minutes=15),
             )
             assert not [item for item in repeated if item.candidate_type == "vital_baseline_anomaly"], repeated
             """
@@ -248,7 +253,8 @@ class BehaviorBaselineTests(unittest.TestCase):
 
             Base.metadata.create_all(bind=engine)
             elder_id = "elder_001"
-            base = datetime(2026, 6, 20, 9, 0, tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            base = datetime.fromtimestamp(int(now.timestamp()) // 300 * 300, tz=timezone.utc) - timedelta(minutes=5)
 
             def obs(obs_id, seconds, heart_rate, spo2):
                 return {
@@ -259,7 +265,7 @@ class BehaviorBaselineTests(unittest.TestCase):
                     "observed_at": (base + timedelta(seconds=seconds)).isoformat(),
                 }
 
-            observations = [obs(f"hr_high_{index}", index * 10, 115, 96) for index in range(6)]
+            observations = [obs(f"hr_high_{index}", index * 10, 115, 96) for index in range(24)]
             segments = build_vital_segments(observations)
             with SessionLocal() as db:
                 for segment in segments:

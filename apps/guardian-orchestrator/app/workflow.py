@@ -38,6 +38,7 @@ DETERMINISTIC_P3_EVENTS = {
     EventType.TEMPERATURE_LOW.value,
     "humidity_abnormal",
 }
+HMI_OPTIONS = ["我没事", "需要帮助", "联系家属"]
 
 
 def risk_text(value: Any) -> str:
@@ -855,12 +856,89 @@ class WorkflowRunner:
         )
         return {"action": action, "alert": alert}
 
+    async def _create_hmi_prompt(self, workflow: WorkflowV2, event: NormalizedEventV2, message: str) -> dict[str, Any]:
+        return await self.edge.create_hmi_prompt(
+            HmiPromptV2(
+                workflow_id=workflow.workflow_id,
+                event_id=event.event_id,
+                elder_id=event.elder_id,
+                risk_level=event.risk_level,
+                event_type=str(event.event_type),
+                message=message,
+                options=HMI_OPTIONS,
+                timeout_sec=30,
+            )
+        )
+
+    @staticmethod
+    def _p3_hmi_message(event: NormalizedEventV2) -> str:
+        event_type = str(event.event_type)
+        room = event.room or "当前房间"
+        if event_type == EventType.TEMPERATURE_HIGH.value:
+            return f"{room} 室温偏高，系统已为您打开空调。您现在感觉还好吗？"
+        if event_type == EventType.TEMPERATURE_LOW.value:
+            return f"{room} 室温偏低，系统已为您打开空调。您现在感觉还好吗？"
+        if event_type == EventType.CO2_HIGH.value:
+            return f"{room} 空气质量偏闷，系统已为您开窗通风。您现在感觉还好吗？"
+        if event_type == "humidity_abnormal":
+            return f"{room} 湿度异常，系统已记录。您现在是否需要帮助？"
+        return f"{event.summary} 您现在感觉还好吗？"
+
+    async def _execute_p3_with_hmi(self, workflow: WorkflowV2, event: NormalizedEventV2) -> dict[str, Any]:
+        event_type = str(event.event_type)
+        action: dict[str, Any] | None = None
+        if event_type == EventType.CO2_HIGH.value:
+            action = await self.edge.request_home_action(
+                ActionRequestV2(
+                    workflow_id=workflow.workflow_id,
+                    event_id=event.event_id,
+                    elder_id=event.elder_id,
+                    commands=[
+                        ActionCommandV2(
+                            room=event.room or "living_room",
+                            device=DeviceType.WINDOW,
+                            action=DeviceAction.OPEN,
+                            reason="CO2 偏高，自动通风。",
+                        )
+                    ],
+                    reason=event.summary,
+                    priority=RiskLevel.P3,
+                )
+            )
+        elif event_type in {EventType.TEMPERATURE_HIGH.value, EventType.TEMPERATURE_LOW.value}:
+            target = 26 if event_type == EventType.TEMPERATURE_HIGH.value else 24
+            action = await self.edge.request_home_action(
+                ActionRequestV2(
+                    workflow_id=workflow.workflow_id,
+                    event_id=event.event_id,
+                    elder_id=event.elder_id,
+                    commands=[
+                        ActionCommandV2(
+                            room=event.room or "living_room",
+                            device=DeviceType.AIR_CONDITIONER,
+                            action=DeviceAction.SET_TEMPERATURE,
+                            value=target,
+                            reason="室温异常。",
+                        )
+                    ],
+                    reason=event.summary,
+                    priority=RiskLevel.P3,
+                )
+            )
+        prompt = await self._create_hmi_prompt(workflow, event, self._p3_hmi_message(event))
+        result: dict[str, Any] = {"status": "p3_hmi_prompted", "prompt": prompt}
+        if action is not None:
+            result["action"] = action
+        return result
+
     async def _execute_policy(
         self, workflow: WorkflowV2, event: NormalizedEventV2, decision: dict[str, Any]
     ) -> dict[str, Any]:
         risk = risk_text(event.risk_level)
         if risk == "P0":
             return await self._execute_p0(workflow, event)
+        if risk == "P3" and str(event.event_type) in DETERMINISTIC_P3_EVENTS:
+            return await self._execute_p3_with_hmi(workflow, event)
         if risk == "P3" and str(event.event_type) == EventType.CO2_HIGH.value:
             request = ActionRequestV2(
                 workflow_id=workflow.workflow_id,

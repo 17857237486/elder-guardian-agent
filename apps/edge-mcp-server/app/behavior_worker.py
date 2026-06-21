@@ -23,6 +23,8 @@ NIGHT_START = time(22, 0)
 NIGHT_END = time(6, 0)
 WINDOW_SECONDS = 300
 LOOKBACK_DAYS = 14
+MIN_VITAL_CANDIDATE_SAMPLES = 24
+CANDIDATE_RECENT_WINDOW_SECONDS = 15 * 60
 DEFAULT_NIGHT_WAKE_P90 = 600
 DEFAULT_WAKE_COUNT_P90 = 2
 DEFAULT_BATHROOM_STAY_P90 = 480
@@ -53,6 +55,25 @@ def _night_key(value: datetime) -> str:
     local = value.astimezone(SHANGHAI)
     date = local.date() if local.time() >= NIGHT_START else local.date() - timedelta(days=1)
     return date.isoformat()
+
+
+def _segment_reference_time(segment: dict[str, Any]) -> datetime:
+    return _parse_time(segment.get("end_at") or segment.get("start_at"))
+
+
+def _is_recent_segment(segment: dict[str, Any], now: datetime, *, max_age_seconds: int = CANDIDATE_RECENT_WINDOW_SECONDS) -> bool:
+    reference = _segment_reference_time(segment)
+    if reference > now + timedelta(seconds=60):
+        return False
+    return now - reference <= timedelta(seconds=max_age_seconds)
+
+
+def _is_current_open_night_wake(segment: dict[str, Any], now: datetime) -> bool:
+    if segment.get("segment_type") != "night_wake" or segment.get("status") != "open":
+        return False
+    if not _is_night(now):
+        return False
+    return _night_key(_parse_time(segment.get("start_at"))) == _night_key(now)
 
 
 def _is_present(value: Any) -> bool | None:
@@ -446,6 +467,8 @@ def build_candidates(
         if segment.get("segment_type") == "night_wake":
             features = segment.get("features") or {}
             night_key = str(features.get("night_key") or _night_key(_parse_time(segment.get("start_at"))))
+            if night_key != _night_key(now) or not _is_night(now):
+                continue
             night_wakes_by_night[night_key].append(segment)
     for night_key, night_segments in night_wakes_by_night.items():
         if len(night_segments) <= night_count_p90:
@@ -472,7 +495,11 @@ def build_candidates(
     for segment in segments:
         features = segment.get("features") or {}
         segment_id = str(segment.get("segment_id"))
-        if segment.get("segment_type") == "night_wake" and float(segment.get("duration_seconds") or 0) > night_p90:
+        if (
+            segment.get("segment_type") == "night_wake"
+            and _is_current_open_night_wake(segment, now)
+            and float(segment.get("duration_seconds") or 0) > night_p90
+        ):
             key = f"night_behavior_anomaly:{segment_id}"
             if key not in existing_keys:
                 candidates.append(
@@ -484,7 +511,12 @@ def build_candidates(
                         features={"dedupe_key": key, "duration_seconds": segment.get("duration_seconds"), "baseline_p90_seconds": night_p90, "segment": segment},
                     )
                 )
-        if segment.get("segment_type") == "bathroom_stay" and float(segment.get("duration_seconds") or 0) > bathroom_p90:
+        if (
+            segment.get("segment_type") == "bathroom_stay"
+            and segment.get("status") == "open"
+            and _is_recent_segment(segment, now)
+            and float(segment.get("duration_seconds") or 0) > bathroom_p90
+        ):
             key = f"night_behavior_anomaly:{segment_id}"
             if key not in existing_keys:
                 candidates.append(
@@ -507,7 +539,11 @@ def build_candidates(
         if segment.get("segment_type") == "heart_rate_window":
             min_value = float(features.get("min") or 0)
             max_value = float(features.get("max") or 0)
-            if max_value <= HEART_RATE_P1_HIGH and float(features.get("p90") or 0) > heart_p90:
+            latest_value = float(features.get("latest_value") or 0)
+            sample_count = int(features.get("sample_count") or segment.get("observation_count") or 0)
+            if sample_count < MIN_VITAL_CANDIDATE_SAMPLES or not _is_recent_segment(segment, now):
+                continue
+            if latest_value > heart_p90 and max_value <= HEART_RATE_P1_HIGH and float(features.get("p90") or 0) > heart_p90:
                 key = f"vital_baseline_anomaly:{segment_id}:heart_rate:high"
                 if key not in existing_keys:
                     candidates.append(
@@ -519,7 +555,7 @@ def build_candidates(
                             features=_vital_candidate_features(segment, "heart_rate", "high", key, baseline_p90=heart_p90),
                         )
                     )
-            if min_value >= HEART_RATE_P1_LOW and float(features.get("p10") or 999) < heart_p10:
+            elif latest_value < heart_p10 and min_value >= HEART_RATE_P1_LOW and float(features.get("p10") or 999) < heart_p10:
                 key = f"vital_baseline_anomaly:{segment_id}:heart_rate:low"
                 if key not in existing_keys:
                     candidates.append(
@@ -533,7 +569,15 @@ def build_candidates(
                     )
         if segment.get("segment_type") == "spo2_window":
             min_value = float(features.get("min") or 100)
-            if min_value >= SPO2_P1_LOW and float(features.get("p10") or 100) < spo2_p10:
+            latest_value = float(features.get("latest_value") or 100)
+            sample_count = int(features.get("sample_count") or segment.get("observation_count") or 0)
+            if (
+                sample_count >= MIN_VITAL_CANDIDATE_SAMPLES
+                and _is_recent_segment(segment, now)
+                and latest_value < spo2_p10
+                and min_value >= SPO2_P1_LOW
+                and float(features.get("p10") or 100) < spo2_p10
+            ):
                 key = f"vital_baseline_anomaly:{segment_id}:spo2:low"
                 if key not in existing_keys:
                     candidates.append(

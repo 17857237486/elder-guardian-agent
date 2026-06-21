@@ -713,6 +713,40 @@ class LLMClientParserTests(unittest.TestCase):
                 self.assertEqual(steps["cloud_review"]["status"], "not_required")
                 self.assertEqual(steps["final_advisory"]["final_risk_level"], "P3")
 
+    def test_p3_environment_events_create_chinese_hmi_prompt(self) -> None:
+        for event_type in (
+            EventType.CO2_HIGH,
+            EventType.TEMPERATURE_HIGH,
+            EventType.TEMPERATURE_LOW,
+            "humidity_abnormal",
+        ):
+            with self.subTest(event_type=str(event_type)):
+                runner = WorkflowRunner()
+                runner.edge.request_home_action = AsyncMock(return_value={"ok": True, "executions": []})
+                runner.edge.create_hmi_prompt = AsyncMock(return_value={"prompt_id": "prompt_p3", "status": "waiting"})
+                runner.edge.raise_family_alert = AsyncMock(side_effect=AssertionError("P3 must not notify family by default"))
+                event = NormalizedEventV2(
+                    elder_id="elder_001",
+                    event_type=event_type,
+                    risk_level=RiskLevel.P3,
+                    room="kitchen",
+                    summary="P3 environment issue",
+                    confidence=1.0,
+                    source_kind="environment",
+                )
+
+                result = asyncio.run(runner._execute_policy(SimpleNamespace(workflow_id="wf_p3"), event, {}))
+
+                self.assertEqual(result["status"], "p3_hmi_prompted")
+                runner.edge.create_hmi_prompt.assert_awaited_once()
+                prompt = runner.edge.create_hmi_prompt.await_args.args[0]
+                self.assertEqual(prompt.options, ["我没事", "需要帮助", "联系家属"])
+                self.assertIn("您", prompt.message)
+                if str(event_type) == "humidity_abnormal":
+                    runner.edge.request_home_action.assert_not_awaited()
+                else:
+                    runner.edge.request_home_action.assert_awaited_once()
+
     def test_local_context_uses_presence_timeline_twenty_environment_samples(self) -> None:
         base = "2026-06-18T22:{minute:02d}:00+08:00"
         observations: list[dict[str, object]] = []
