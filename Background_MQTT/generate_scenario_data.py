@@ -338,9 +338,9 @@ def inject_event(
             continue
 
         sample["injected_event"] = event_type
-        env.setdefault("occupant_room", env.get("room"))
         env.setdefault("life_scene", sample["scene"])
         env["room"] = event_room
+        env["occupant_room"] = event_room
         if event_type == "spo2_critical":
             vital["spo2"] = round(lerp(vital["spo2"], 86, intensity))
             vital["heart_rate"] = round(lerp(vital["heart_rate"], max(vital["heart_rate"], 92), intensity))
