@@ -32,7 +32,6 @@ GUARDIAN_CORE_URL = os.getenv("GUARDIAN_CORE_URL", "http://localhost:8000").rstr
 EDGE_API_BASE = os.getenv("EDGE_API_BASE", "http://edge-mcp-server:8010").rstrip("/")
 ELDER_ID = os.getenv("ELDER_ID", "elder_001")
 MAX_RECORDS = int(os.getenv("BACKGROUND_MAX_RECORDS", "1000"))
-SCENARIO_TEMPERATURE_STEP_C = 0.5
 ROOM_KEYS = ("bedroom", "kitchen", "living_room", "bathroom")
 DEFAULT_ROOM_ENV: dict[str, dict[str, float | int]] = {
     "bedroom": {"temperature": 24.0, "humidity": 50.0, "co2_ppm": 820},
@@ -62,8 +61,6 @@ device_states: dict[str, dict[str, Any]] = {}
 device_log: deque[dict[str, Any]] = deque(maxlen=100)
 DEVICE_ACTION_LOG_TYPES = {"device_command", "manual_command"}
 room_env_states: dict[str, dict[str, Any]] = {}
-room_ac_temperature_targets: dict[str, float] = {}
-scenario_room_temperatures: dict[str, float] = {}
 downgraded_env_overrides: dict[str, dict[str, Any]] = {}
 scenario_task: asyncio.Task[None] | None = None
 FAST_SCENARIO_SAMPLE_DELAY_SEC = 0.1
@@ -295,41 +292,6 @@ def number_or_none(value: Any) -> float | None:
         return None
 
 
-def move_toward(current: float, target: float, step: float) -> float:
-    if current == target:
-        return target
-    if current < target:
-        return min(current + step, target)
-    return max(current - step, target)
-
-
-def remember_air_conditioner_target(room: str, device: str, action: str, value: Any) -> None:
-    if device != "air_conditioner" or action != "set_temperature":
-        return
-    target = number_or_none(value)
-    if target is None:
-        append_device_log(
-            "temperature_control",
-            {"status": "ignored_invalid_target", "room": room, "device": device, "value": value},
-        )
-        return
-    room_ac_temperature_targets[room] = target
-    append_device_log(
-        "temperature_control",
-        {"status": "target_recorded", "room": room, "device": device, "target_temperature": target},
-    )
-
-
-def restore_air_conditioner_targets_from_devices() -> None:
-    room_ac_temperature_targets.clear()
-    for state in device_states.values():
-        if str(state.get("device")) != "air_conditioner" or str(state.get("state")) != "on":
-            continue
-        target = number_or_none(state.get("value"))
-        if target is not None:
-            room_ac_temperature_targets[str(state.get("room"))] = target
-
-
 def normalize_env_for_guardian_core(sample: dict[str, Any]) -> dict[str, Any]:
     env = sample.get("environment")
     if not isinstance(env, dict):
@@ -369,32 +331,6 @@ def should_downgrade_env_for_guardian_core(sample: dict[str, Any]) -> bool:
     event_room = str(env.get("room", ""))
     occupant_room = str(env.get("occupant_room") or event_room)
     return bool(event_room and occupant_room and event_room != occupant_room)
-
-
-def seed_scenario_temperatures_from_air_conditioners() -> None:
-    for room, target in room_ac_temperature_targets.items():
-        if room in ROOM_KEYS:
-            scenario_room_temperatures[room] = target
-
-
-def adjust_scenario_temperature(sample: dict[str, Any]) -> None:
-    env = sample.get("environment")
-    if not isinstance(env, dict):
-        return
-    room = str(env.get("room", ""))
-    current = number_or_none(env.get("temperature"))
-    if not room or current is None:
-        return
-
-    target = room_ac_temperature_targets.get(room)
-    if target is None:
-        scenario_room_temperatures[room] = current
-        return
-
-    previous = scenario_room_temperatures.get(room, current)
-    adjusted = round(move_toward(previous, target, SCENARIO_TEMPERATURE_STEP_C), 1)
-    env["temperature"] = adjusted
-    scenario_room_temperatures[room] = adjusted
 
 
 def decode_payload(msg: mqtt.MQTTMessage) -> dict[str, Any]:
@@ -569,7 +505,6 @@ def handle_device_set(topic: str, payload: dict[str, Any]) -> None:
     room, device = parts[1], parts[2]
     action = str(payload.get("action", ""))
     state_text, value = derive_device_state(action, payload.get("value"))
-    remember_air_conditioner_target(room, device, action, payload.get("value"))
     command = {
         "topic": topic,
         "cmd_id": payload.get("cmd_id"),
@@ -623,7 +558,6 @@ def simulate_local_device_command(payload: dict[str, Any]) -> dict[str, Any]:
     device = str(payload.get("device", "unknown"))
     action = str(payload.get("action", ""))
     state_text, value = derive_device_state(action, payload.get("value"))
-    remember_air_conditioner_target(room, device, action, payload.get("value"))
     command = {
         "cmd_id": payload.get("cmd_id", f"local_{uuid4().hex[:12]}"),
         "room": room,
@@ -682,7 +616,6 @@ async def run_scenario_job(request: ScenarioPublishRequest, samples: list[dict[s
             if scenario_job["stop_requested"]:
                 scenario_job["status"] = "stopped"
                 break
-            adjust_scenario_temperature(sample)
             scenario_job["published_messages"] += publish_sample_pair(sample)
             if not signal_published and int(sample.get("time_offset_sec", 0)) >= request.trigger_second:
                 scenario_job["published_messages"] += publish_risk_signal(request.event_type, request.elder_id, request.event_room)
@@ -873,9 +806,6 @@ async def start_scenario(request: ScenarioPublishRequest) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail="scenario already running")
     ensure_mqtt_connected()
     await sync_devices_from_guardian_core()
-    restore_air_conditioner_targets_from_devices()
-    scenario_room_temperatures.clear()
-    seed_scenario_temperatures_from_air_conditioners()
     samples = build_event_samples(
         request.scene,
         request.event_type,

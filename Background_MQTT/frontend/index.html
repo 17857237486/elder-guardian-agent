@@ -1466,12 +1466,6 @@
           const payload = data.payload ?? {};
           return `${deviceLabel(payload.room)} 的 ${deviceLabel(payload.device)} 手动控制：${actionLabel(payload.action, payload.value)}。`;
         }
-        if (item.type === "temperature_control") {
-          if (data.status === "target_recorded") {
-            return `${deviceLabel(data.room)} 的 ${deviceLabel(data.device)} 降温目标记录为 ${data.target_temperature}°C。`;
-          }
-          return `${deviceLabel(data.room)} 的 ${deviceLabel(data.device)} 温控目标未更新。`;
-        }
         if (item.type === "guardian_core") {
           return data.status === "devices_synced" ? "已从主系统同步设备状态。" : `主系统设备同步失败：${data.error ?? "未知错误"}`;
         }
