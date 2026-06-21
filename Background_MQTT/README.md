@@ -28,7 +28,7 @@
 - `temperature_low`：P3 室温过低，达到 16°C 及以下
 - `humidity_abnormal`：P3 湿度异常，低于 25% 或高于 75%
 
-默认采样策略：每 2 秒生成 1 条样本，每个场景 2 分钟共 60 条。每条样本会拆成两条主系统标准 MQTT 消息：
+默认采样策略：每 5 秒生成 1 条样本，每个场景 2 分钟共 24 条。每条样本会拆成两条主系统标准 MQTT 消息：
 
 ```text
 elder/{elder_id}/sensor/vital
@@ -55,7 +55,7 @@ docker compose up -d
 
 ```powershell
 conda activate elder-guardian-agent
-python Background_MQTT\generate_scenario_data.py --scene morning_getup --host localhost --port 1883 --duration-sec 120 --interval-sec 2 --realtime
+python Background_MQTT\generate_scenario_data.py --scene morning_getup --host localhost --port 1883 --duration-sec 120 --interval-sec 5 --realtime
 ```
 
 可把 `morning_getup` 换成：
@@ -65,7 +65,7 @@ midday_nap
 dinner
 ```
 
-这样每 2 秒发送一组数据，一共持续约 2 分钟；每组数据包含 1 条生命体征消息和 1 条环境消息。
+这样每 5 秒发送一组数据，一共持续约 2 分钟；每组数据包含 1 条生命体征消息和 1 条环境消息。
 
 4. 查看主系统状态：
 
@@ -106,7 +106,7 @@ home/bedroom/presence_sensor/state
 所以你运行下面的场景发送脚本后，网页会逐条记录生命体征和环境数据：
 
 ```powershell
-python Background_MQTT\generate_scenario_data.py --scene morning_getup --host localhost --port 1883 --duration-sec 120 --interval-sec 2 --realtime
+python Background_MQTT\generate_scenario_data.py --scene morning_getup --host localhost --port 1883 --duration-sec 120 --interval-sec 5 --realtime
 ```
 
 网页也支持手动录入数据：
@@ -145,7 +145,7 @@ python Background_MQTT\generate_scenario_data.py --scene morning_getup --host lo
 
 这种方式会先生成 2 分钟基础 MQTT 数据，再在触发点前后向指定房间平滑注入风险事件。例如 `kitchen + 燃气异常 + 第 60 秒` 会让厨房燃气数据从低值逐步升高，并在触发点后超过 P0 阈值，而不是突然发送一条孤立异常值。
 
-未勾选 `按真实时间发送` 时，页面使用快速演示模式，每组数据约间隔 100ms 发布；勾选后默认每 2 秒发布 1 组。
+未勾选 `按真实时间发送` 时，页面使用快速演示模式，每组数据约间隔 100ms 发布；勾选后网页每 2 秒发布 1 组，但 MQTT 样本时间戳仍按 5 秒采样，共 24 组。
 
 页面展示的 v2 处理链路为：
 
@@ -176,16 +176,18 @@ GET  /api/scenario/status
   "trigger_second": 60,
   "elder_id": "elder_001",
   "duration_sec": 120,
-  "interval_sec": 2,
+  "interval_sec": 5,
+  "realtime_interval_sec": 2,
   "realtime": false
 }
 ```
 
 ## 采样间隔建议
 
-建议使用 `2 秒/条`：
+建议使用 `5 秒/条` 作为数据时间轴：
 
-- 两分钟内每个场景 60 条，趋势更清晰，演示等待更短
+- 两分钟内每个场景 24 条，趋势足够清晰
+- 8090 网页真实演示可以用 `realtime_interval_sec=2` 缩短等待时间
 - 数据量适中，后端、数据库和 dashboard 都容易观察
 - 比 `1 秒/条` 更贴近日常居家传感器上报节奏
 

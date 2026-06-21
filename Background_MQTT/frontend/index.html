@@ -875,7 +875,7 @@
           <div class="scenario-summary">
             <div class="scenario-summary-row">
               <b>生成方式</b>
-              <span id="scenario-method">生成 2 分钟基础 MQTT 数据，并在指定时间向指定房间注入风险事件；真实模式每 2 秒 1 组。</span>
+              <span id="scenario-method">生成 2 分钟基础 MQTT 数据，每 5 秒 1 组共 24 组；真实演示模式每 2 秒发送 1 组。</span>
             </div>
             <div class="scenario-summary-row">
               <b>风险发生房间</b>
@@ -894,7 +894,7 @@
                 <input id="scenario-realtime" type="checkbox" />
                 <span>按真实时间发送</span>
               </label>
-              <span class="muted">未勾选时使用快速演示模式，每组约间隔 100ms。</span>
+              <span class="muted">未勾选时使用快速演示模式，每组约间隔 100ms；勾选后每 2 秒发送 1 组，但数据时间轴仍按 5 秒采样。</span>
               <div class="scenario-action-right">
                 <button id="submit-scenario" class="primary" type="button">生成并发送风险事件时间轴</button>
                 <span id="scenario-submit-status" class="submit-status">等待选择风险事件</span>
@@ -1675,7 +1675,7 @@
         $("scenario-trigger-label").textContent = `第 ${triggerSecond} 秒`;
         setText(
           "scenario-method",
-          `生成 2 分钟基础 MQTT 数据，并在第 ${triggerSecond} 秒向 ${deviceLabel(eventRoom)} 注入 ${riskEventLabel(eventType)}；真实模式每 2 秒 1 组，快速演示模式每组约 100ms。`,
+          `生成 2 分钟基础 MQTT 数据，每 5 秒 1 组共 24 组，并在第 ${triggerSecond} 秒向 ${deviceLabel(eventRoom)} 注入 ${riskEventLabel(eventType)}；真实演示模式每 2 秒发送 1 组，快速模式每组约 100ms。`,
         );
         setText("scenario-event-room-note", `${deviceLabel(eventRoom)} (${eventRoom})`);
         setText("scenario-risk-level", riskLevelLabel(eventType));
@@ -1693,7 +1693,8 @@
           trigger_second: Number($("scenario-trigger").value),
           elder_id: $("scenario-elder").value.trim(),
           duration_sec: 120,
-          interval_sec: 2,
+          interval_sec: 5,
+          realtime_interval_sec: 2,
           realtime: $("scenario-realtime").checked,
         };
       }

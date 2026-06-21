@@ -451,7 +451,7 @@ def main() -> None:
     parser.add_argument("--trigger-second", type=int, default=60)
     parser.add_argument("--event-room", choices=ROOM_KEYS, default="living_room")
     parser.add_argument("--duration-sec", type=int, default=120)
-    parser.add_argument("--interval-sec", type=int, default=2)
+    parser.add_argument("--interval-sec", type=int, default=5)
     parser.add_argument("--elder-id", default="elder_001")
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", type=int, default=1883)

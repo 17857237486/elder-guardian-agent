@@ -87,7 +87,8 @@ class ScenarioPublishRequest(BaseModel):
     trigger_second: int = Field(default=60, ge=0, le=120)
     elder_id: str = Field(default="elder_001")
     duration_sec: int = Field(default=120, ge=5, le=600)
-    interval_sec: int = Field(default=2, ge=1, le=60)
+    interval_sec: int = Field(default=5, ge=1, le=60)
+    realtime_interval_sec: int = Field(default=2, ge=1, le=60)
     realtime: bool = False
 
 
@@ -676,7 +677,7 @@ async def run_scenario_job(request: ScenarioPublishRequest, samples: list[dict[s
             scenario_job["sent_samples"] += 1
             if index < len(samples) - 1:
                 if request.realtime:
-                    await sleep_until_next_sample(request.interval_sec)
+                    await sleep_until_next_sample(request.realtime_interval_sec)
                 else:
                     await sleep_between_fast_samples()
         if scenario_job["status"] == "running":
@@ -696,6 +697,8 @@ def create_scenario_job(request: ScenarioPublishRequest, samples: list[dict[str,
         "event_type": request.event_type,
         "event_room": request.event_room,
         "total_samples": len(samples),
+        "interval_sec": request.interval_sec,
+        "realtime_interval_sec": request.realtime_interval_sec,
         "sent_samples": 0,
         "published_messages": 0,
         "stop_requested": False,
