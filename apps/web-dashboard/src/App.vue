@@ -5,7 +5,7 @@ import { API_BASE } from "@elder-guardian/frontend-shared";
 type AnyRecord = Record<string, any>;
 type DemoNodeState = "idle" | "running" | "completed" | "skipped" | "failed";
 type DemoTarget = { kind: "event" | "candidate" | "normal_input" | "risk_input"; id: string; item: AnyRecord } | null;
-type ObservationRiskHint = { event_type: string; risk_level: string; room?: string } | null;
+type ObservationRiskHint = { event_type: string; risk_level: string; room?: string; observed_at?: string } | null;
 const DISPLAY_LIMIT = 10;
 const ROOM_ORDER = ["bedroom", "bathroom", "living_room", "kitchen"];
 const DEFAULT_HOME_ENV: Record<string, AnyRecord> = {
@@ -95,23 +95,24 @@ function observationRiskHint(observation?: AnyRecord | null): ObservationRiskHin
   const kind = String(observation.kind ?? "").toLowerCase();
   const payload = observation.payload && typeof observation.payload === "object" ? observation.payload : {};
   const room = String(payload.room ?? observation.room ?? "");
+  const observed_at = eventTime(observation);
   if (kind === "environment") {
     const gas = numericPayloadValue(payload, "gas_ppm");
     const co2 = numericPayloadValue(payload, "co2_ppm");
     const temperature = numericPayloadValue(payload, "temperature");
     const humidity = numericPayloadValue(payload, "humidity");
-    if (gas !== null && gas >= 100) return { event_type: "gas_leak", risk_level: "P0", room };
-    if (co2 !== null && co2 >= 1500) return { event_type: "co2_high", risk_level: "P3", room };
-    if (temperature !== null && temperature >= 30) return { event_type: "temperature_high", risk_level: "P3", room };
-    if (temperature !== null && temperature <= 16) return { event_type: "temperature_low", risk_level: "P3", room };
-    if (humidity !== null && (humidity < 25 || humidity > 75)) return { event_type: "humidity_abnormal", risk_level: "P3", room };
+    if (gas !== null && gas >= 100) return { event_type: "gas_leak", risk_level: "P0", room, observed_at };
+    if (co2 !== null && co2 >= 1500) return { event_type: "co2_high", risk_level: "P3", room, observed_at };
+    if (temperature !== null && temperature >= 30) return { event_type: "temperature_high", risk_level: "P3", room, observed_at };
+    if (temperature !== null && temperature <= 16) return { event_type: "temperature_low", risk_level: "P3", room, observed_at };
+    if (humidity !== null && (humidity < 25 || humidity > 75)) return { event_type: "humidity_abnormal", risk_level: "P3", room, observed_at };
   }
   if (kind === "vital") {
     const spo2 = numericPayloadValue(payload, "spo2");
     const heartRate = numericPayloadValue(payload, "heart_rate");
-    if (spo2 !== null && spo2 < 88) return { event_type: "spo2_low", risk_level: "P0", room };
-    if (spo2 !== null && spo2 < 92) return { event_type: "spo2_low", risk_level: "P1", room };
-    if (heartRate !== null && (heartRate < 45 || heartRate > 130)) return { event_type: "heart_rate_abnormal", risk_level: "P1", room };
+    if (spo2 !== null && spo2 < 88) return { event_type: "spo2_low", risk_level: "P0", room, observed_at };
+    if (spo2 !== null && spo2 < 92) return { event_type: "spo2_low", risk_level: "P1", room, observed_at };
+    if (heartRate !== null && (heartRate < 45 || heartRate > 130)) return { event_type: "heart_rate_abnormal", risk_level: "P1", room, observed_at };
   }
   return null;
 }
@@ -126,7 +127,11 @@ function observationGroupRiskHint(observations: AnyRecord[]): ObservationRiskHin
   return observations
     .map((observation) => observationRiskHint(observation))
     .filter((hint): hint is NonNullable<ObservationRiskHint> => Boolean(hint))
-    .sort((a, b) => (RISK_PRIORITY[a.risk_level] ?? 99) - (RISK_PRIORITY[b.risk_level] ?? 99))[0] ?? null;
+    .sort((a, b) => {
+      const priorityDelta = (RISK_PRIORITY[a.risk_level] ?? 99) - (RISK_PRIORITY[b.risk_level] ?? 99);
+      if (priorityDelta !== 0) return priorityDelta;
+      return new Date(b.observed_at ?? "").getTime() - new Date(a.observed_at ?? "").getTime();
+    })[0] ?? null;
 }
 
 function eventMatchesObservationRisk(event: AnyRecord | null, hint: ObservationRiskHint): boolean {
