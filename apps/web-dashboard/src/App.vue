@@ -192,14 +192,6 @@ const activeDemoTarget = computed<DemoTarget>(() => {
     return riskInputTarget(latestObservation, latestObservationRisk);
   }
 
-  if (activeEvent?.event_id) {
-    return { kind: "event", id: String(activeEvent.event_id), item: activeEvent };
-  }
-
-  if (promotedCandidateFallback?.candidate_id && promotedCandidateFallbackTime > latestEventTime) {
-    return { kind: "candidate", id: String(promotedCandidateFallback.candidate_id), item: promotedCandidateFallback };
-  }
-
   if (
     latestObservation?.observation_id &&
     latestObservationTime > latestEventTime &&
@@ -218,6 +210,14 @@ const activeDemoTarget = computed<DemoTarget>(() => {
         decision_source: "rule"
       }
     };
+  }
+
+  if (activeEvent?.event_id) {
+    return { kind: "event", id: String(activeEvent.event_id), item: activeEvent };
+  }
+
+  if (promotedCandidateFallback?.candidate_id && promotedCandidateFallbackTime > latestEventTime) {
+    return { kind: "candidate", id: String(promotedCandidateFallback.candidate_id), item: promotedCandidateFallback };
   }
 
   const workflowEvent = events.find((event) => steps.some((step) => step.event_id === event.event_id));
