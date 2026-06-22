@@ -332,6 +332,10 @@ function isDeterministicRuleOnlyEvent(item: AnyRecord, risk: string): boolean {
   );
 }
 
+function isP3EnvironmentRiskInput(item: AnyRecord): boolean {
+  return riskOf(item) === "P3" && ["co2_high", "temperature_high", "temperature_low", "humidity_abnormal"].includes(String(item.event_type ?? ""));
+}
+
 function ruleNodeNote(item: AnyRecord, risk: string, step?: AnyRecord | null): string {
   if (step?.output?.accepted) return `规则命中 ${risk}`;
   if (step) return "规则处理中";
@@ -587,6 +591,7 @@ const demoNodes = computed(() => {
     const group = latestInputObservationGroup(target.item);
     const kinds = group.map((item) => item.kind).filter(Boolean).join(" / ") || target.item.kind || "observation";
     const room = target.item.room ?? group.find((item) => item.kind === "environment")?.payload?.room ?? target.item.payload?.room ?? "--";
+    const isP3Environment = isP3EnvironmentRiskInput(target.item);
     return [
       {
         key: "input",
@@ -605,36 +610,36 @@ const demoNodes = computed(() => {
       {
         key: "rule",
         name: "规则判断",
-        state: "running" as DemoNodeState,
-        note: "等待 Orchestrator 生成风险事件",
+        state: (isP3Environment ? "completed" : "running") as DemoNodeState,
+        note: isP3Environment ? "P3 环境规则已命中" : "等待 Orchestrator 生成风险事件",
         time: eventTime(target.item)
       },
       {
         key: "local",
         name: "本地 AI / Candidate",
-        state: "idle" as DemoNodeState,
-        note: "等待风险事件",
+        state: (isP3Environment ? "skipped" : "idle") as DemoNodeState,
+        note: isP3Environment ? "确定性 P3 规则，无需本地模型" : "等待风险事件",
         time: eventTime(target.item)
       },
       {
         key: "cloud",
         name: "云端复核",
-        state: "idle" as DemoNodeState,
-        note: "等待本地处置结果",
+        state: (isP3Environment ? "skipped" : "idle") as DemoNodeState,
+        note: isP3Environment ? "确定性 P3 规则，无需云端复核" : "等待本地处置结果",
         time: eventTime(target.item)
       },
       {
         key: "policy",
         name: "设备策略",
-        state: "idle" as DemoNodeState,
-        note: "等待规则处置",
+        state: (isP3Environment ? "completed" : "idle") as DemoNodeState,
+        note: isP3Environment ? "环境联动策略已记录或等待执行" : "等待规则处置",
         time: eventTime(target.item)
       },
       {
         key: "hmi",
         name: "HMI / 家属",
-        state: "idle" as DemoNodeState,
-        note: "等待提示或告警",
+        state: (isP3Environment ? "running" : "idle") as DemoNodeState,
+        note: isP3Environment ? "等待老人反馈" : "等待提示或告警",
         time: eventTime(target.item)
       }
     ];
@@ -712,7 +717,11 @@ const workflowSteps = computed(() => {
     .slice(0, DISPLAY_LIMIT);
 });
 const workflowEmptyText = computed(() =>
-  activeDemoTarget.value?.kind === "risk_input" ? "等待规则判断生成工作流" : "暂无工作流记录"
+  activeDemoTarget.value?.kind === "risk_input" && isP3EnvironmentRiskInput(activeDemoTarget.value.item)
+    ? "P3 冷却窗口内不重复生成工作流，已按规则演示处置链路"
+    : activeDemoTarget.value?.kind === "risk_input"
+      ? "等待规则判断生成工作流"
+      : "暂无工作流记录"
 );
 const policyExecutions = computed<AnyRecord[]>(() => {
   const executions = filteredActionExecutions.value.map((item: AnyRecord) => ({ ...item, itemType: "execution" }));
