@@ -148,17 +148,15 @@ const activeDemoTarget = computed<DemoTarget>(() => {
   const latestObservation = latestInputObservation.value;
   const latestObservationTime = latestObservation ? new Date(eventTime(latestObservation)).getTime() : 0;
   const latestEventTime = latestEvent.value ? new Date(eventTime(latestEvent.value)).getTime() : 0;
-  const latestCandidate = candidates[0];
-  const latestCandidateTime = latestCandidate ? new Date(eventTime(latestCandidate)).getTime() : 0;
-  const activeCandidate = candidates.find((candidate) => ["pending", "reviewing"].includes(String(candidate.status ?? "").toLowerCase()));
-  const activeCandidateTime = activeCandidate ? new Date(eventTime(activeCandidate)).getTime() : 0;
+  const promotedCandidateFallback = candidates.find((candidate) =>
+    String(candidate.status ?? "").toLowerCase() === "promoted" &&
+    candidate.promoted_event_id &&
+    !events.some((event) => event.event_id === candidate.promoted_event_id)
+  );
+  const promotedCandidateFallbackTime = promotedCandidateFallback ? new Date(eventTime(promotedCandidateFallback)).getTime() : 0;
   const latestObservationGroup = latestInputObservationGroup(latestObservation);
   const latestObservationRisk = observationGroupRiskHint(latestObservationGroup);
   const latestEventRisk = latestEvent.value ? riskOf(latestEvent.value) : "";
-
-  if (activeCandidate?.candidate_id && activeCandidateTime > latestEventTime) {
-    return { kind: "candidate", id: String(activeCandidate.candidate_id), item: activeCandidate };
-  }
 
   const activeStates = new Set(["event_detected", "rule_classified", "action_planned", "ask_elder", "wait_response", "family_alert", "emergency_alert", "escalated"]);
   const activeEvent = events.find((event) =>
@@ -173,8 +171,8 @@ const activeDemoTarget = computed<DemoTarget>(() => {
     return { kind: "event", id: String(latestEvent.value.event_id), item: latestEvent.value };
   }
 
-  if (latestCandidate?.candidate_id && latestCandidateTime > latestEventTime) {
-    return { kind: "candidate", id: String(latestCandidate.candidate_id), item: latestCandidate };
+  if (promotedCandidateFallback?.candidate_id && promotedCandidateFallbackTime > latestEventTime) {
+    return { kind: "candidate", id: String(promotedCandidateFallback.candidate_id), item: promotedCandidateFallback };
   }
 
   if (
@@ -200,11 +198,8 @@ const activeDemoTarget = computed<DemoTarget>(() => {
   const workflowEvent = events.find((event) => steps.some((step) => step.event_id === event.event_id));
   if (workflowEvent?.event_id) return { kind: "event", id: String(workflowEvent.event_id), item: workflowEvent };
 
-  if (activeCandidate?.candidate_id) return { kind: "candidate", id: String(activeCandidate.candidate_id), item: activeCandidate };
-
-  if (latestCandidate?.candidate_id && latestCandidateTime > latestEventTime) return { kind: "candidate", id: String(latestCandidate.candidate_id), item: latestCandidate };
   if (latestEvent.value?.event_id) return { kind: "event", id: String(latestEvent.value.event_id), item: latestEvent.value };
-  if (latestCandidate?.candidate_id) return { kind: "candidate", id: String(latestCandidate.candidate_id), item: latestCandidate };
+  if (promotedCandidateFallback?.candidate_id) return { kind: "candidate", id: String(promotedCandidateFallback.candidate_id), item: promotedCandidateFallback };
   return null;
 });
 const latestLocalAnalysis = computed(() =>
@@ -423,8 +418,10 @@ const demoTitle = computed(() => {
   if (!target) return "当前演示：暂无演示事件";
   if (target.kind === "candidate") {
     const item = target.item;
-    const promoted = item.promoted_event_id ? ` · promoted ${item.promoted_event_id}` : "";
-    return `当前演示：Candidate · ${candidateLabel(item.candidate_type)} · ${item.status ?? "--"}${promoted}`;
+    if (String(item.status ?? "").toLowerCase() === "promoted") {
+      return `当前演示：${candidateLabel(item.candidate_type)} · promoted · 本地复核已升级`;
+    }
+    return `当前演示：Candidate · ${candidateLabel(item.candidate_type)} · ${item.status ?? "--"}`;
   }
   if (target.kind === "normal_input") {
     return "当前演示：normal · P4 · 正常数据已记录";
