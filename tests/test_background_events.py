@@ -29,6 +29,7 @@ EXPECTED_EVENTS = {
     "heart_rate_abnormal",
     "heart_rate_baseline_anomaly",
     "spo2_baseline_anomaly",
+    "bathroom_stay_anomaly_demo",
     "suspected_fall",
     "long_static",
     "co2_high",
@@ -77,6 +78,18 @@ class BackgroundEventTests(unittest.TestCase):
         self.assertEqual(sample["vital"]["spo2"], 94)
         self.assertGreaterEqual(sample["vital"]["spo2"], 92)
         self.assertEqual(sample["risk_hint"]["level"], "P2")
+
+    def test_bathroom_stay_candidate_scenario_keeps_bathroom_presence(self) -> None:
+        samples = build_event_samples("dinner", "bathroom_stay_anomaly_demo", 10, 40, 5, "elder_001")
+        before = [item for item in samples if item["time_offset_sec"] < 10][-1]
+        after = [item for item in samples if item["time_offset_sec"] >= 10][-1]
+        self.assertTrue(after["bathroom_stay_demo"])
+        self.assertEqual(after["environment"]["occupant_room"], "bathroom")
+        self.assertEqual(after["environment"]["room"], "bathroom")
+        self.assertNotEqual(before["environment"]["occupant_room"], "bathroom")
+        self.assertEqual(after["risk_hint"]["level"], "P2")
+        self.assertGreaterEqual(after["vital"]["spo2"], 92)
+        self.assertLessEqual(after["vital"]["heart_rate"], 130)
 
     def test_mild_heart_rate_variation_is_record_only_in_scenario_hint(self) -> None:
         env = {"gas_ppm": 0, "co2_ppm": 800, "temperature": 24}

@@ -57,6 +57,8 @@ class RuleTests(unittest.TestCase):
         self.assertIsNotNone(event)
         self.assertEqual(str(event.event_type), "humidity_abnormal")
         self.assertEqual(str(event.risk_level), "P3")
+        self.assertIn("湿度", event.summary)
+        self.assertNotIn("outside the safe comfort range", event.summary)
 
     def test_p3_environment_rules_require_presence_when_present_field_exists(self) -> None:
         absent_event = rules.classify_observation(

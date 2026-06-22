@@ -411,13 +411,20 @@ function workflowSummary(step: AnyRecord): string {
   return clip(output.status ?? step.status);
 }
 
+function candidateLabel(type?: unknown): string {
+  const value = String(type ?? "");
+  if (value === "bathroom_stay_anomaly") return "卫生间停留过长";
+  if (value === "vital_baseline_anomaly") return "生命体征基线异常";
+  return value || "ai_review_candidate";
+}
+
 const demoTitle = computed(() => {
   const target = activeDemoTarget.value;
   if (!target) return "当前演示：暂无演示事件";
   if (target.kind === "candidate") {
     const item = target.item;
     const promoted = item.promoted_event_id ? ` · promoted ${item.promoted_event_id}` : "";
-    return `当前演示：Candidate · ${item.candidate_type ?? "ai_review_candidate"} · ${item.status ?? "--"}${promoted}`;
+    return `当前演示：Candidate · ${candidateLabel(item.candidate_type)} · ${item.status ?? "--"}${promoted}`;
   }
   if (target.kind === "normal_input") {
     return "当前演示：normal · P4 · 正常数据已记录";

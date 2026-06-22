@@ -21,6 +21,7 @@
 - `heart_rate_abnormal`：P1 心率异常，高于 130 bpm
 - `heart_rate_baseline_anomaly`：P2 心率基线异常，约 115 bpm，创建 `vital_baseline_anomaly` Candidate 交给本地模型复核
 - `spo2_baseline_anomaly`：P2 血氧基线异常，约 94%，不触发硬规则，创建 `vital_baseline_anomaly` Candidate 交给本地模型复核
+- `bathroom_stay_anomaly_demo`：P2 卫生间停留过长，持续发送 bathroom presence，超过 `bathroom_routine` p90 后创建 `bathroom_stay_anomaly` Candidate
 - `suspected_fall`：P1 疑似跌倒，发布视觉事件
 - `long_static`：P2 长时间静止，发布视觉事件
 - `co2_high`：P3 CO2 偏高，高于 1500 ppm
@@ -133,6 +134,7 @@ python Background_MQTT\generate_scenario_data.py --scene morning_getup --host lo
 - `心率异常`：心率高于 130，触发 `heart_rate_abnormal`
 - `心率基线异常`：心率约 115 bpm，不触发硬规则；创建 `vital_baseline_anomaly` Candidate，由本地模型复核是否升级为 P2
 - `血氧基线异常`：血氧约 94%，不触发 `spo2_low` 硬规则；创建 `vital_baseline_anomaly` Candidate，由本地模型复核是否升级为 P2
+- `卫生间停留过长`：持续发送整屋环境快照和 bathroom presence，超过手动 `bathroom_stay_p90_sec` 后创建 `bathroom_stay_anomaly` Candidate
 - `CO2 偏高`：CO2 高于 1500 ppm，触发 `co2_high`
 - `燃气泄漏`：燃气高于 100 ppm，触发 `gas_leak` P0 告警
 
@@ -145,9 +147,11 @@ python Background_MQTT\generate_scenario_data.py --scene morning_getup --host lo
 - 通过滑块选择触发时间，例如第 `60` 秒
 - 点击 `生成并发送风险事件时间轴`
 
-这种方式会先生成 2 分钟基础 MQTT 数据，再在触发点前后向指定房间平滑注入风险事件。例如 `kitchen + 燃气异常 + 第 60 秒` 会让厨房燃气数据从低值逐步升高，并在触发点后超过 P0 阈值，而不是突然发送一条孤立异常值。
+这种方式会先生成基础 MQTT 数据，再在触发点前后向指定房间平滑注入风险事件。例如 `kitchen + 燃气异常 + 第 60 秒` 会让厨房燃气数据从低值逐步升高，并在触发点后超过 P0 阈值，而不是突然发送一条孤立异常值。
 
-未勾选 `按真实时间发送` 时，页面使用快速演示模式，每组数据约间隔 100ms 发布；勾选后网页每 2 秒发布 1 组，但 MQTT 样本时间戳仍按 5 秒采样，共 24 组。
+`P2 卫生间停留过长（Candidate复核）` 是持续发送模式：触发点后持续发送 `home_environment_snapshot_v1`，其中 `bathroom.presence=true`、其他房间为 false；发送到 `bathroom_stay_p90_sec + 15s` 后自动停止，Edge MCP 生成 open `bathroom_stay` 并在超过个人 p90 后创建 Candidate。
+
+未勾选 `按真实时间发送` 时，页面使用快速演示模式，每组数据约间隔 100ms 发布；勾选后网页每 2 秒发布 1 组，但 MQTT 样本时间戳仍按 5 秒采样。普通风险事件默认 24 组；卫生间停留事件按个人 p90 自动延长。
 
 页面展示的 v2 处理链路为：
 

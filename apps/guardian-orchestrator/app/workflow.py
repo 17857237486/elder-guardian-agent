@@ -593,6 +593,18 @@ class WorkflowRunner:
             **baseline_summary,
             **cls._candidate_feature_summary(candidate),
         }
+        if str(candidate.get("candidate_type") or "") == "bathroom_stay_anomaly":
+            observations_desc = sorted(
+                (sensors.get("observations") if isinstance(sensors, dict) else []) or [],
+                key=lambda item: str(item.get("observed_at") or ""),
+                reverse=True,
+            )
+            env_summary = cls._latest_environment_summary(observations_desc, {"current_room": "bathroom"})
+            vital_summary = cls._latest_vital_summary(observations_desc)
+            if env_summary:
+                candidate_input["env"] = env_summary
+            if vital_summary:
+                candidate_input["vital"] = vital_summary
         candidate_input = {key: value for key, value in candidate_input.items() if value not in (None, [], {})}
         return {"candidate_local_input": candidate_input}
 
@@ -655,6 +667,7 @@ class WorkflowRunner:
             "window_seconds": "win_s",
             "returned_to_bedroom": "ret",
             "bathroom_stay_seconds": "bath_s",
+            "room": "room",
         }
         return {short: features[key] for key, short in key_map.items() if key in features}
 
@@ -666,6 +679,7 @@ class WorkflowRunner:
         features = segment.get("features") if isinstance(segment.get("features"), dict) else {}
         summary = {
             "dur": segment.get("duration_seconds"),
+            "room": segment.get("room"),
             "rooms": features.get("rooms"),
             "ret": features.get("returned_to_bedroom"),
             "bath_s": features.get("bathroom_stay_seconds"),
@@ -682,15 +696,16 @@ class WorkflowRunner:
         candidate_type = str(candidate.get("candidate_type") or "")
         features = candidate.get("features") if isinstance(candidate.get("features"), dict) else {}
         if (
-            (candidate_type == "night_behavior_anomaly" and "baseline_p90_seconds" in features)
+            (candidate_type in {"bathroom_stay_anomaly", "night_behavior_anomaly"} and "baseline_p90_seconds" in features)
             or (candidate_type == "vital_baseline_anomaly" and ("baseline_p90" in features or "baseline_p10" in features))
         ):
             return {}
-        wanted = (
-            {"night_routine", "bathroom_routine"}
-            if candidate_type == "night_behavior_anomaly"
-            else {"heart_rate_daily", "spo2_daily"}
-        )
+        if candidate_type == "bathroom_stay_anomaly":
+            wanted = {"bathroom_routine"}
+        elif candidate_type == "night_behavior_anomaly":
+            wanted = {"night_routine", "bathroom_routine"}
+        else:
+            wanted = {"heart_rate_daily", "spo2_daily"}
         result: dict[str, Any] = {}
         for baseline in baselines:
             baseline_type = str(baseline.get("baseline_type") or "")
@@ -882,7 +897,47 @@ class WorkflowRunner:
             return f"{room} 空气质量偏闷，系统已为您开窗通风。您现在感觉还好吗？"
         if event_type == "humidity_abnormal":
             return f"{room} 湿度异常，系统已记录。您现在是否需要帮助？"
-        return f"{event.summary} 您现在感觉还好吗？"
+        return "系统检测到环境需要关注，您现在感觉还好吗？"
+
+    @staticmethod
+    def _candidate_features(event: NormalizedEventV2) -> dict[str, Any]:
+        for evidence in event.evidence or []:
+            if not isinstance(evidence, dict):
+                continue
+            candidate = evidence.get("candidate")
+            if isinstance(candidate, dict) and isinstance(candidate.get("features"), dict):
+                return candidate["features"]
+        return {}
+
+    @classmethod
+    def _risk_hmi_message(cls, event: NormalizedEventV2) -> str:
+        event_type = str(event.event_type)
+        if event_type == EventType.HEART_RATE_ABNORMAL.value:
+            return "检测到心率明显异常，系统想确认您现在是否舒服？"
+        if event_type == EventType.SPO2_LOW.value:
+            return "检测到血氧偏低，系统想确认您现在是否舒服？"
+        if event_type == EventType.SUSPECTED_FALL.value:
+            return "检测到疑似跌倒，请确认您现在是否安全。"
+        if event_type == EventType.LONG_STATIC.value:
+            return "检测到您较长时间没有活动，请确认您现在是否安全。"
+        if event_type == "vital_baseline_anomaly":
+            features = cls._candidate_features(event)
+            metric = str(features.get("metric") or "")
+            direction = str(features.get("direction") or "")
+            if metric == "heart_rate":
+                if direction == "low":
+                    return "检测到心率比平时偏低，系统想确认您现在是否舒服？"
+                return "检测到心率比平时偏高，系统想确认您现在是否舒服？"
+            if metric == "spo2":
+                return "检测到血氧比平时偏低，系统想确认您现在是否舒服？"
+            return "检测到生命体征与平时相比有些异常，系统想确认您现在是否舒服？"
+        if event_type == "bathroom_stay_anomaly":
+            return "检测到您在卫生间停留时间较长，请确认现在是否安全。"
+        if event_type == "night_behavior_anomaly":
+            return "检测到夜间活动与平时不同，请确认您现在是否安全。"
+        if event_type in DETERMINISTIC_P3_EVENTS:
+            return cls._p3_hmi_message(event)
+        return "系统检测到需要关注的情况，请确认您现在是否安全。"
 
     async def _execute_p3_with_hmi(self, workflow: WorkflowV2, event: NormalizedEventV2) -> dict[str, Any]:
         event_type = str(event.event_type)
@@ -961,17 +1016,7 @@ class WorkflowRunner:
             )
             return await self.edge.request_home_action(request)
         if risk in {"P1", "P2"}:
-            prompt = await self.edge.create_hmi_prompt(
-                HmiPromptV2(
-                    workflow_id=workflow.workflow_id,
-                    event_id=event.event_id,
-                    elder_id=event.elder_id,
-                    risk_level=risk,
-                    event_type=str(event.event_type),
-                    message=f"{event.summary} 您现在安全吗？",
-                    timeout_sec=30,
-                )
-            )
+            prompt = await self._create_hmi_prompt(workflow, event, self._risk_hmi_message(event))
             alert = None
             if risk == "P1":
                 alert = await self.edge.raise_family_alert(

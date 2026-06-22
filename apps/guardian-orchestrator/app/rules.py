@@ -86,7 +86,7 @@ def classify_observation(observation: dict[str, Any]) -> NormalizedEventV2 | Non
                 risk_level=RiskLevel.P3,
                 risk_score=0.35,
                 room=room,
-                summary=f"{room} humidity {humidity:.1f}% is outside the safe comfort range.",
+                summary=f"{room} 湿度 {humidity:.1f}% 超出舒适范围。",
                 trigger_observation_ids=[observation_id] if observation_id else [],
                 rule_trace=trace,
             )

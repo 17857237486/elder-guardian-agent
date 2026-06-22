@@ -36,6 +36,7 @@ EVENT_LABELS = {
     "heart_rate_abnormal": "心率异常",
     "heart_rate_baseline_anomaly": "P2 心率基线异常",
     "spo2_baseline_anomaly": "P2 血氧基线异常",
+    "bathroom_stay_anomaly_demo": "P2 卫生间停留过长",
     "suspected_fall": "疑似跌倒",
     "long_static": "长时间静止",
     "co2_high": "CO2 偏高",
@@ -334,6 +335,30 @@ def inject_event(
         intensity = event_intensity(time_offset_sec, trigger_second)
         vital = sample["vital"]
         env = sample["environment"]
+
+        if event_type == "bathroom_stay_anomaly_demo":
+            in_bathroom = time_offset_sec >= trigger_second
+            stay_room = "bathroom" if in_bathroom else (event_room if event_room != "bathroom" else "living_room")
+            sample["bathroom_stay_demo"] = True
+            sample["injected_event"] = event_type if in_bathroom else "normal"
+            env.setdefault("life_scene", sample["scene"])
+            env["room"] = stay_room
+            env["occupant_room"] = stay_room
+            env["temperature"] = round(24.0 + wave(sample["sequence"], sample["total"], 0.2), 1)
+            env["humidity"] = round(58.0 + wave(sample["sequence"], sample["total"], 1.5), 1) if in_bathroom else env.get("humidity", 50.0)
+            env["co2_ppm"] = round(780 + intensity * 80)
+            env["gas_ppm"] = 0
+            env["smoke_ppm"] = 0
+            vital["heart_rate"] = round(78 + wave(sample["sequence"], sample["total"], 2))
+            vital["spo2"] = 96
+            sample["risk_hint"] = {
+                "level": "P2" if in_bathroom else "P4",
+                "reason": "卫生间停留持续计时，超过个人 p90 后进入 Candidate 本地复核。"
+                if in_bathroom
+                else "卫生间停留演示开始前的正常数据。",
+            }
+            sample["note"] = f"{sample['scene_label']} 场景中模拟卫生间持续停留，超过个人基线后进入 Candidate。"
+            continue
 
         if intensity <= 0:
             sample["injected_event"] = "normal"

@@ -747,6 +747,83 @@ class LLMClientParserTests(unittest.TestCase):
                 else:
                     runner.edge.request_home_action.assert_awaited_once()
 
+    def test_hmi_risk_messages_use_chinese_templates(self) -> None:
+        cases = [
+            (
+                NormalizedEventV2(
+                    elder_id="elder_001",
+                    event_type=EventType.HEART_RATE_ABNORMAL,
+                    risk_level=RiskLevel.P1,
+                    summary="heart rate is too high",
+                ),
+                "心率明显异常",
+            ),
+            (
+                NormalizedEventV2(
+                    elder_id="elder_001",
+                    event_type=EventType.SPO2_LOW,
+                    risk_level=RiskLevel.P1,
+                    summary="spo2 is low",
+                ),
+                "血氧偏低",
+            ),
+            (
+                NormalizedEventV2(
+                    elder_id="elder_001",
+                    event_type=EventType.SUSPECTED_FALL,
+                    risk_level=RiskLevel.P1,
+                    summary="suspected fall",
+                ),
+                "疑似跌倒",
+            ),
+            (
+                NormalizedEventV2(
+                    elder_id="elder_001",
+                    event_type=EventType.LONG_STATIC,
+                    risk_level=RiskLevel.P2,
+                    summary="long static",
+                ),
+                "较长时间没有活动",
+            ),
+            (
+                NormalizedEventV2(
+                    elder_id="elder_001",
+                    event_type="vital_baseline_anomaly",
+                    risk_level=RiskLevel.P2,
+                    summary="spo2 window below personal p10",
+                    evidence=[
+                        {
+                            "candidate": {
+                                "features": {
+                                    "metric": "spo2",
+                                    "direction": "low",
+                                }
+                            }
+                        }
+                    ],
+                ),
+                "血氧比平时偏低",
+            ),
+            (
+                NormalizedEventV2(
+                    elder_id="elder_001",
+                    event_type="bathroom_stay_anomaly",
+                    risk_level=RiskLevel.P2,
+                    summary="bathroom stay exceeds personal p90",
+                ),
+                "卫生间停留时间较长",
+            ),
+        ]
+
+        for event, expected_text in cases:
+            with self.subTest(event_type=str(event.event_type)):
+                message = WorkflowRunner._risk_hmi_message(event)
+                self.assertIn(expected_text, message)
+                self.assertNotIn("heart rate", message.lower())
+                self.assertNotIn("spo2 window", message.lower())
+                self.assertNotIn("suspected fall", message.lower())
+                self.assertNotIn("long static", message.lower())
+
     def test_local_context_uses_presence_timeline_twenty_environment_samples(self) -> None:
         base = "2026-06-18T22:{minute:02d}:00+08:00"
         observations: list[dict[str, object]] = []
@@ -891,9 +968,9 @@ class LLMClientParserTests(unittest.TestCase):
                 "kind": "environment",
                 "observed_at": f"2026-06-18T22:{index:02d}:00+08:00",
                 "payload": {
-                    "room": "living_room",
+                    "room": "bathroom",
                     "temperature": 25 + index,
-                    "humidity": 50,
+                    "humidity": 58,
                     "presence": True,
                 },
             }
@@ -910,24 +987,25 @@ class LLMClientParserTests(unittest.TestCase):
         )
         candidate = {
             "candidate_id": "cand_light",
-            "candidate_type": "night_behavior_anomaly",
+            "candidate_type": "bathroom_stay_anomaly",
             "priority": "low",
-            "reason": "night wake exceeds personal p90",
-            "source_segment_ids": ["seg_night"],
+            "reason": "卫生间停留超过个人90分位",
+            "source_segment_ids": ["seg_bath"],
             "features": {
                 "duration_seconds": 720,
                 "baseline_p90_seconds": 480,
-                "segment": {"segment_id": "seg_night", "segment_type": "night_wake", "duration_seconds": 720},
+                "room": "bathroom",
+                "segment": {"segment_id": "seg_bath", "segment_type": "bathroom_stay", "duration_seconds": 720, "room": "bathroom"},
                 "local_result": {"error": "old timeout"},
             },
         }
         event = NormalizedEventV2(
             event_id="cand_light",
             elder_id="elder_001",
-            event_type="night_behavior_anomaly",
+            event_type="bathroom_stay_anomaly",
             risk_level=RiskLevel.P4,
             source_kind="ai_review_candidate",
-            summary="night wake exceeds personal p90",
+            summary="bathroom stay exceeds personal p90",
         )
         context = WorkflowRunner._build_candidate_context(
             event,
@@ -935,18 +1013,19 @@ class LLMClientParserTests(unittest.TestCase):
             {"elder_id": "elder_001", "observations": observations},
             segments=[
                 {
-                    "segment_id": "seg_night",
-                    "segment_type": "night_wake",
+                    "segment_id": "seg_bath",
+                    "segment_type": "bathroom_stay",
                     "duration_seconds": 720,
-                    "features": {"rooms": ["bedroom", "bathroom"], "returned_to_bedroom": False},
+                    "room": "bathroom",
+                    "features": {"evidence_observation_ids": ["obs_bath_on"]},
                 }
             ],
             baselines=[
                 {
-                    "baseline_type": "night_routine",
+                    "baseline_type": "bathroom_routine",
                     "quality": "stable",
                     "sample_count": 14,
-                    "metrics": {"night_wake_duration_p90_sec": 480},
+                    "metrics": {"bathroom_stay_p90_sec": 480},
                 }
             ],
         )
@@ -954,10 +1033,11 @@ class LLMClientParserTests(unittest.TestCase):
         self.assertEqual(set(context), {"candidate_local_input"})
         self.assertEqual(context["candidate_local_input"]["dur"], 720)
         self.assertEqual(context["candidate_local_input"]["p90s"], 480)
-        self.assertNotIn("temp", context["candidate_local_input"])
-        self.assertNotIn("hr", context["candidate_local_input"])
+        self.assertEqual(context["candidate_local_input"]["room"], "bathroom")
+        self.assertIn("env", context["candidate_local_input"])
+        self.assertIn("vital", context["candidate_local_input"])
         self.assertNotIn("night_night_wake_duration_p90_sec", context["candidate_local_input"])
-        compact = _compact_local_case({"event_type": "night_behavior_anomaly", "risk_level": "P4"}, context)
+        compact = _compact_local_case({"event_type": "bathroom_stay_anomaly", "risk_level": "P4"}, context)
         self.assertEqual(compact["candidate_review"]["dur"], 720)
         self.assertNotIn("local_result", str(compact))
         self.assertNotIn("dedupe_key", str(compact))
@@ -965,7 +1045,7 @@ class LLMClientParserTests(unittest.TestCase):
         self.assertNotIn("devices", str(compact))
         self.assertNotIn("segment_id", str(compact))
         prompt_text = build_local_multimodal_content(
-            {"event_type": "night_behavior_anomaly", "risk_level": "P4", "summary": "night wake exceeds personal p90"},
+            {"event_type": "bathroom_stay_anomaly", "risk_level": "P4", "summary": "bathroom stay exceeds personal p90"},
             context,
             None,
         )[0]["text"]
@@ -1035,7 +1115,7 @@ class LLMClientParserTests(unittest.TestCase):
 
     def test_candidate_local_output_allows_four_field_json(self) -> None:
         output = {
-            "event_semantics": "night wake mild",
+            "event_semantics": "bathroom stay mild",
             "risk_level": "P3",
             "confidence": 0.61,
             "family_summary": "record and observe",
@@ -1044,9 +1124,9 @@ class LLMClientParserTests(unittest.TestCase):
         normalized = _normalize_local_multimodal_output(
             {
                 "event": {
-                    "event_type": "night_behavior_anomaly",
+                    "event_type": "bathroom_stay_anomaly",
                     "risk_level": "P4",
-                    "summary": "night wake exceeds p90",
+                    "summary": "bathroom stay exceeds p90",
                     "source_kind": "ai_review_candidate",
                 }
             },
@@ -1054,12 +1134,12 @@ class LLMClientParserTests(unittest.TestCase):
         )
 
         self.assertEqual(normalized["risk_level"], "P3")
-        self.assertEqual(normalized["supporting_evidence"], ["night wake exceeds p90"])
+        self.assertEqual(normalized["supporting_evidence"], ["bathroom stay exceeds p90"])
         self.assertIn("supporting_evidence", normalized["schema_repaired_fields"])
 
     def test_candidate_local_output_repairs_confidence_words(self) -> None:
         output = {
-            "event_semantics": "night wake mild",
+            "event_semantics": "bathroom stay mild",
             "risk_level": "P3",
             "confidence": "high",
             "family_summary": "record and observe",
@@ -1068,9 +1148,9 @@ class LLMClientParserTests(unittest.TestCase):
         normalized = _normalize_local_multimodal_output(
             {
                 "event": {
-                    "event_type": "night_behavior_anomaly",
+                    "event_type": "bathroom_stay_anomaly",
                     "risk_level": "P4",
-                    "summary": "night wake exceeds p90",
+                    "summary": "bathroom stay exceeds p90",
                     "source_kind": "ai_review_candidate",
                 }
             },
@@ -1260,7 +1340,7 @@ class LLMClientParserTests(unittest.TestCase):
         runner.edge.create_event = AsyncMock(side_effect=AssertionError("candidate P3/P4 must not create event"))
         runner.local_llm.analyze = AsyncMock(
             return_value={
-                "event_semantics": "night wake can be recorded",
+                "event_semantics": "bathroom stay can be recorded",
                 "risk_level": "P3",
                 "confidence": 0.6,
                 "family_summary": "continue observing",
@@ -1272,8 +1352,8 @@ class LLMClientParserTests(unittest.TestCase):
                 {
                     "candidate_id": "cand_low",
                     "elder_id": "elder_001",
-                    "candidate_type": "night_behavior_anomaly",
-                    "reason": "night wake exceeds personal p90",
+                    "candidate_type": "bathroom_stay_anomaly",
+                    "reason": "bathroom stay exceeds personal p90",
                 }
             )
         )
@@ -1296,10 +1376,10 @@ class LLMClientParserTests(unittest.TestCase):
         runner.edge.create_event = AsyncMock(return_value={"event_id": "event_promoted"})
         runner.local_llm.analyze = AsyncMock(
             return_value={
-                "event_semantics": "night behavior needs attention",
+                "event_semantics": "bathroom stay needs attention",
                 "risk_level": "P2",
                 "confidence": 0.82,
-                "family_summary": "night wake exceeded personal routine",
+                "family_summary": "bathroom stay exceeded personal routine",
             }
         )
 
@@ -1308,8 +1388,8 @@ class LLMClientParserTests(unittest.TestCase):
                 {
                     "candidate_id": "cand_promote",
                     "elder_id": "elder_001",
-                    "candidate_type": "night_behavior_anomaly",
-                    "reason": "night wake exceeds personal p90",
+                    "candidate_type": "bathroom_stay_anomaly",
+                    "reason": "bathroom stay exceeds personal p90",
                     "features": {"duration_seconds": 720},
                 }
             )
@@ -1318,7 +1398,7 @@ class LLMClientParserTests(unittest.TestCase):
         self.assertEqual(result["status"], "promoted")
         self.assertEqual(result["promoted_event_id"], "event_promoted")
         promoted_event = runner.edge.create_event.await_args.args[0]
-        self.assertEqual(str(promoted_event.event_type), "night_behavior_anomaly")
+        self.assertEqual(str(promoted_event.event_type), "bathroom_stay_anomaly")
         self.assertEqual(str(promoted_event.risk_level), "P2")
         runner._execute_policy.assert_awaited_once()
         final_update = runner.edge.update_ai_review_candidate.await_args_list[-1].args[1]
@@ -1362,8 +1442,8 @@ class LLMClientParserTests(unittest.TestCase):
                         {
                             "candidate_id": f"cand_serial_{index}",
                             "elder_id": "elder_001",
-                            "candidate_type": "night_behavior_anomaly",
-                            "reason": "night wake exceeds p90",
+                            "candidate_type": "bathroom_stay_anomaly",
+                            "reason": "bathroom stay exceeds p90",
                             "features": {"duration_seconds": 700 + index},
                         }
                     )

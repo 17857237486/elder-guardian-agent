@@ -844,6 +844,7 @@
                 <option value="heart_rate_abnormal">P1 心率异常</option>
                 <option value="heart_rate_baseline_anomaly">P2 心率基线异常（Candidate复核）</option>
                 <option value="spo2_baseline_anomaly">P2 血氧基线异常（Candidate复核）</option>
+                <option value="bathroom_stay_anomaly_demo">P2 卫生间停留过长（Candidate复核）</option>
                 <option value="suspected_fall">P1 疑似跌倒</option>
                 <option value="long_static">P2 长时间静止</option>
                 <option value="co2_high">P3 CO2 偏高</option>
@@ -876,7 +877,7 @@
           <div class="scenario-summary">
             <div class="scenario-summary-row">
               <b>生成方式</b>
-              <span id="scenario-method">生成 2 分钟基础 MQTT 数据，每 5 秒 1 组共 24 组；真实演示模式每 2 秒发送 1 组。</span>
+              <span id="scenario-method">生成基础 MQTT 数据，逻辑采样每 5 秒 1 组；真实演示模式每 2 秒发送 1 组。</span>
             </div>
             <div class="scenario-summary-row">
               <b>风险发生房间</b>
@@ -908,7 +909,7 @@
       <article class="panel">
         <h2>个人基线设置</h2>
         <div class="baseline-panel">
-          <p class="muted">当前阶段个人基线由此处手动设置，Edge MCP 不再自动覆盖；轻度心率、轻度血氧和起夜 candidate 会读取这些基线。</p>
+          <p class="muted">当前阶段个人基线由此处手动设置，Edge MCP 不再自动覆盖；轻度心率、轻度血氧和卫生间停留 Candidate 会读取这些基线。</p>
           <div class="form-actions">
             <button id="load-baselines" type="button">读取当前基线</button>
             <button id="fill-baseline-defaults" type="button">填写建议默认值</button>
@@ -946,16 +947,14 @@
             </section>
 
             <section class="baseline-card">
-              <h3>夜间起夜基线 night_routine</h3>
+              <h3>卫生间停留基线 bathroom_routine</h3>
               <div class="baseline-fields">
-                <label><span>usual_sleep_start</span><input id="night-sleep-start" value="22:35" /></label>
-                <label><span>usual_sleep_end</span><input id="night-sleep-end" value="06:18" /></label>
-                <label><span>night_wake_count_p90</span><input id="night-wake-count-p90" type="number" min="0" step="1" value="2" /></label>
-                <label><span>night_wake_duration_p90_sec</span><input id="night-wake-duration-p90" type="number" min="0" step="1" value="480" /></label>
-                <label><span>returned_to_bedroom_rate</span><input id="returned-rate" type="number" min="0" max="1" step="0.01" value="0.94" /></label>
+                <label><span>bathroom_stay_avg_sec</span><input id="bathroom-stay-avg" type="number" min="0" step="1" value="180" /></label>
+                <label><span>bathroom_stay_p90_sec</span><input id="bathroom-stay-p90" type="number" min="0" step="1" value="60" /></label>
+                <label><span>sample_count</span><input id="bathroom-sample-count" type="number" min="1" step="1" value="1" /></label>
               </div>
               <div class="form-actions">
-                <button id="save-night-baseline" class="primary" type="button">保存起夜基线</button>
+                <button id="save-bathroom-baseline" class="primary" type="button">保存卫生间基线</button>
               </div>
             </section>
           </div>
@@ -971,6 +970,7 @@
           <button class="template-button" type="button" data-template="heart_rate_abnormal">P1 心率异常<br />本地询问</button>
           <button class="template-button" type="button" data-template="heart_rate_baseline_anomaly">P2 心率基线异常<br />Candidate复核</button>
           <button class="template-button" type="button" data-template="spo2_baseline_anomaly">P2 血氧基线异常<br />Candidate复核</button>
+          <button class="template-button" type="button" data-template="bathroom_stay_anomaly_demo">P2 卫生间停留过长<br />Candidate复核</button>
           <button class="template-button" type="button" data-template="suspected_fall">P1 疑似跌倒<br />视觉事件</button>
           <button class="template-button" type="button" data-template="long_static">P2 长时间静止<br />视觉事件</button>
           <button class="template-button" type="button" data-template="co2_high">P3 CO2 偏高<br />通风建议</button>
@@ -1287,6 +1287,14 @@
           vital: { heart_rate: 86, spo2: 94, systolic_bp: 128, diastolic_bp: 80, body_temperature: 36.6 },
           env: { room: "living_room", temperature: 25.0, humidity: 50.0, co2_ppm: 920, gas_ppm: 0, smoke_ppm: 0 },
         },
+        bathroom_stay_anomaly_demo: {
+          name: "卫生间停留过长",
+          event: "bathroom_stay_anomaly",
+          risk: "P2",
+          reason: "老人持续停留在卫生间，超过个人 p90 后创建 Candidate 交给本地模型复核。",
+          vital: { heart_rate: 78, spo2: 96, systolic_bp: 128, diastolic_bp: 80, body_temperature: 36.6 },
+          env: { room: "bathroom", temperature: 24.0, humidity: 58.0, co2_ppm: 780, gas_ppm: 0, smoke_ppm: 0 },
+        },
         suspected_fall: {
           name: "疑似跌倒",
           event: "suspected_fall",
@@ -1356,6 +1364,7 @@
         heart_rate_abnormal: "心率在触发点前后升高，高于 130 bpm 后触发 heart_rate_abnormal P1。",
         heart_rate_baseline_anomaly: "心率在触发点后维持约 115 bpm，不触发硬规则；8090 创建 vital_baseline_anomaly Candidate，由本地模型判断是否升级为 P2。",
         spo2_baseline_anomaly: "血氧在触发点后维持约 94%，不触发 spo2_low P1/P0；8090 创建 vital_baseline_anomaly Candidate，由本地模型判断是否升级为 P2。",
+        bathroom_stay_anomaly_demo: "触发点后持续发送卫生间 presence=true；超过 bathroom_stay_p90_sec 后生成 bathroom_stay_anomaly Candidate。",
         suspected_fall: "在触发点发布 suspected_fall 视觉事件，触发 P1；无关键帧时本地视觉模型会安全降级。",
         long_static: "在触发点发布 long_static 视觉事件，触发 P2；用于模拟一级视觉检测器上报。",
         co2_high: "CO2 在触发点前后升高，超过 1500 ppm 后触发 co2_high P3。",
@@ -1376,12 +1385,9 @@
       const baselineDefaults = {
         heart_rate_daily: { daily_avg: 78, night_avg: 68, p10: 60, p50: 76, p90: 100, sample_count: 1 },
         spo2_daily: { avg: 96, night_avg: 95, p10: 95, p50: 96, p90: 98, sample_count: 1 },
-        night_routine: {
-          usual_sleep_start: "22:35",
-          usual_sleep_end: "06:18",
-          night_wake_count_p90: 2,
-          night_wake_duration_p90_sec: 480,
-          returned_to_bedroom_rate: 0.94,
+        bathroom_routine: {
+          bathroom_stay_avg_sec: 180,
+          bathroom_stay_p90_sec: 60,
           sample_count: 1,
         },
       };
@@ -1684,9 +1690,12 @@
         const eventRoom = $("scenario-event-room").value;
         const triggerSecond = Number($("scenario-trigger").value);
         $("scenario-trigger-label").textContent = `第 ${triggerSecond} 秒`;
+        const methodText = eventType === "bathroom_stay_anomaly_demo"
+          ? `生成卫生间持续停留 MQTT 数据，逻辑采样每 5 秒 1 组；从第 ${triggerSecond} 秒开始保持 bathroom 有人，直到超过卫生间 p90 后自动停止。真实演示模式每 2 秒发送 1 组，快速模式每组约 100ms。`
+          : `生成 2 分钟基础 MQTT 数据，每 5 秒 1 组共 24 组，并在第 ${triggerSecond} 秒向 ${deviceLabel(eventRoom)} 注入 ${riskEventLabel(eventType)}；真实演示模式每 2 秒发送 1 组，快速模式每组约 100ms。`;
         setText(
           "scenario-method",
-          `生成 2 分钟基础 MQTT 数据，每 5 秒 1 组共 24 组，并在第 ${triggerSecond} 秒向 ${deviceLabel(eventRoom)} 注入 ${riskEventLabel(eventType)}；真实演示模式每 2 秒发送 1 组，快速模式每组约 100ms。`,
+          methodText,
         );
         setText("scenario-event-room-note", `${deviceLabel(eventRoom)} (${eventRoom})`);
         setText("scenario-risk-level", riskLevelLabel(eventType));
@@ -1824,7 +1833,7 @@
       function applyBaselines(items) {
         const heart = baselineByType(items, "heart_rate_daily");
         const spo2 = baselineByType(items, "spo2_daily");
-        const night = baselineByType(items, "night_routine");
+        const bathroom = baselineByType(items, "bathroom_routine");
         if (heart) {
           const metrics = heart.metrics ?? {};
           setInputValue("hr-p10", metrics.p10 ?? baselineDefaults.heart_rate_daily.p10);
@@ -1842,20 +1851,18 @@
           setInputValue("spo2-night-avg", metrics.night_avg ?? baselineDefaults.spo2_daily.night_avg);
           setInputValue("spo2-avg", metrics.avg ?? baselineDefaults.spo2_daily.avg);
         }
-        if (night) {
-          const metrics = night.metrics ?? {};
-          setInputValue("night-sleep-start", metrics.usual_sleep_start ?? baselineDefaults.night_routine.usual_sleep_start);
-          setInputValue("night-sleep-end", metrics.usual_sleep_end ?? baselineDefaults.night_routine.usual_sleep_end);
-          setInputValue("night-wake-count-p90", metrics.night_wake_count_p90 ?? baselineDefaults.night_routine.night_wake_count_p90);
-          setInputValue("night-wake-duration-p90", metrics.night_wake_duration_p90_sec ?? baselineDefaults.night_routine.night_wake_duration_p90_sec);
-          setInputValue("returned-rate", metrics.returned_to_bedroom_rate ?? baselineDefaults.night_routine.returned_to_bedroom_rate);
+        if (bathroom) {
+          const metrics = bathroom.metrics ?? {};
+          setInputValue("bathroom-stay-avg", metrics.bathroom_stay_avg_sec ?? baselineDefaults.bathroom_routine.bathroom_stay_avg_sec);
+          setInputValue("bathroom-stay-p90", metrics.bathroom_stay_p90_sec ?? baselineDefaults.bathroom_routine.bathroom_stay_p90_sec);
+          setInputValue("bathroom-sample-count", bathroom.sample_count || metrics.sample_count || baselineDefaults.bathroom_routine.sample_count);
         }
       }
 
       function fillBaselineDefaults() {
         const heart = baselineDefaults.heart_rate_daily;
         const spo2 = baselineDefaults.spo2_daily;
-        const night = baselineDefaults.night_routine;
+        const bathroom = baselineDefaults.bathroom_routine;
         setInputValue("baseline-elder", $("manual-vital-elder").value.trim() || "elder_001");
         setInputValue("baseline-sample-count", heart.sample_count);
         setInputValue("hr-p10", heart.p10);
@@ -1868,11 +1875,9 @@
         setInputValue("spo2-p90", spo2.p90);
         setInputValue("spo2-night-avg", spo2.night_avg);
         setInputValue("spo2-avg", spo2.avg);
-        setInputValue("night-sleep-start", night.usual_sleep_start);
-        setInputValue("night-sleep-end", night.usual_sleep_end);
-        setInputValue("night-wake-count-p90", night.night_wake_count_p90);
-        setInputValue("night-wake-duration-p90", night.night_wake_duration_p90_sec);
-        setInputValue("returned-rate", night.returned_to_bedroom_rate);
+        setInputValue("bathroom-stay-avg", bathroom.bathroom_stay_avg_sec);
+        setInputValue("bathroom-stay-p90", bathroom.bathroom_stay_p90_sec);
+        setInputValue("bathroom-sample-count", bathroom.sample_count);
       }
 
       function baselineBase(type, metrics) {
@@ -1910,15 +1915,16 @@
         });
       }
 
-      function buildNightBaseline() {
-        return baselineBase("night_routine", {
-          usual_sleep_start: $("night-sleep-start").value.trim(),
-          usual_sleep_end: $("night-sleep-end").value.trim(),
-          night_wake_count_p90: Number($("night-wake-count-p90").value),
-          night_wake_duration_p90_sec: Number($("night-wake-duration-p90").value),
-          returned_to_bedroom_rate: Number($("returned-rate").value),
-          sample_count: Number($("baseline-sample-count").value || 1),
-        });
+      function buildBathroomBaseline() {
+        const sampleCount = Number($("bathroom-sample-count").value || $("baseline-sample-count").value || 1);
+        return {
+          ...baselineBase("bathroom_routine", {
+            bathroom_stay_avg_sec: Number($("bathroom-stay-avg").value),
+            bathroom_stay_p90_sec: Number($("bathroom-stay-p90").value),
+            sample_count: sampleCount,
+          }),
+          sample_count: sampleCount,
+        };
       }
 
       async function saveBaseline(kind, builder) {
@@ -2176,7 +2182,7 @@
 
       $("save-heart-baseline").addEventListener("click", () => saveBaseline("save-heart-baseline", buildHeartBaseline));
       $("save-spo2-baseline").addEventListener("click", () => saveBaseline("save-spo2-baseline", buildSpo2Baseline));
-      $("save-night-baseline").addEventListener("click", () => saveBaseline("save-night-baseline", buildNightBaseline));
+      $("save-bathroom-baseline").addEventListener("click", () => saveBaseline("save-bathroom-baseline", buildBathroomBaseline));
 
       $("clear-local").addEventListener("click", () => {
         setRecords([]);

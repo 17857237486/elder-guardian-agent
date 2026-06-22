@@ -218,12 +218,16 @@ def _build_room_stays(elder_id: str, items: list[dict[str, Any]], now: datetime)
         start = open_by_room.pop(room, None)
         if start:
             segments.append(_make_room_segment(elder_id, "room_stay", room, start, item, "closed"))
+            if room == "bathroom":
+                segments.append(_make_room_segment(elder_id, "bathroom_stay", room, start, item, "closed"))
             if room == "bedroom" and _is_night(start["at"]):
                 segments.append(_make_room_segment(elder_id, "night_sleep", room, start, item, "closed"))
     for room, start in open_by_room.items():
         end = {**start, "at": now, "observation_id": None}
         status = "open"
         segments.append(_make_room_segment(elder_id, "room_stay", room, start, end, status))
+        if room == "bathroom":
+            segments.append(_make_room_segment(elder_id, "bathroom_stay", room, start, end, status))
         if room == "bedroom" and _is_night(start["at"]):
             segments.append(_make_room_segment(elder_id, "night_sleep", room, start, end, status))
     return segments
@@ -269,7 +273,6 @@ def _build_night_wakes(elder_id: str, items: list[dict[str, Any]], now: datetime
             bathroom_start = item
         elif room == "bathroom" and not item["present"] and bathroom_start is not None:
             bathroom_seconds += max(0, int((item["at"] - bathroom_start["at"]).total_seconds()))
-            segments.append(_make_room_segment(elder_id, "bathroom_stay", "bathroom", bathroom_start, item, "closed"))
             bathroom_start = None
         if room == "bedroom" and item["present"]:
             segments.append(_make_night_wake_segment(elder_id, wake_start, item, "closed", rooms, bathroom_seconds, True))
@@ -278,7 +281,6 @@ def _build_night_wakes(elder_id: str, items: list[dict[str, Any]], now: datetime
     if wake_start is not None:
         if bathroom_start is not None:
             bathroom_seconds += max(0, int((now - bathroom_start["at"]).total_seconds()))
-            segments.append(_make_room_segment(elder_id, "bathroom_stay", "bathroom", bathroom_start, {**bathroom_start, "at": now, "observation_id": None}, "open"))
         segments.append(_make_night_wake_segment(elder_id, wake_start, {**wake_start, "at": now, "observation_id": None}, "open", rooms, bathroom_seconds, False))
     return segments
 
@@ -372,7 +374,6 @@ def build_baselines(elder_id: str, segments: list[dict[str, Any]], *, now: datet
     cutoff = now - timedelta(days=LOOKBACK_DAYS)
     recent = [item for item in segments if _parse_time(item.get("start_at")) >= cutoff]
     baselines = [
-        _night_baseline(elder_id, recent, now),
         _bathroom_baseline(elder_id, recent, now),
         _vital_baseline(elder_id, recent, now, "heart_rate_daily", "heart_rate_window"),
         _vital_baseline(elder_id, recent, now, "spo2_daily", "spo2_window"),
@@ -453,8 +454,6 @@ def build_candidates(
 ) -> list[AiReviewCandidateV2]:
     existing_keys = {str((item.get("features") or {}).get("dedupe_key")) for item in existing}
     baseline_map = {item.get("baseline_type"): item for item in baselines}
-    night_p90 = float((baseline_map.get("night_routine", {}).get("metrics") or {}).get("night_wake_duration_p90_sec") or DEFAULT_NIGHT_WAKE_P90)
-    night_count_p90 = float((baseline_map.get("night_routine", {}).get("metrics") or {}).get("night_wake_count_p90") or DEFAULT_WAKE_COUNT_P90)
     bathroom_p90 = float((baseline_map.get("bathroom_routine", {}).get("metrics") or {}).get("bathroom_stay_p90_sec") or DEFAULT_BATHROOM_STAY_P90)
     heart_metrics = baseline_map.get("heart_rate_daily", {}).get("metrics") or {}
     spo2_metrics = baseline_map.get("spo2_daily", {}).get("metrics") or {}
@@ -462,70 +461,29 @@ def build_candidates(
     heart_p10 = float(heart_metrics.get("p10") or DEFAULT_HEART_RATE_P10)
     spo2_p10 = float(spo2_metrics.get("p10") or DEFAULT_SPO2_P10)
     candidates: list[AiReviewCandidateV2] = []
-    night_wakes_by_night: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for segment in segments:
-        if segment.get("segment_type") == "night_wake":
-            features = segment.get("features") or {}
-            night_key = str(features.get("night_key") or _night_key(_parse_time(segment.get("start_at"))))
-            if night_key != _night_key(now) or not _is_night(now):
-                continue
-            night_wakes_by_night[night_key].append(segment)
-    for night_key, night_segments in night_wakes_by_night.items():
-        if len(night_segments) <= night_count_p90:
-            continue
-        source_ids = [str(item.get("segment_id")) for item in night_segments if item.get("segment_id")]
-        key = f"night_behavior_anomaly:wake_count:{elder_id}:{night_key}"
-        if key in existing_keys:
-            continue
-        candidates.append(
-            AiReviewCandidateV2(
-                elder_id=elder_id,
-                candidate_type="night_behavior_anomaly",
-                reason="night wake count exceeds personal p90",
-                source_segment_ids=source_ids,
-                features={
-                    "dedupe_key": key,
-                    "night_key": night_key,
-                    "wake_count": len(night_segments),
-                    "baseline_wake_count_p90": night_count_p90,
-                    "segments": night_segments,
-                },
-            )
-        )
     for segment in segments:
         features = segment.get("features") or {}
         segment_id = str(segment.get("segment_id"))
         if (
-            segment.get("segment_type") == "night_wake"
-            and _is_current_open_night_wake(segment, now)
-            and float(segment.get("duration_seconds") or 0) > night_p90
-        ):
-            key = f"night_behavior_anomaly:{segment_id}"
-            if key not in existing_keys:
-                candidates.append(
-                    AiReviewCandidateV2(
-                        elder_id=elder_id,
-                        candidate_type="night_behavior_anomaly",
-                        reason="起夜持续时间超过个人90分位",
-                        source_segment_ids=[segment_id],
-                        features={"dedupe_key": key, "duration_seconds": segment.get("duration_seconds"), "baseline_p90_seconds": night_p90, "segment": segment},
-                    )
-                )
-        if (
             segment.get("segment_type") == "bathroom_stay"
             and segment.get("status") == "open"
-            and _is_recent_segment(segment, now)
             and float(segment.get("duration_seconds") or 0) > bathroom_p90
         ):
-            key = f"night_behavior_anomaly:{segment_id}"
+            key = f"bathroom_stay_anomaly:{segment_id}"
             if key not in existing_keys:
                 candidates.append(
                     AiReviewCandidateV2(
                         elder_id=elder_id,
-                        candidate_type="night_behavior_anomaly",
+                        candidate_type="bathroom_stay_anomaly",
                         reason="卫生间停留超过个人90分位",
                         source_segment_ids=[segment_id],
-                        features={"dedupe_key": key, "duration_seconds": segment.get("duration_seconds"), "baseline_p90_seconds": bathroom_p90, "segment": segment},
+                        features={
+                            "dedupe_key": key,
+                            "duration_seconds": segment.get("duration_seconds"),
+                            "baseline_p90_seconds": bathroom_p90,
+                            "room": "bathroom",
+                            "segment": segment,
+                        },
                     )
                 )
         if False and segment.get("segment_type") == "heart_rate_window" and float(features.get("p90") or 0) > heart_p90:

@@ -409,8 +409,42 @@ def publish_sample_pair(sample: dict[str, Any]) -> int:
         }
     vital_sample, env_sample = to_standard_samples(guardian_core_sample)
     publish_model(elder_sensor_vital(sample["elder_id"]), vital_sample)
-    publish_model(elder_sensor_env(sample["elder_id"]), env_sample)
+    if sample.get("bathroom_stay_demo"):
+        publish_json(elder_sensor_env(sample["elder_id"]), home_environment_snapshot(sample))
+    else:
+        publish_model(elder_sensor_env(sample["elder_id"]), env_sample)
     return 2
+
+
+def home_environment_snapshot(sample: dict[str, Any]) -> dict[str, Any]:
+    env = sample.get("environment", {})
+    occupant_room = str(env.get("occupant_room") or env.get("room") or "living_room")
+    rooms: dict[str, dict[str, Any]] = {}
+    for room in ROOM_KEYS:
+        base = dict(DEFAULT_ROOM_ENV[room])
+        if room == env.get("room"):
+            base.update(
+                {
+                    "temperature": env.get("temperature", base["temperature"]),
+                    "humidity": env.get("humidity", base["humidity"]),
+                    "co2_ppm": env.get("co2_ppm", base["co2_ppm"]),
+                    "gas_ppm": env.get("gas_ppm", 0),
+                    "smoke_ppm": env.get("smoke_ppm", 0),
+                }
+            )
+        else:
+            base.update({"gas_ppm": 0, "smoke_ppm": 0})
+        base["presence"] = room == occupant_room
+        rooms[room] = base
+    return {
+        "schema": "home_environment_snapshot_v1",
+        "snapshot_id": f"envsnap_{sample['sample_id']}",
+        "elder_id": sample["elder_id"],
+        "source": "background_mqtt_timeline",
+        "observed_at": sample["timestamp"],
+        "timestamp": sample["timestamp"],
+        "rooms": rooms,
+    }
 
 
 def publish_risk_signal(event_type: str, elder_id: str, room: str) -> int:
@@ -469,6 +503,10 @@ async def current_heart_rate_p90(elder_id: str) -> int:
 
 async def current_spo2_p10(elder_id: str) -> int:
     return await current_vital_baseline_value(elder_id, "spo2_daily", "p10", 95)
+
+
+async def current_bathroom_stay_p90(elder_id: str) -> int:
+    return await current_vital_baseline_value(elder_id, "bathroom_routine", "bathroom_stay_p90_sec", 60)
 
 
 async def post_vital_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
@@ -536,6 +574,29 @@ async def create_spo2_candidate(elder_id: str, room: str, *, latest_value: int =
     return await post_vital_candidate(candidate)
 
 
+async def create_bathroom_stay_candidate(elder_id: str, *, duration_seconds: int | None = None) -> dict[str, Any]:
+    baseline_p90 = await current_bathroom_stay_p90(elder_id)
+    duration = duration_seconds or baseline_p90 + 15
+    key_time = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    candidate = {
+        "elder_id": elder_id,
+        "candidate_type": "bathroom_stay_anomaly",
+        "priority": "medium",
+        "status": "pending",
+        "reason": "卫生间停留超过个人90分位",
+        "source_segment_ids": [],
+        "baseline_refs": ["bathroom_routine:default"],
+        "features": {
+            "duration_seconds": duration,
+            "baseline_p90_seconds": baseline_p90,
+            "room": "bathroom",
+            "demo_source": "background_mqtt_manual",
+            "dedupe_key": f"demo-bathroom-stay-{elder_id}-{key_time}",
+        },
+    }
+    return await post_vital_candidate(candidate)
+
+
 def manual_risk_samples(event_type: str, elder_id: str, room: str) -> tuple[SensorVitalSample, SensorEnvSample]:
     vital = {"heart_rate": 78, "spo2": 96, "systolic_bp": 128, "diastolic_bp": 80, "body_temperature": 36.6}
     env = {"temperature": 25.0, "humidity": 50.0, "co2_ppm": 900, "gas_ppm": 0, "smoke_ppm": 0}
@@ -549,6 +610,8 @@ def manual_risk_samples(event_type: str, elder_id: str, room: str) -> tuple[Sens
         vital.update(heart_rate=115, systolic_bp=136, diastolic_bp=84)
     elif event_type == "spo2_baseline_anomaly":
         vital.update(heart_rate=86, spo2=94)
+    elif event_type == "bathroom_stay_anomaly_demo":
+        env.update(temperature=24.0, humidity=58.0, co2_ppm=780)
     elif event_type == "co2_high":
         env.update(co2_ppm=1800)
     elif event_type == "gas_leak":
@@ -778,7 +841,21 @@ def on_message(client: mqtt.Client, userdata: object, msg: mqtt.MQTTMessage) -> 
     kind = topic_kind(msg.topic)
     if kind == "env":
         override = downgraded_env_overrides.pop(str(payload.get("sample_id")), None)
-        update_room_env_state(override or payload)
+        env_payload = override or payload
+        if env_payload.get("schema") == "home_environment_snapshot_v1" and isinstance(env_payload.get("rooms"), dict):
+            for room, room_payload in env_payload["rooms"].items():
+                if isinstance(room_payload, dict):
+                    update_room_env_state(
+                        {
+                            **room_payload,
+                            "room": room,
+                            "timestamp": env_payload.get("timestamp") or env_payload.get("observed_at"),
+                            "elder_id": env_payload.get("elder_id", ELDER_ID),
+                            "sample_id": env_payload.get("snapshot_id"),
+                        }
+                    )
+        else:
+            update_room_env_state(env_payload)
     if msg.topic.endswith("/set"):
         handle_device_set(msg.topic, payload)
     elif msg.topic.endswith("/state"):
@@ -907,6 +984,11 @@ async def start_scenario(request: ScenarioPublishRequest) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail="scenario already running")
     ensure_mqtt_connected()
     await sync_devices_from_guardian_core()
+    if request.event_type == "bathroom_stay_anomaly_demo":
+        bathroom_p90 = await current_bathroom_stay_p90(request.elder_id)
+        required_duration = min(600, request.trigger_second + bathroom_p90 + 15)
+        if required_duration > request.duration_sec:
+            request = request.model_copy(update={"duration_sec": required_duration})
     samples = build_event_samples(
         request.scene,
         request.event_type,
@@ -960,6 +1042,8 @@ async def submit_manual_risk_event(request: ManualRiskEventRequest) -> dict[str,
         await create_heart_rate_candidate(request.elder_id, request.room)
     elif request.event_type == "spo2_baseline_anomaly":
         await create_spo2_candidate(request.elder_id, request.room)
+    elif request.event_type == "bathroom_stay_anomaly_demo":
+        await create_bathroom_stay_candidate(request.elder_id)
     return {"ok": True, "event_type": request.event_type, "elder_id": request.elder_id, "messages": messages}
 
 

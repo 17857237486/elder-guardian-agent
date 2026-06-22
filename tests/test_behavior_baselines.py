@@ -99,14 +99,10 @@ class BehaviorBaselineTests(unittest.TestCase):
                 segment_dicts.append(shifted)
             baselines = build_baselines(elder_id, segment_dicts, now=base + timedelta(days=1))
             baseline_map = {item.baseline_type: item for item in baselines}
-            assert baseline_map["night_routine"].quality == "stable"
-            assert baseline_map["night_routine"].metrics["night_wake_count_p90"] >= 1
+            assert "night_routine" not in baseline_map
+            assert baseline_map["bathroom_routine"].metrics["bathroom_stay_p90_sec"] >= 300
 
             baseline_records = [
-                {
-                    "baseline_type": "night_routine",
-                    "metrics": {"night_wake_duration_p90_sec": 480, "night_wake_count_p90": 2},
-                },
                 {"baseline_type": "bathroom_routine", "metrics": {"bathroom_stay_p90_sec": 300}},
                 {"baseline_type": "heart_rate_daily", "metrics": {"p90": 75}},
                 {"baseline_type": "spo2_daily", "metrics": {"p10": 95}},
@@ -114,6 +110,7 @@ class BehaviorBaselineTests(unittest.TestCase):
             candidates = build_candidates(elder_id, segment_dicts, baseline_records, [], now=base + timedelta(minutes=5))
             candidate_types = {item.candidate_type for item in candidates}
             assert "vital_baseline_anomaly" in candidate_types
+            assert "night_behavior_anomaly" not in candidate_types
             assert all(item.status == "pending" for item in candidates)
             """
         )
@@ -132,33 +129,33 @@ class BehaviorBaselineTests(unittest.TestCase):
             client = TestClient(app)
 
             segment = {
-                "segment_id": "seg_test_night_wake",
+                "segment_id": "seg_test_bathroom_stay",
                 "elder_id": "elder_001",
-                "segment_type": "night_wake",
-                "start_at": "2026-06-18T23:10:00+08:00",
+                "segment_type": "bathroom_stay",
+                "start_at": "2026-06-18T15:10:00+08:00",
                 "duration_seconds": 720,
-                "room": "bedroom",
-                "features": {"rooms": ["bedroom", "bathroom", "living_room"], "returned_to_bedroom": False},
+                "room": "bathroom",
+                "features": {"evidence_observation_ids": ["obs_bath_on"]},
                 "status": "open",
             }
             baseline = {
                 "elder_id": "elder_001",
-                "baseline_type": "night_routine",
+                "baseline_type": "bathroom_routine",
                 "scope": "default",
                 "timezone": "Asia/Shanghai",
                 "lookback_days": 14,
                 "sample_count": 14,
                 "quality": "stable",
-                "metrics": {"night_wake_duration_p90_sec": 480, "night_wake_count_p90": 2},
+                "metrics": {"bathroom_stay_avg_sec": 180, "bathroom_stay_p90_sec": 480},
             }
             candidate = {
-                "candidate_id": "cand_test_night_wake",
+                "candidate_id": "cand_test_bathroom_stay",
                 "elder_id": "elder_001",
-                "candidate_type": "night_behavior_anomaly",
+                "candidate_type": "bathroom_stay_anomaly",
                 "priority": "low",
-                "reason": "night wake exceeds personal p90",
-                "source_segment_ids": ["seg_test_night_wake"],
-                "features": {"duration_seconds": 720, "baseline_p90_seconds": 480},
+                "reason": "卫生间停留超过个人90分位",
+                "source_segment_ids": ["seg_test_bathroom_stay"],
+                "features": {"duration_seconds": 720, "baseline_p90_seconds": 480, "room": "bathroom"},
             }
 
             assert client.post("/api/v2/behavior-segments", json=segment).status_code == 200
@@ -166,11 +163,11 @@ class BehaviorBaselineTests(unittest.TestCase):
             assert client.post("/api/v2/ai-review-candidates", json=candidate).status_code == 200
 
             state = client.get("/api/v2/dashboard/state?elder_id=elder_001").json()
-            assert state["behavior_segments"][0]["segment_id"] == "seg_test_night_wake"
-            assert state["personal_baselines"][0]["baseline_type"] == "night_routine"
-            assert state["ai_review_candidates"][0]["candidate_id"] == "cand_test_night_wake"
+            assert state["behavior_segments"][0]["segment_id"] == "seg_test_bathroom_stay"
+            assert state["personal_baselines"][0]["baseline_type"] == "bathroom_routine"
+            assert state["ai_review_candidates"][0]["candidate_id"] == "cand_test_bathroom_stay"
 
-            patched = client.patch("/api/v2/ai-review-candidates/cand_test_night_wake", json={"status": "dismissed"})
+            patched = client.patch("/api/v2/ai-review-candidates/cand_test_bathroom_stay", json={"status": "dismissed"})
             assert patched.status_code == 200
             assert patched.json()["ai_review_candidate"]["status"] == "dismissed"
             """
@@ -236,6 +233,56 @@ class BehaviorBaselineTests(unittest.TestCase):
                 now=base + timedelta(minutes=15),
             )
             assert not [item for item in repeated if item.candidate_type == "vital_baseline_anomaly"], repeated
+            """
+        )
+        result = run_edge_script(script)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_bathroom_stay_anomaly_candidate_requires_open_stay_over_p90(self) -> None:
+        script = textwrap.dedent(
+            """
+            from datetime import datetime, timedelta, timezone
+
+            from app.behavior_worker import build_candidates, build_presence_segments
+
+            elder_id = "elder_001"
+            base = datetime(2026, 6, 18, 8, 0, tzinfo=timezone.utc)
+
+            def obs(obs_id, seconds, room, present):
+                return {
+                    "observation_id": obs_id,
+                    "elder_id": elder_id,
+                    "kind": "device_state",
+                    "payload": {"room": room, "present": present, "state": "present" if present else "absent"},
+                    "observed_at": (base + timedelta(seconds=seconds)).isoformat(),
+                }
+
+            observations = [
+                obs("living_on", 0, "living_room", True),
+                obs("living_off", 30, "living_room", False),
+                obs("bath_on", 60, "bathroom", True),
+            ]
+            baseline = [{"baseline_type": "bathroom_routine", "metrics": {"bathroom_stay_p90_sec": 300}}]
+
+            short_segments = [item.model_dump(mode="json") for item in build_presence_segments(observations, now=base + timedelta(seconds=299))]
+            assert not build_candidates(elder_id, short_segments, baseline, [], now=base + timedelta(seconds=299))
+
+            long_segments = [item.model_dump(mode="json") for item in build_presence_segments(observations, now=base + timedelta(seconds=420))]
+            candidates = build_candidates(elder_id, long_segments, baseline, [], now=base + timedelta(seconds=420))
+            bathroom = [item for item in candidates if item.candidate_type == "bathroom_stay_anomaly"]
+            assert len(bathroom) == 1, candidates
+            assert bathroom[0].features["room"] == "bathroom"
+            assert bathroom[0].features["baseline_p90_seconds"] == 300
+            assert bathroom[0].features["duration_seconds"] > 300
+
+            repeated = build_candidates(
+                elder_id,
+                long_segments,
+                baseline,
+                [bathroom[0].model_dump(mode="json")],
+                now=base + timedelta(seconds=420),
+            )
+            assert not [item for item in repeated if item.candidate_type == "bathroom_stay_anomaly"], repeated
             """
         )
         result = run_edge_script(script)

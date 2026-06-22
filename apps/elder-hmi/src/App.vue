@@ -56,9 +56,34 @@ const statusText = computed(() => {
   return "正常";
 });
 const statusClass = computed(() => statusText.value === "告警" ? "danger" : statusText.value === "注意" ? "warning" : "normal");
+
+function eventFallbackMessage(event?: AnyRecord | null): string {
+  const eventType = String(event?.event_type ?? "");
+  if (eventType === "heart_rate_abnormal") return "检测到心率明显异常，系统想确认您现在是否舒服？";
+  if (eventType === "spo2_low") return "检测到血氧偏低，系统想确认您现在是否舒服？";
+  if (eventType === "suspected_fall") return "检测到疑似跌倒，请确认您现在是否安全。";
+  if (eventType === "long_static") return "检测到您较长时间没有活动，请确认您现在是否安全。";
+  if (eventType === "temperature_high") return "检测到室温偏高，系统已为您处理。您现在感觉还好吗？";
+  if (eventType === "temperature_low") return "检测到室温偏低，系统已为您处理。您现在感觉还好吗？";
+  if (eventType === "co2_high") return "检测到空气质量偏闷，系统已为您通风。您现在感觉还好吗？";
+  if (eventType === "humidity_abnormal") return "检测到湿度异常，系统已记录。您现在是否需要帮助？";
+  if (eventType === "vital_baseline_anomaly") {
+    const features = event?.evidence?.find?.((item: AnyRecord) => item?.candidate?.features)?.candidate?.features ?? {};
+    if (features.metric === "heart_rate") {
+      return features.direction === "low"
+        ? "检测到心率比平时偏低，系统想确认您现在是否舒服？"
+        : "检测到心率比平时偏高，系统想确认您现在是否舒服？";
+    }
+    if (features.metric === "spo2") return "检测到血氧比平时偏低，系统想确认您现在是否舒服？";
+    return "检测到生命体征与平时相比有些异常，系统想确认您现在是否舒服？";
+  }
+  if (eventType === "bathroom_stay_anomaly") return "检测到您在卫生间停留时间较长，请确认现在是否安全。";
+  return "系统检测到需要关注的情况，请确认您现在是否安全。";
+}
+
 const systemText = computed(() => {
   if (currentPrompt.value?.message) return currentPrompt.value.message;
-  if (currentEvent.value?.summary) return currentEvent.value.summary;
+  if (currentEvent.value) return eventFallbackMessage(currentEvent.value);
   if (isCleared.value && ["P0", "P1"].includes(String(state.current_risk_level ?? ""))) return "存在高风险事件，请注意安全";
   return "系统正常守护中";
 });
