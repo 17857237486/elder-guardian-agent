@@ -25,14 +25,30 @@ function isAfterClearTime(item?: AnyRecord | null): boolean {
   return Boolean(item);
 }
 
+const ACTIVE_EVENT_STATES = new Set([
+  "event_detected",
+  "rule_classified",
+  "action_planned",
+  "ask_elder",
+  "wait_response",
+  "family_alert",
+  "emergency_alert",
+  "escalated"
+]);
+
+function isActiveEvent(event?: AnyRecord | null): boolean {
+  if (!event || !isAfterClearTime(event)) return false;
+  return ACTIVE_EVENT_STATES.has(String(event.state ?? "").toLowerCase());
+}
+
 const rawWaitingPrompt = computed(() => state.current_hmi_prompt?.status === "waiting" ? state.current_hmi_prompt : null);
-const currentEvent = computed(() => (state.events ?? []).find((event: AnyRecord) => isAfterClearTime(event)) ?? null);
+const currentEvent = computed(() => (state.events ?? []).find((event: AnyRecord) => isActiveEvent(event)) ?? null);
 const currentPrompt = computed(() => rawWaitingPrompt.value ?? null);
 const visibleRiskLevel = computed(() => {
   if (currentPrompt.value) return String(currentPrompt.value.risk_level ?? state.current_risk_level);
   if (currentEvent.value) return String(currentEvent.value.final_risk_level ?? currentEvent.value.risk_level ?? state.current_risk_level);
   if (isCleared.value && ["P0", "P1"].includes(String(state.current_risk_level ?? ""))) return String(state.current_risk_level);
-  return isCleared.value ? "P4" : String(state.current_risk_level ?? "P4");
+  return "P4";
 });
 const statusText = computed(() => {
   if (visibleRiskLevel.value === "P0" || visibleRiskLevel.value === "P1") return "告警";
