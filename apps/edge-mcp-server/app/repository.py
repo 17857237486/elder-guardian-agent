@@ -696,13 +696,31 @@ def clear_demo_runtime_history(
     return counts
 
 
+CURRENT_RISK_STATES = {
+    "event_detected",
+    "rule_classified",
+    "action_planned",
+    "ask_elder",
+    "wait_response",
+    "family_alert",
+    "emergency_alert",
+    "escalated",
+}
+
+
+def current_risk_level_from_events(events: list[dict[str, Any]]) -> str:
+    for event in events:
+        if str(event.get("state") or "").lower() in CURRENT_RISK_STATES:
+            return str(event.get("final_risk_level") or event.get("risk_level") or "P4")
+    return "P4"
+
+
 def dashboard_state(db: Session, elder_id: str) -> dict[str, Any]:
     events = list_events(db, elder_id=elder_id, limit=30)
     observations = recent_observations(db, elder_id=elder_id, limit=20)
-    latest = events[0] if events else None
     return {
         "elder_id": elder_id,
-        "current_risk_level": latest["risk_level"] if latest else "P4",
+        "current_risk_level": current_risk_level_from_events(events),
         "events": events,
         "observations": observations,
         "device_readings": list_device_readings(db, elder_id=elder_id, limit=100),

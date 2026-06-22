@@ -73,6 +73,70 @@ class HmiResponsePersistenceTests(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_resolved_events_do_not_drive_current_risk_level(self) -> None:
+        script = textwrap.dedent(
+            """
+            from datetime import datetime, timedelta, timezone
+
+            from app.database import Base, engine, SessionLocal
+            from app import repository
+            from guardian_shared.v2 import NormalizedEventV2
+
+            Base.metadata.create_all(bind=engine)
+            start = datetime(2026, 6, 15, tzinfo=timezone.utc)
+            with SessionLocal() as db:
+                repository.create_event(
+                    db,
+                    NormalizedEventV2(
+                        event_id="event_resolved_p3",
+                        elder_id="elder_001",
+                        event_type="humidity_abnormal",
+                        risk_level="P3",
+                        state="resolved",
+                        room="living_room",
+                        summary="living_room humidity 82.0% is outside the safe comfort range.",
+                        created_at=start,
+                        updated_at=start,
+                    ),
+                )
+                state = repository.dashboard_state(db, "elder_001")
+                assert state["current_risk_level"] == "P4"
+                assert state["current_hmi_prompt"] is None
+
+                repository.create_event(
+                    db,
+                    NormalizedEventV2(
+                        event_id="event_active_p2",
+                        elder_id="elder_001",
+                        event_type="long_static",
+                        risk_level="P2",
+                        state="wait_response",
+                        room="living_room",
+                        summary="请确认状态",
+                        created_at=start + timedelta(seconds=1),
+                        updated_at=start + timedelta(seconds=1),
+                    ),
+                )
+                state = repository.dashboard_state(db, "elder_001")
+                assert state["current_risk_level"] == "P2"
+            """
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            env = os.environ.copy()
+            env["DATABASE_URL"] = f"sqlite:///{Path(directory, 'hmi.db').as_posix()}"
+            paths = [ROOT / "apps" / "edge-mcp-server", ROOT / "packages" / "guardian-shared"]
+            env["PYTHONPATH"] = os.pathsep.join(str(path) for path in paths)
+            result = subprocess.run(
+                [sys.executable, "-c", script],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

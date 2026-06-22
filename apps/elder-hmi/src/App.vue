@@ -63,6 +63,17 @@ const systemText = computed(() => {
   return "系统正常守护中";
 });
 
+function closePromptLocally(prompt: AnyRecord, responseType: string) {
+  const resolvedState = responseType === "safe" ? "resolved" : "family_alert";
+  if (state.current_hmi_prompt?.prompt_id === prompt.prompt_id) state.current_hmi_prompt = null;
+  state.events = (state.events ?? []).map((event: AnyRecord) =>
+    event.event_id === prompt.event_id
+      ? { ...event, state: resolvedState, updated_at: new Date().toISOString() }
+      : event
+  );
+  if (responseType === "safe") state.current_risk_level = "P4";
+}
+
 async function loadState(options: { initial?: boolean } = {}) {
   if (refreshing.value) return;
   refreshing.value = true;
@@ -99,7 +110,7 @@ async function respond(responseType: "safe" | "help" | "contact_family", respons
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const result = await response.json();
     if (result.status === "ignored") throw new Error(result.reason ?? "反馈未被接受");
-    if (state.current_hmi_prompt?.prompt_id === prompt.prompt_id) state.current_hmi_prompt = null;
+    closePromptLocally(prompt, responseType);
     networkMessage.value = `已提交：${responseText}`;
     await loadState();
   } catch (error) {
