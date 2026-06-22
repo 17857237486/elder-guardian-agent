@@ -4,7 +4,7 @@ import { API_BASE } from "@elder-guardian/frontend-shared";
 
 type AnyRecord = Record<string, any>;
 type DemoNodeState = "idle" | "running" | "completed" | "skipped" | "failed";
-type DemoTarget = { kind: "event" | "candidate" | "normal_input"; id: string; item: AnyRecord } | null;
+type DemoTarget = { kind: "event" | "candidate" | "normal_input" | "risk_input"; id: string; item: AnyRecord } | null;
 type ObservationRiskHint = { event_type: string; risk_level: string; room?: string } | null;
 const DISPLAY_LIMIT = 10;
 const ROOM_ORDER = ["bedroom", "bathroom", "living_room", "kitchen"];
@@ -141,6 +141,23 @@ function eventMatchesObservationRisk(event: AnyRecord | null, hint: ObservationR
   );
 }
 
+function riskInputTarget(observation: AnyRecord, hint: NonNullable<ObservationRiskHint>): DemoTarget {
+  return {
+    kind: "risk_input",
+    id: String(observation.observation_id ?? `${hint.event_type}-${eventTime(observation)}`),
+    item: {
+      ...observation,
+      event_type: hint.event_type,
+      risk_level: hint.risk_level,
+      rule_risk_level: hint.risk_level,
+      final_risk_level: hint.risk_level,
+      decision_source: "rule_pending",
+      room: hint.room ?? observation.payload?.room ?? observation.room,
+      summary: `${hint.event_type} risk input received`
+    }
+  };
+}
+
 const activeDemoTarget = computed<DemoTarget>(() => {
   const events = filteredEvents.value;
   const steps = filteredWorkflowSteps.value;
@@ -160,15 +177,23 @@ const activeDemoTarget = computed<DemoTarget>(() => {
 
   const activeStates = new Set(["event_detected", "rule_classified", "action_planned", "ask_elder", "wait_response", "family_alert", "emergency_alert", "escalated"]);
   const activeEvent = events.find((event) =>
-    ["P0", "P1", "P2"].includes(String(event.final_risk_level ?? event.risk_level ?? "")) &&
+    riskPriority(String(event.final_risk_level ?? event.risk_level ?? "")) <= riskPriority("P3") &&
     activeStates.has(String(event.state ?? "").toLowerCase())
   );
-  if (activeEvent?.event_id) {
-    return { kind: "event", id: String(activeEvent.event_id), item: activeEvent };
+
+  if (latestObservationRisk && latestObservation?.observation_id) {
+    const matchedLatestEvent = latestEvent.value;
+    if (matchedLatestEvent && eventMatchesObservationRisk(matchedLatestEvent, latestObservationRisk)) {
+      return { kind: "event", id: String(matchedLatestEvent.event_id), item: matchedLatestEvent };
+    }
+    if (activeEvent && eventMatchesObservationRisk(activeEvent, latestObservationRisk)) {
+      return { kind: "event", id: String(activeEvent.event_id), item: activeEvent };
+    }
+    return riskInputTarget(latestObservation, latestObservationRisk);
   }
 
-  if (eventMatchesObservationRisk(latestEvent.value, latestObservationRisk)) {
-    return { kind: "event", id: String(latestEvent.value.event_id), item: latestEvent.value };
+  if (activeEvent?.event_id) {
+    return { kind: "event", id: String(activeEvent.event_id), item: activeEvent };
   }
 
   if (promotedCandidateFallback?.candidate_id && promotedCandidateFallbackTime > latestEventTime) {
@@ -209,9 +234,13 @@ const latestLocalAnalysis = computed(() =>
   ) ?? null
 );
 const isNormalInputDemo = computed(() => activeDemoTarget.value?.kind === "normal_input");
+const isRiskInputDemo = computed(() => activeDemoTarget.value?.kind === "risk_input");
 const localSemanticStatus = computed(() => {
   if (isNormalInputDemo.value) {
     return { state: "completed", text: "P4 正常状态，无需本地模型" };
+  }
+  if (isRiskInputDemo.value) {
+    return { state: "pending", text: "异常数据已输入，等待规则判断生成风险事件" };
   }
   const analysis = latestLocalAnalysis.value;
   if (analysis?.output?.reason === "deterministic_p3_rule") {
@@ -305,11 +334,21 @@ function ruleNodeNote(item: AnyRecord, risk: string, step?: AnyRecord | null): s
   return "规则处理中";
 }
 
-const summaryRisk = computed(() => (isNormalInputDemo.value ? "P4" : (latestEvent.value?.final_risk_level ?? (isCleared.value ? "P4" : state.current_risk_level))));
-const summaryRuleRisk = computed(() => (isNormalInputDemo.value ? "P4" : (latestEvent.value?.rule_risk_level ?? "P4")));
-const summaryLocalRisk = computed(() => (isNormalInputDemo.value ? "--" : (latestEvent.value?.local_risk_level ?? "--")));
-const summaryCloudRisk = computed(() => (isNormalInputDemo.value ? "--" : (latestEvent.value?.cloud_risk_level ?? "--")));
-const summaryDecisionSource = computed(() => (isNormalInputDemo.value ? "rule" : (latestEvent.value?.decision_source ?? "rule")));
+const summaryRisk = computed(() => {
+  const target = activeDemoTarget.value;
+  if (target?.kind === "normal_input") return "P4";
+  if (target?.kind === "risk_input") return riskOf(target.item);
+  return latestEvent.value?.final_risk_level ?? (isCleared.value ? "P4" : state.current_risk_level);
+});
+const summaryRuleRisk = computed(() => {
+  const target = activeDemoTarget.value;
+  if (target?.kind === "normal_input") return "P4";
+  if (target?.kind === "risk_input") return riskOf(target.item);
+  return latestEvent.value?.rule_risk_level ?? "P4";
+});
+const summaryLocalRisk = computed(() => (isNormalInputDemo.value || isRiskInputDemo.value ? "--" : (latestEvent.value?.local_risk_level ?? "--")));
+const summaryCloudRisk = computed(() => (isNormalInputDemo.value || isRiskInputDemo.value ? "--" : (latestEvent.value?.cloud_risk_level ?? "--")));
+const summaryDecisionSource = computed(() => (isNormalInputDemo.value ? "rule" : isRiskInputDemo.value ? "rule_pending" : (latestEvent.value?.decision_source ?? "rule")));
 
 function nodeLabel(stateValue: DemoNodeState): string {
   return {
@@ -333,7 +372,7 @@ function stepState(step?: AnyRecord | null): DemoNodeState {
 
 function targetSteps(target: DemoTarget): AnyRecord[] {
   if (!target) return [];
-  if (target.kind === "normal_input") return [];
+  if (target.kind === "normal_input" || target.kind === "risk_input") return [];
   const ids = targetWorkflowIds(target);
   return filteredWorkflowSteps.value.filter((step: AnyRecord) => ids.includes(String(step.event_id ?? "")));
 }
@@ -360,7 +399,7 @@ function isCandidatePromotedEvent(item: AnyRecord): boolean {
 
 function targetWorkflowIds(target: DemoTarget): string[] {
   if (!target) return [];
-  if (target.kind === "normal_input") return [];
+  if (target.kind === "normal_input" || target.kind === "risk_input") return [];
   if (target.kind === "candidate") return [target.id];
   const candidateId = promotedCandidateIdForEvent(target.item);
   return candidateId ? [target.id, candidateId] : [target.id];
@@ -368,7 +407,7 @@ function targetWorkflowIds(target: DemoTarget): string[] {
 
 function relatedItems(target: DemoTarget, key: string): AnyRecord[] {
   if (!target) return [];
-  if (target.kind === "normal_input") return [];
+  if (target.kind === "normal_input" || target.kind === "risk_input") return [];
   const source: Record<string, AnyRecord[]> = {
     action_executions: filteredActionExecutions.value,
     hmi_prompts: filteredPrompts.value,
@@ -422,6 +461,9 @@ const demoTitle = computed(() => {
       return `当前演示：${candidateLabel(item.candidate_type)} · promoted · 本地复核已升级`;
     }
     return `当前演示：Candidate · ${candidateLabel(item.candidate_type)} · ${item.status ?? "--"}`;
+  }
+  if (target.kind === "risk_input") {
+    return `当前演示：${target.item.event_type ?? "--"} · ${riskOf(target.item)} · 异常数据已输入`;
   }
   if (target.kind === "normal_input") {
     return "当前演示：normal · P4 · 正常数据已记录";
@@ -536,6 +578,63 @@ const demoNodes = computed(() => {
     ];
   }
 
+  if (target.kind === "risk_input") {
+    const group = latestInputObservationGroup(target.item);
+    const kinds = group.map((item) => item.kind).filter(Boolean).join(" / ") || target.item.kind || "observation";
+    const room = target.item.room ?? group.find((item) => item.kind === "environment")?.payload?.room ?? target.item.payload?.room ?? "--";
+    return [
+      {
+        key: "input",
+        name: "数据输入",
+        state: "completed" as DemoNodeState,
+        note: shortText(`收到异常 MQTT 数据：${kinds}`),
+        time: eventTime(target.item)
+      },
+      {
+        key: "edge",
+        name: "Edge MCP",
+        state: "completed" as DemoNodeState,
+        note: shortText(`已写入 v2_raw_observations · ${room}`),
+        time: eventTime(target.item)
+      },
+      {
+        key: "rule",
+        name: "规则判断",
+        state: "running" as DemoNodeState,
+        note: "等待 Orchestrator 生成风险事件",
+        time: eventTime(target.item)
+      },
+      {
+        key: "local",
+        name: "本地 AI / Candidate",
+        state: "idle" as DemoNodeState,
+        note: "等待风险事件",
+        time: eventTime(target.item)
+      },
+      {
+        key: "cloud",
+        name: "云端复核",
+        state: "idle" as DemoNodeState,
+        note: "等待本地处置结果",
+        time: eventTime(target.item)
+      },
+      {
+        key: "policy",
+        name: "设备策略",
+        state: "idle" as DemoNodeState,
+        note: "等待规则处置",
+        time: eventTime(target.item)
+      },
+      {
+        key: "hmi",
+        name: "HMI / 家属",
+        state: "idle" as DemoNodeState,
+        note: "等待提示或告警",
+        time: eventTime(target.item)
+      }
+    ];
+  }
+
   return [
     {
       key: "input",
@@ -598,10 +697,17 @@ const demoNodes = computed(() => {
 });
 
 const riskEvents = computed(() => filteredEvents.value.slice(0, DISPLAY_LIMIT));
-const workflowSteps = computed(() =>
-  filteredWorkflowSteps.value
+const workflowSteps = computed(() => {
+  const target = activeDemoTarget.value;
+  const source = target
+    ? (target.kind === "event" || target.kind === "candidate" ? targetSteps(target) : [])
+    : filteredWorkflowSteps.value;
+  return source
     .filter((step: AnyRecord) => IMPORTANT_STEPS.has(step.step_name) || step.status === "failed" || step.error)
-    .slice(0, DISPLAY_LIMIT)
+    .slice(0, DISPLAY_LIMIT);
+});
+const workflowEmptyText = computed(() =>
+  activeDemoTarget.value?.kind === "risk_input" ? "等待规则判断生成工作流" : "暂无工作流记录"
 );
 const policyExecutions = computed<AnyRecord[]>(() => {
   const executions = filteredActionExecutions.value.map((item: AnyRecord) => ({ ...item, itemType: "execution" }));
@@ -631,7 +737,24 @@ const normalInputRoom = computed(() =>
   latestInputObservationGroup(activeDemoTarget.value?.kind === "normal_input" ? activeDemoTarget.value.item : null)
     .find((item) => item.kind === "environment")?.payload?.room
 );
-const localAiRoom = computed(() => isNormalInputDemo.value ? (normalInputRoom.value ?? "--") : (latestContextFusion.value?.output?.elder_location?.current_room ?? "--"));
+const riskInputRoom = computed(() =>
+  activeDemoTarget.value?.kind === "risk_input"
+    ? (activeDemoTarget.value.item.room ?? activeDemoTarget.value.item.payload?.room ?? "--")
+    : null
+);
+const localAiRoom = computed(() =>
+  isNormalInputDemo.value
+    ? (normalInputRoom.value ?? "--")
+    : isRiskInputDemo.value
+      ? (riskInputRoom.value ?? "--")
+      : (latestContextFusion.value?.output?.elder_location?.current_room ?? "--")
+);
+const localSemanticEventType = computed(() => {
+  const target = activeDemoTarget.value;
+  if (target?.kind === "normal_input") return "normal";
+  if (target?.kind === "risk_input") return target.item.event_type ?? "risk_input";
+  return latestEvent.value?.event_type ?? "暂无事件";
+});
 const homeEnvironmentRooms = computed(() => {
   const rooms = new Map<string, AnyRecord>(ROOM_ORDER.map((room) => [room, { ...DEFAULT_HOME_ENV[room] }]));
   for (const observation of filteredObservations.value) {
@@ -815,7 +938,7 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
 
     <section class="local-semantics" :class="localSemanticStatus.state">
       <div><span>第二级：RK3588 本地模型事件语义</span><strong>{{ localSemanticStatus.text }}</strong></div>
-      <p>{{ isNormalInputDemo ? "normal" : (latestEvent?.event_type ?? "暂无事件") }} · 本地风险 {{ summaryLocalRisk }} · AI房间 {{ localAiRoom }}</p>
+      <p>{{ localSemanticEventType }} · 本地风险 {{ summaryLocalRisk }} · AI房间 {{ localAiRoom }}</p>
     </section>
 
     <section class="grid">
@@ -845,7 +968,7 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
 
       <article class="panel">
         <h2>分析工作流</h2>
-        <div class="panel-scroll"><p v-if="!workflowSteps.length" class="empty">暂无工作流记录</p><ul>
+        <div class="panel-scroll"><p v-if="!workflowSteps.length" class="empty">{{ workflowEmptyText }}</p><ul>
           <li v-for="step in workflowSteps" :key="step.step_id">
             <div class="row-head"><strong>{{ step.status }}</strong><time>{{ formatTime(eventTime(step)) }}</time></div>
             <b>{{ step.step_name }} · {{ step.model ?? "rules" }}</b>

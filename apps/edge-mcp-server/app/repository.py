@@ -679,6 +679,7 @@ def clear_demo_runtime_history(
         ("tool_calls", models.ToolCallModel, models.ToolCallModel.created_at),
         ("workflow_steps", models.WorkflowStepModel, models.WorkflowStepModel.created_at),
         ("workflows", models.WorkflowModel, models.WorkflowModel.created_at),
+        ("behavior_segments", models.BehaviorSegmentModel, models.BehaviorSegmentModel.start_at),
         ("ai_review_candidates", models.AiReviewCandidateModel, models.AiReviewCandidateModel.created_at),
         ("normalized_events", models.NormalizedEventModel, models.NormalizedEventModel.created_at),
         ("device_readings", models.DeviceReadingModel, models.DeviceReadingModel.created_at),
