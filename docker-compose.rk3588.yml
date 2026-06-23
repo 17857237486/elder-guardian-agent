@@ -220,6 +220,7 @@ services:
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
       GUARDIAN_CORE_URL: http://guardian-core:8000
+      VISION_SERVICE_URL: http://vision-service:8101
       ELDER_ID: ${ELDER_ID:-elder_001}
       BACKGROUND_MAX_RECORDS: ${BACKGROUND_MAX_RECORDS:-3100}
     ports: ["${BACKGROUND_PUBLIC_PORT:-8090}:8090"]
@@ -286,6 +287,7 @@ services:
       VISION_MAX_IMAGE_BYTES: ${VISION_MAX_IMAGE_BYTES:-5242880}
       VISION_MAX_IMAGE_EDGE: ${VISION_MAX_IMAGE_EDGE:-1280}
       VISION_JPEG_QUALITY: ${VISION_JPEG_QUALITY:-80}
+      VISION_CAMERA_SNAPSHOT_URLS: ${VISION_CAMERA_SNAPSHOT_URLS:-}
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8101"]
     ports: ["${VISION_PUBLIC_PORT:-8101}:8101"]
     volumes:

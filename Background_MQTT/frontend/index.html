@@ -335,6 +335,46 @@
         list-style: none;
       }
 
+      .vision-capture-panel {
+        display: grid;
+        gap: 12px;
+      }
+
+      .vision-capture-summary {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(150px, 1fr));
+        gap: 10px;
+      }
+
+      .vision-capture-summary div,
+      .vision-capture-list li {
+        border: 1px solid #dce7f4;
+        border-radius: 8px;
+        padding: 8px 10px;
+        background: #f8fbff;
+      }
+
+      .vision-capture-summary span {
+        display: block;
+        color: #607086;
+        font-size: 12px;
+      }
+
+      .vision-capture-summary strong {
+        display: block;
+        margin-top: 4px;
+        color: #17324d;
+      }
+
+      .vision-capture-list {
+        display: grid;
+        gap: 6px;
+        max-height: 260px;
+        margin: 0;
+        padding-left: 20px;
+        overflow: auto;
+      }
+
       .template-grid {
         display: grid;
         grid-template-columns: repeat(7, minmax(135px, 1fr));
@@ -980,6 +1020,46 @@
       </article>
 
       <article class="panel">
+        <h2>?????????</h2>
+        <div class="vision-capture-panel">
+          <p class="muted">??????????????Vision Service ????????????????????????????????????????????????????????????????????</p>
+          <div class="timeline-grid">
+            <div class="timeline-field">
+              <label for="vision-elder">?? ID</label>
+              <input id="vision-elder" value="elder_001" />
+            </div>
+            <div class="timeline-field">
+              <label for="vision-camera">??? ID</label>
+              <input id="vision-camera" value="living_room" />
+            </div>
+            <div class="timeline-field">
+              <label for="vision-room">????</label>
+              <select id="vision-room">
+                <option value="bedroom">bedroom</option>
+                <option value="kitchen">kitchen</option>
+                <option value="living_room" selected>living_room</option>
+                <option value="bathroom">bathroom</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button id="vision-capture-one" class="primary" type="button">?????</button>
+            <button id="vision-refresh-captures" type="button">??????</button>
+            <button id="vision-clear-captures" type="button">?????????</button>
+            <button id="vision-trigger-fall" type="button">???????????</button>
+            <button id="vision-trigger-static" type="button">????????????</button>
+            <span id="vision-submit-status" class="submit-status">????</span>
+          </div>
+          <div class="vision-capture-summary">
+            <div><span>??????</span><strong id="vision-capture-count">0 / 5</strong></div>
+            <div><span>??????</span><strong>? 2?3?4 ?</strong></div>
+            <div><span>??????</span><strong>5 ???</strong></div>
+          </div>
+          <ol id="vision-capture-list" class="vision-capture-list"></ol>
+        </div>
+      </article>
+
+      <article class="panel">
         <h2>个人基线设置</h2>
         <div class="baseline-panel">
           <p class="muted">个人基线可手动设置，也可由模拟数据通过 Edge 行为片段自动统计；轻度心率、轻度血氧和卫生间停留 Candidate 会读取最新基线。</p>
@@ -1342,6 +1422,7 @@
         deviceLog: [],
         roomEnv: {},
         bathroomStayMonitor: null,
+        visionCaptures: [],
         activeTemplate: "normal",
         scenarioRunning: false,
         scenarioJob: null,
@@ -2303,6 +2384,71 @@
         renderBathroomStayMonitor();
       }
 
+      function visionRequestBase() {
+        return {
+          elder_id: $("vision-elder").value.trim() || $("baseline-elder")?.value?.trim() || "elder_001",
+          camera_id: $("vision-camera").value.trim() || "living_room",
+          room: $("vision-room").value || "living_room",
+        };
+      }
+
+      function setVisionCaptures(captures) {
+        state.visionCaptures = captures ?? [];
+        renderVisionCaptures();
+      }
+
+      function renderVisionCaptures() {
+        $("vision-capture-count").textContent = `${state.visionCaptures.length} / 5`;
+        $("vision-capture-list").innerHTML = state.visionCaptures.length
+          ? state.visionCaptures
+              .map(
+                (capture, index) => `
+                  <li>
+                    <strong>第 ${index + 1} 张：${formatTime(capture.captured_at)}</strong><br />
+                    房间：${valueOrDash(capture.room)}；摄像头：${valueOrDash(capture.camera_id)}<br />
+                    <small>${valueOrDash(capture.capture_id)}</small>
+                  </li>
+                `
+              )
+              .join("")
+          : `<li>暂无已拍摄图片。请先点击“拍一张照片”。</li>`;
+      }
+
+      async function refreshVisionCaptures() {
+        const base = visionRequestBase();
+        const params = new URLSearchParams({ elder_id: base.elder_id, camera_id: base.camera_id });
+        const response = await fetch(`/api/vision/captures/recent?${params.toString()}`);
+        if (!response.ok) throw new Error(await response.text());
+        const data = await response.json();
+        setVisionCaptures(data.captures || []);
+        return data;
+      }
+
+      async function captureOneImage() {
+        const result = await postJson("/api/vision/captures", {
+          ...visionRequestBase(),
+          trigger_source: "background_mqtt_page",
+          reason: "manual_demo_capture",
+        });
+        setVisionCaptures(result.recent || []);
+        return result;
+      }
+
+      async function clearVisionCaptures() {
+        await postJson("/api/vision/captures/clear", visionRequestBase());
+        setVisionCaptures([]);
+      }
+
+      async function triggerVisionRisk(eventType) {
+        const base = visionRequestBase();
+        await postJson("/api/manual/risk-event", {
+          event_type: eventType,
+          elder_id: base.elder_id,
+          room: base.room,
+        });
+        await refreshVisionCaptures();
+      }
+
       function addRecord(record) {
         state.records = [record, ...state.records].slice(0, recordLimit);
         renderAll();
@@ -2460,6 +2606,51 @@
       $("auto-vitals-baseline").addEventListener("click", runAutoVitalsBaseline);
       $("auto-bathroom-baseline").addEventListener("click", runAutoBathroomBaseline);
       $("demo-bathroom-stay").addEventListener("click", runBathroomStayDemo);
+      $("vision-capture-one").addEventListener("click", async () => {
+        const button = $("vision-capture-one");
+        button.disabled = true;
+        setSubmitStatus("vision-submit-status", "正在从真实摄像头拍照");
+        try {
+          await captureOneImage();
+          setSubmitStatus("vision-submit-status", "已拍照并保存到最近五张", "ok");
+        } catch (error) {
+          setSubmitStatus("vision-submit-status", `拍照失败：${error.message}`, "error");
+        } finally {
+          button.disabled = false;
+        }
+      });
+      $("vision-refresh-captures").addEventListener("click", async () => {
+        try {
+          await refreshVisionCaptures();
+          setSubmitStatus("vision-submit-status", "最近五张已刷新", "ok");
+        } catch (error) {
+          setSubmitStatus("vision-submit-status", `刷新失败：${error.message}`, "error");
+        }
+      });
+      $("vision-clear-captures").addEventListener("click", async () => {
+        try {
+          await clearVisionCaptures();
+          setSubmitStatus("vision-submit-status", "已清除待使用照片池", "ok");
+        } catch (error) {
+          setSubmitStatus("vision-submit-status", `清除失败：${error.message}`, "error");
+        }
+      });
+      $("vision-trigger-fall").addEventListener("click", async () => {
+        try {
+          await triggerVisionRisk("suspected_fall");
+          setSubmitStatus("vision-submit-status", "已用最近五张触发疑似跌倒", "ok");
+        } catch (error) {
+          setSubmitStatus("vision-submit-status", `触发失败：${error.message}`, "error");
+        }
+      });
+      $("vision-trigger-static").addEventListener("click", async () => {
+        try {
+          await triggerVisionRisk("long_static");
+          setSubmitStatus("vision-submit-status", "已用最近五张触发长时间静止", "ok");
+        } catch (error) {
+          setSubmitStatus("vision-submit-status", `触发失败：${error.message}`, "error");
+        }
+      });
 
       $("clear-local").addEventListener("click", () => {
         setRecords([]);
@@ -2485,6 +2676,7 @@
       loadPersonalBaselines().catch((error) => {
         setSubmitStatus("baseline-submit-status", `基线读取失败：${error.message}`, "error");
       });
+      refreshVisionCaptures().catch(() => {});
       refreshScenarioStatus().catch(() => {});
       connectWs();
     </script>

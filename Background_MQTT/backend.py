@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT / "packages" / "guardian-shared"))
 
 from Background_MQTT.generate_scenario_data import EVENT_LABELS, SCENE_LABELS, build_event_samples, to_standard_samples
 from guardian_shared.schemas import HomeDeviceState, SensorEnvSample, SensorVitalSample
-from guardian_shared.topics import elder_sensor_env, elder_sensor_vital, elder_vision_event, home_device_ack, home_device_state
+from guardian_shared.topics import elder_sensor_env, elder_sensor_vital, home_device_ack, home_device_state
 from guardian_shared.utils import model_to_json
 
 MQTT_HOST = os.getenv("BACKGROUND_MQTT_HOST", os.getenv("MQTT_HOST", "localhost"))
@@ -31,6 +31,7 @@ MQTT_PORT = int(os.getenv("BACKGROUND_MQTT_PORT", os.getenv("MQTT_PORT", "1883")
 MQTT_TOPICS = ("elder/+/sensor/vital", "elder/+/sensor/env", "elder/+/vision/event", "home/+/+/set", "home/+/+/state", "home/+/+/ack")
 GUARDIAN_CORE_URL = os.getenv("GUARDIAN_CORE_URL", "http://localhost:8000").rstrip("/")
 EDGE_API_BASE = os.getenv("EDGE_API_BASE", "http://edge-mcp-server:8010").rstrip("/")
+VISION_SERVICE_URL = os.getenv("VISION_SERVICE_URL", "http://vision-service:8101").rstrip("/")
 ELDER_ID = os.getenv("ELDER_ID", "elder_001")
 MAX_RECORDS = int(os.getenv("BACKGROUND_MAX_RECORDS", "3100"))
 ROOM_KEYS = ("bedroom", "kitchen", "living_room", "bathroom")
@@ -139,6 +140,19 @@ class BathroomStayDemoRequest(BaseModel):
     elder_id: str = "elder_001"
     duration_seconds: int = Field(default=600, ge=10, le=7200)
     rebuild_delay_sec: float = Field(default=1.0, ge=0.0, le=10.0)
+
+
+class VisionCaptureProxyRequest(BaseModel):
+    elder_id: str = "elder_001"
+    camera_id: str = "living_room"
+    room: str = "living_room"
+    trigger_source: str = "background_mqtt"
+    reason: str = "manual_capture"
+
+
+class VisionCaptureClearProxyRequest(BaseModel):
+    elder_id: str = "elder_001"
+    camera_id: str = "living_room"
 
 
 DEFAULT_DEVICES: list[dict[str, Any]] = [
@@ -674,7 +688,49 @@ def home_environment_snapshot(sample: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def publish_risk_signal(event_type: str, elder_id: str, room: str) -> int:
+async def trigger_vision_event(event_type: str, elder_id: str, room: str) -> dict[str, Any]:
+    payload = {
+        "elder_id": elder_id,
+        "camera_id": room,
+        "room": room,
+        "event_type": event_type,
+        "confidence": 0.92 if event_type == "suspected_fall" else 0.78,
+        "posture": "lying" if event_type == "suspected_fall" else "unknown",
+        "motion_state": "static",
+        "risk_level": "P1" if event_type == "suspected_fall" else "P2",
+        "triggered_at": utc_now(),
+    }
+    async with httpx.AsyncClient(timeout=15, trust_env=False) as client:
+        response = await client.post(f"{VISION_SERVICE_URL}/api/v2/vision/triggers", json=payload)
+        response.raise_for_status()
+        return response.json()
+
+
+async def vision_capture(request: VisionCaptureProxyRequest) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=15, trust_env=False) as client:
+        response = await client.post(f"{VISION_SERVICE_URL}/api/v2/vision/captures", json=request.model_dump())
+        response.raise_for_status()
+        return response.json()
+
+
+async def recent_vision_captures(elder_id: str, camera_id: str) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+        response = await client.get(
+            f"{VISION_SERVICE_URL}/api/v2/vision/captures/recent",
+            params={"elder_id": elder_id, "camera_id": camera_id},
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+async def clear_vision_captures(request: VisionCaptureClearProxyRequest) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+        response = await client.post(f"{VISION_SERVICE_URL}/api/v2/vision/captures/clear", json=request.model_dump())
+        response.raise_for_status()
+        return response.json()
+
+
+async def publish_risk_signal(event_type: str, elder_id: str, room: str) -> int:
     ensure_mqtt_connected()
     if event_type == "normal":
         publish_json(
@@ -691,18 +747,7 @@ def publish_risk_signal(event_type: str, elder_id: str, room: str) -> int:
         )
         return 1
     if event_type in {"suspected_fall", "long_static"}:
-        publish_json(
-            elder_vision_event(elder_id),
-            {
-                "elder_id": elder_id,
-                "room": room,
-                "event_type": event_type,
-                "confidence": 0.92 if event_type == "suspected_fall" else 0.78,
-                "posture": "lying" if event_type == "suspected_fall" else "unknown",
-                "motion_state": "static",
-                "timestamp": utc_now(),
-            },
-        )
+        await trigger_vision_event(event_type, elder_id, room)
         return 1
     return 0
 
@@ -1003,7 +1048,7 @@ async def run_scenario_job(request: ScenarioPublishRequest, samples: list[dict[s
                 break
             scenario_job["published_messages"] += publish_sample_pair(sample)
             if not signal_published and int(sample.get("time_offset_sec", 0)) >= request.trigger_second:
-                scenario_job["published_messages"] += publish_risk_signal(request.event_type, request.elder_id, request.event_room)
+                scenario_job["published_messages"] += await publish_risk_signal(request.event_type, request.elder_id, request.event_room)
                 if request.event_type == "heart_rate_baseline_anomaly":
                     await create_heart_rate_candidate(request.elder_id, request.event_room)
                 elif request.event_type == "spo2_baseline_anomaly":
@@ -1377,7 +1422,7 @@ async def submit_manual_risk_event(request: ManualRiskEventRequest) -> dict[str,
     vital, env = manual_risk_samples(request.event_type, request.elder_id, request.room)
     publish_model(elder_sensor_vital(request.elder_id), vital)
     publish_model(elder_sensor_env(request.elder_id), env)
-    messages = 2 + publish_risk_signal(request.event_type, request.elder_id, request.room)
+    messages = 2 + await publish_risk_signal(request.event_type, request.elder_id, request.room)
     if request.event_type == "heart_rate_baseline_anomaly":
         await create_heart_rate_candidate(request.elder_id, request.room)
     elif request.event_type == "spo2_baseline_anomaly":
@@ -1385,6 +1430,30 @@ async def submit_manual_risk_event(request: ManualRiskEventRequest) -> dict[str,
     elif request.event_type == "bathroom_stay_anomaly_demo":
         await create_bathroom_stay_candidate(request.elder_id)
     return {"ok": True, "event_type": request.event_type, "elder_id": request.elder_id, "messages": messages}
+
+
+@app.post("/api/vision/captures")
+async def proxy_vision_capture(request: VisionCaptureProxyRequest) -> dict[str, Any]:
+    try:
+        return await vision_capture(request)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"vision capture failed: {exc}") from exc
+
+
+@app.get("/api/vision/captures/recent")
+async def proxy_recent_vision_captures(elder_id: str = "elder_001", camera_id: str = "living_room") -> dict[str, Any]:
+    try:
+        return await recent_vision_captures(elder_id, camera_id)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"vision recent captures failed: {exc}") from exc
+
+
+@app.post("/api/vision/captures/clear")
+async def proxy_clear_vision_captures(request: VisionCaptureClearProxyRequest) -> dict[str, Any]:
+    try:
+        return await clear_vision_captures(request)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"vision capture clear failed: {exc}") from exc
 
 
 @app.websocket("/ws")
