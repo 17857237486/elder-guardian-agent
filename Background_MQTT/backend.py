@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import sys
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -115,6 +116,28 @@ class PersonalBaselineRequest(BaseModel):
     sample_count: int = 1
     quality: str = "stable"
     metrics: dict[str, Any] = Field(default_factory=dict)
+
+
+class AutoVitalsBaselineRequest(BaseModel):
+    elder_id: str = "elder_001"
+    sample_count: int = Field(default=3000, ge=24, le=5000)
+    logical_interval_sec: int = Field(default=5, ge=1, le=60)
+    publish_mqtt: bool = True
+    rebuild_delay_sec: float = Field(default=2.0, ge=0.0, le=10.0)
+
+
+class AutoBathroomBaselineRequest(BaseModel):
+    elder_id: str = "elder_001"
+    stay_count: int = Field(default=20, ge=3, le=80)
+    avg_stay_sec: int = Field(default=180, ge=10, le=3600)
+    p90_stay_sec: int = Field(default=480, ge=20, le=7200)
+    rebuild_delay_sec: float = Field(default=1.0, ge=0.0, le=10.0)
+
+
+class BathroomStayDemoRequest(BaseModel):
+    elder_id: str = "elder_001"
+    duration_seconds: int = Field(default=600, ge=10, le=7200)
+    rebuild_delay_sec: float = Field(default=1.0, ge=0.0, le=10.0)
 
 
 DEFAULT_DEVICES: list[dict[str, Any]] = [
@@ -390,6 +413,92 @@ def publish_json(topic: str, payload: dict[str, Any] | HomeDeviceState) -> None:
     result = mqtt_client.publish(topic, body, qos=1)
     if result.rc != mqtt.MQTT_ERR_SUCCESS:
         append_device_log("error", {"message": f"MQTT publish failed rc={result.rc}", "topic": topic})
+
+
+def percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, round((len(ordered) - 1) * pct)))
+    return float(ordered[index])
+
+
+def generated_vital_values(index: int) -> tuple[int, int]:
+    heart_wave = math.sin(index / 37.0) * 8 + math.sin(index / 113.0) * 4
+    activity_bump = 10 if index % 420 in range(80, 130) else 0
+    heart_rate = int(round(76 + heart_wave + activity_bump))
+    heart_rate = max(62, min(102, heart_rate))
+    spo2_wave = math.sin(index / 91.0) * 1.2 + math.sin(index / 211.0) * 0.6
+    spo2 = int(round(96 + spo2_wave))
+    spo2 = max(94, min(98, spo2))
+    return heart_rate, spo2
+
+
+def vital_metric_preview(sample_count: int) -> dict[str, Any]:
+    heart_values: list[float] = []
+    spo2_values: list[float] = []
+    for index in range(sample_count):
+        heart_rate, spo2 = generated_vital_values(index)
+        heart_values.append(float(heart_rate))
+        spo2_values.append(float(spo2))
+    return {
+        "heart_rate": {
+            "min": min(heart_values),
+            "max": max(heart_values),
+            "avg": round(sum(heart_values) / len(heart_values), 1),
+            "p10": percentile(heart_values, 0.1),
+            "p50": percentile(heart_values, 0.5),
+            "p90": percentile(heart_values, 0.9),
+        },
+        "spo2": {
+            "min": min(spo2_values),
+            "max": max(spo2_values),
+            "avg": round(sum(spo2_values) / len(spo2_values), 1),
+            "p10": percentile(spo2_values, 0.1),
+            "p50": percentile(spo2_values, 0.5),
+            "p90": percentile(spo2_values, 0.9),
+        },
+    }
+
+
+def bathroom_stay_durations(count: int, avg_stay_sec: int, p90_stay_sec: int) -> list[int]:
+    normal_count = max(1, count - 3)
+    low = max(10, int(avg_stay_sec * 0.65))
+    high = max(low + 1, int(avg_stay_sec * 1.25))
+    durations = [low + (index * 37) % max(1, high - low) for index in range(normal_count)]
+    durations.extend([max(avg_stay_sec, p90_stay_sec - 45), p90_stay_sec, p90_stay_sec + 60])
+    return durations[:count]
+
+
+def home_presence_snapshot(elder_id: str, present_room: str, observed_at: datetime, *, source: str) -> dict[str, Any]:
+    rooms: dict[str, dict[str, Any]] = {}
+    for room in ROOM_KEYS:
+        base = dict(DEFAULT_ROOM_ENV[room])
+        rooms[room] = {
+            **base,
+            "gas_ppm": 0,
+            "smoke_ppm": 0,
+            "presence": room == present_room,
+        }
+    return {
+        "schema": "home_environment_snapshot_v1",
+        "snapshot_id": f"baseline_{uuid4().hex[:10]}",
+        "elder_id": elder_id,
+        "source": source,
+        "rooms": rooms,
+        "observed_at": observed_at.isoformat(),
+        "timestamp": observed_at.isoformat(),
+    }
+
+
+async def rebuild_edge_baselines(elder_id: str, baseline_types: list[str] | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {"elder_id": elder_id}
+    if baseline_types:
+        payload["baseline_types"] = baseline_types
+    async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
+        response = await client.post(f"{EDGE_API_BASE}/api/v2/baselines/rebuild", json=payload)
+        response.raise_for_status()
+        return response.json()
 
 
 def ensure_mqtt_connected() -> None:
@@ -938,6 +1047,100 @@ async def create_personal_baseline(request: PersonalBaselineRequest) -> dict[str
             return response.json()
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail={"message": "edge personal baseline save failed", "error": str(exc)})
+
+
+@app.post("/api/baselines/rebuild")
+async def rebuild_baselines(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    elder_id = str((payload or {}).get("elder_id") or ELDER_ID)
+    try:
+        return await rebuild_edge_baselines(elder_id)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail={"message": "edge baseline rebuild failed", "error": str(exc)})
+
+
+@app.post("/api/baselines/auto-vitals")
+async def auto_vitals_baseline(request: AutoVitalsBaselineRequest) -> dict[str, Any]:
+    ensure_mqtt_connected()
+    start_at = datetime.now(timezone.utc) - timedelta(seconds=request.sample_count * request.logical_interval_sec)
+    for index in range(request.sample_count):
+        observed_at = start_at + timedelta(seconds=index * request.logical_interval_sec)
+        heart_rate, spo2 = generated_vital_values(index)
+        sample = SensorVitalSample(
+            elder_id=request.elder_id,
+            heart_rate=heart_rate,
+            spo2=spo2,
+            systolic_bp=128,
+            diastolic_bp=80,
+            body_temperature=36.6,
+            timestamp=observed_at,
+        )
+        if request.publish_mqtt:
+            publish_model(elder_sensor_vital(request.elder_id), sample)
+    if request.rebuild_delay_sec:
+        await asyncio.sleep(request.rebuild_delay_sec)
+    try:
+        rebuild = await rebuild_edge_baselines(request.elder_id, ["heart_rate_daily", "spo2_daily"])
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail={"message": "edge baseline rebuild failed", "error": str(exc)})
+    preview = vital_metric_preview(request.sample_count)
+    await broadcast({"type": "auto_baseline", "data": {"kind": "vitals", "preview": preview, "rebuild": rebuild}})
+    return {
+        "ok": True,
+        "elder_id": request.elder_id,
+        "published_samples": request.sample_count if request.publish_mqtt else 0,
+        "logical_interval_sec": request.logical_interval_sec,
+        "logical_duration_sec": request.sample_count * request.logical_interval_sec,
+        "preview": preview,
+        "rebuild": rebuild,
+    }
+
+
+@app.post("/api/baselines/auto-bathroom")
+async def auto_bathroom_baseline(request: AutoBathroomBaselineRequest) -> dict[str, Any]:
+    ensure_mqtt_connected()
+    durations = bathroom_stay_durations(request.stay_count, request.avg_stay_sec, request.p90_stay_sec)
+    cursor = datetime.now(timezone.utc) - timedelta(seconds=sum(durations) + request.stay_count * 900)
+    published = 0
+    for duration in durations:
+        publish_json(elder_sensor_env(request.elder_id), home_presence_snapshot(request.elder_id, "living_room", cursor, source="bathroom_baseline_generator"))
+        publish_json(elder_sensor_env(request.elder_id), home_presence_snapshot(request.elder_id, "bathroom", cursor + timedelta(seconds=5), source="bathroom_baseline_generator"))
+        publish_json(
+            elder_sensor_env(request.elder_id),
+            home_presence_snapshot(request.elder_id, "living_room", cursor + timedelta(seconds=duration + 5), source="bathroom_baseline_generator"),
+        )
+        cursor += timedelta(seconds=duration + 900)
+        published += 3
+    if request.rebuild_delay_sec:
+        await asyncio.sleep(request.rebuild_delay_sec)
+    try:
+        rebuild = await rebuild_edge_baselines(request.elder_id, ["bathroom_routine"])
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail={"message": "edge baseline rebuild failed", "error": str(exc)})
+    preview = {
+        "stay_count": len(durations),
+        "avg_stay_sec": round(sum(durations) / len(durations), 1),
+        "p90_stay_sec": percentile([float(item) for item in durations], 0.9),
+        "durations": durations,
+    }
+    await broadcast({"type": "auto_baseline", "data": {"kind": "bathroom", "preview": preview, "rebuild": rebuild}})
+    return {"ok": True, "elder_id": request.elder_id, "published_snapshots": published, "preview": preview, "rebuild": rebuild}
+
+
+@app.post("/api/bathroom-stay/demo")
+async def bathroom_stay_demo(request: BathroomStayDemoRequest) -> dict[str, Any]:
+    ensure_mqtt_connected()
+    now = datetime.now(timezone.utc)
+    start_at = now - timedelta(seconds=request.duration_seconds)
+    publish_json(elder_sensor_env(request.elder_id), home_presence_snapshot(request.elder_id, "living_room", start_at - timedelta(seconds=5), source="bathroom_stay_demo"))
+    publish_json(elder_sensor_env(request.elder_id), home_presence_snapshot(request.elder_id, "bathroom", start_at, source="bathroom_stay_demo"))
+    if request.rebuild_delay_sec:
+        await asyncio.sleep(request.rebuild_delay_sec)
+    try:
+        rebuild = await rebuild_edge_baselines(request.elder_id, ["bathroom_routine"])
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail={"message": "edge baseline rebuild failed", "error": str(exc)})
+    await broadcast({"type": "bathroom_stay_demo", "data": {"duration_seconds": request.duration_seconds, "rebuild": rebuild}})
+    return {"ok": True, "elder_id": request.elder_id, "duration_seconds": request.duration_seconds, "rebuild": rebuild}
 
 
 @app.post("/api/device/command")

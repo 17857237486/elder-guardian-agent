@@ -909,23 +909,25 @@
       <article class="panel">
         <h2>个人基线设置</h2>
         <div class="baseline-panel">
-          <p class="muted">当前阶段个人基线由此处手动设置，Edge MCP 不再自动覆盖；轻度心率、轻度血氧和卫生间停留 Candidate 会读取这些基线。</p>
+          <p class="muted">个人基线可手动设置，也可由模拟数据通过 Edge 行为片段自动统计；轻度心率、轻度血氧和卫生间停留 Candidate 会读取最新基线。</p>
           <div class="form-actions">
+            <button id="baseline-manual-mode" class="primary" type="button">手动设置基线</button>
+            <button id="baseline-auto-mode" type="button">自动生成基线</button>
             <button id="load-baselines" type="button">读取当前基线</button>
             <button id="fill-baseline-defaults" type="button">填写建议默认值</button>
             <span id="baseline-submit-status" class="submit-status">等待设置</span>
           </div>
-          <div class="baseline-grid">
+          <div id="manual-baseline-panel" class="baseline-grid">
             <section class="baseline-card">
-              <h3>心率基线 heart_rate_daily</h3>
+              <h3>心率个人基线</h3>
               <div class="baseline-fields">
                 <label><span>老人 ID</span><input id="baseline-elder" value="elder_001" /></label>
-                <label><span>样本数</span><input id="baseline-sample-count" type="number" min="1" step="1" value="1" /></label>
-                <label><span>p10</span><input id="hr-p10" type="number" step="1" value="60" /></label>
-                <label><span>p50</span><input id="hr-p50" type="number" step="1" value="76" /></label>
-                <label><span>p90</span><input id="hr-p90" type="number" step="1" value="100" /></label>
-                <label><span>night_avg</span><input id="hr-night-avg" type="number" step="1" value="68" /></label>
-                <label><span>daily_avg</span><input id="hr-daily-avg" type="number" step="1" value="78" /></label>
+                <label><span>样本数量</span><input id="baseline-sample-count" type="number" min="1" step="1" value="1" /></label>
+                <label><span>偏低参考 p10</span><input id="hr-p10" type="number" step="1" value="60" /></label>
+                <label><span>中位心率 p50</span><input id="hr-p50" type="number" step="1" value="76" /></label>
+                <label><span>偏高参考 p90</span><input id="hr-p90" type="number" step="1" value="100" /></label>
+                <label><span>夜间平均心率</span><input id="hr-night-avg" type="number" step="1" value="68" /></label>
+                <label><span>日常平均心率</span><input id="hr-daily-avg" type="number" step="1" value="78" /></label>
               </div>
               <div class="form-actions">
                 <button id="save-heart-baseline" class="primary" type="button">保存心率基线</button>
@@ -933,13 +935,13 @@
             </section>
 
             <section class="baseline-card">
-              <h3>血氧基线 spo2_daily</h3>
+              <h3>血氧个人基线</h3>
               <div class="baseline-fields">
-                <label><span>p10</span><input id="spo2-p10" type="number" min="0" max="100" step="1" value="95" /></label>
-                <label><span>p50</span><input id="spo2-p50" type="number" min="0" max="100" step="1" value="96" /></label>
-                <label><span>p90</span><input id="spo2-p90" type="number" min="0" max="100" step="1" value="98" /></label>
-                <label><span>night_avg</span><input id="spo2-night-avg" type="number" min="0" max="100" step="1" value="95" /></label>
-                <label><span>avg</span><input id="spo2-avg" type="number" min="0" max="100" step="1" value="96" /></label>
+                <label><span>偏低参考 p10</span><input id="spo2-p10" type="number" min="0" max="100" step="1" value="95" /></label>
+                <label><span>中位血氧 p50</span><input id="spo2-p50" type="number" min="0" max="100" step="1" value="96" /></label>
+                <label><span>偏高参考 p90</span><input id="spo2-p90" type="number" min="0" max="100" step="1" value="98" /></label>
+                <label><span>夜间平均血氧</span><input id="spo2-night-avg" type="number" min="0" max="100" step="1" value="95" /></label>
+                <label><span>日常平均血氧</span><input id="spo2-avg" type="number" min="0" max="100" step="1" value="96" /></label>
               </div>
               <div class="form-actions">
                 <button id="save-spo2-baseline" class="primary" type="button">保存血氧基线</button>
@@ -947,14 +949,49 @@
             </section>
 
             <section class="baseline-card">
-              <h3>卫生间停留基线 bathroom_routine</h3>
+              <h3>卫生间停留基线</h3>
               <div class="baseline-fields">
-                <label><span>bathroom_stay_avg_sec</span><input id="bathroom-stay-avg" type="number" min="0" step="1" value="180" /></label>
-                <label><span>bathroom_stay_p90_sec</span><input id="bathroom-stay-p90" type="number" min="0" step="1" value="60" /></label>
-                <label><span>sample_count</span><input id="bathroom-sample-count" type="number" min="1" step="1" value="1" /></label>
+                <label><span>平均停留时间（秒）</span><input id="bathroom-stay-avg" type="number" min="0" step="1" value="180" /></label>
+                <label><span>90% 情况不超过（秒）</span><input id="bathroom-stay-p90" type="number" min="0" step="1" value="60" /></label>
+                <label><span>样本数量</span><input id="bathroom-sample-count" type="number" min="1" step="1" value="1" /></label>
               </div>
               <div class="form-actions">
                 <button id="save-bathroom-baseline" class="primary" type="button">保存卫生间基线</button>
+              </div>
+            </section>
+          </div>
+          <div id="auto-baseline-panel" class="baseline-grid" hidden>
+            <section class="baseline-card">
+              <h3>自动统计心率/血氧基线</h3>
+              <div class="baseline-fields">
+                <label><span>生成组数</span><input id="auto-vital-count" type="number" min="24" max="5000" step="1" value="3000" /></label>
+                <label><span>逻辑采样间隔（秒）</span><input id="auto-vital-interval" type="number" min="1" max="60" step="1" value="5" /></label>
+              </div>
+              <p class="muted">生成正常心率/血氧 MQTT 数据，Edge 先整理为行为片段，再重算个人基线。</p>
+              <div class="form-actions">
+                <button id="auto-vitals-baseline" class="primary" type="button">生成 3000 组并统计基线</button>
+              </div>
+            </section>
+            <section class="baseline-card">
+              <h3>自动统计卫生间停留基线</h3>
+              <div class="baseline-fields">
+                <label><span>停留记录次数</span><input id="auto-bathroom-count" type="number" min="3" max="80" step="1" value="20" /></label>
+                <label><span>平均停留目标（秒）</span><input id="auto-bathroom-avg" type="number" min="10" max="3600" step="1" value="180" /></label>
+                <label><span>90% 不超过目标（秒）</span><input id="auto-bathroom-p90" type="number" min="20" max="7200" step="1" value="480" /></label>
+              </div>
+              <p class="muted">发送多段进入/离开卫生间 presence 轨迹，Edge 生成 bathroom_stay 行为片段后重算基线。</p>
+              <div class="form-actions">
+                <button id="auto-bathroom-baseline" class="primary" type="button">生成卫生间停留基线</button>
+              </div>
+            </section>
+            <section class="baseline-card">
+              <h3>卫生间停留验证</h3>
+              <div class="baseline-fields">
+                <label><span>本次停留时间（秒）</span><input id="demo-bathroom-duration" type="number" min="10" max="7200" step="1" value="600" /></label>
+              </div>
+              <p class="muted">输入一次停留时长，系统发送 open bathroom_stay 片段；超过当前 p90 后应生成 Candidate。</p>
+              <div class="form-actions">
+                <button id="demo-bathroom-stay" class="primary" type="button">发送一次停留验证</button>
               </div>
             </section>
           </div>
@@ -1942,6 +1979,79 @@
         }
       }
 
+      function setBaselineMode(mode) {
+        const autoMode = mode === "auto";
+        $("manual-baseline-panel").hidden = autoMode;
+        $("auto-baseline-panel").hidden = !autoMode;
+        $("baseline-manual-mode").classList.toggle("primary", !autoMode);
+        $("baseline-auto-mode").classList.toggle("primary", autoMode);
+        setSubmitStatus("baseline-submit-status", autoMode ? "自动生成模式：数据将先进入 MQTT 和行为片段" : "手动设置模式：直接保存个人基线");
+      }
+
+      function summarizeBaselineRebuild(result) {
+        const baselines = result.rebuild?.personal_baselines ?? result.personal_baselines ?? [];
+        const labels = baselines.map((item) => item.baseline_type).join("、") || "个人基线";
+        const segmentCount = result.rebuild?.behavior_segments ?? result.behavior_segments ?? 0;
+        return `${labels} 已更新，行为片段 ${segmentCount} 条`;
+      }
+
+      async function runAutoVitalsBaseline() {
+        const button = $("auto-vitals-baseline");
+        button.disabled = true;
+        setSubmitStatus("baseline-submit-status", "正在生成心率/血氧数据并统计基线");
+        try {
+          const result = await postJson("/api/baselines/auto-vitals", {
+            elder_id: $("baseline-elder").value.trim() || "elder_001",
+            sample_count: Number($("auto-vital-count").value || 3000),
+            logical_interval_sec: Number($("auto-vital-interval").value || 5),
+            publish_mqtt: true,
+          });
+          await loadPersonalBaselines();
+          setSubmitStatus("baseline-submit-status", `心率/血氧自动基线完成：${summarizeBaselineRebuild(result)}`, "ok");
+        } catch (error) {
+          setSubmitStatus("baseline-submit-status", `自动基线失败：${error.message}`, "error");
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      async function runAutoBathroomBaseline() {
+        const button = $("auto-bathroom-baseline");
+        button.disabled = true;
+        setSubmitStatus("baseline-submit-status", "正在生成卫生间停留行为片段并统计基线");
+        try {
+          const result = await postJson("/api/baselines/auto-bathroom", {
+            elder_id: $("baseline-elder").value.trim() || "elder_001",
+            stay_count: Number($("auto-bathroom-count").value || 20),
+            avg_stay_sec: Number($("auto-bathroom-avg").value || 180),
+            p90_stay_sec: Number($("auto-bathroom-p90").value || 480),
+          });
+          await loadPersonalBaselines();
+          setSubmitStatus("baseline-submit-status", `卫生间自动基线完成：${summarizeBaselineRebuild(result)}`, "ok");
+        } catch (error) {
+          setSubmitStatus("baseline-submit-status", `卫生间基线失败：${error.message}`, "error");
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      async function runBathroomStayDemo() {
+        const button = $("demo-bathroom-stay");
+        button.disabled = true;
+        setSubmitStatus("baseline-submit-status", "正在发送一次卫生间停留验证");
+        try {
+          const result = await postJson("/api/bathroom-stay/demo", {
+            elder_id: $("baseline-elder").value.trim() || "elder_001",
+            duration_seconds: Number($("demo-bathroom-duration").value || 600),
+          });
+          setSubmitStatus("baseline-submit-status", `卫生间停留验证已发送：${summarizeBaselineRebuild(result)}`, "ok");
+        } catch (error) {
+          setSubmitStatus("baseline-submit-status", `停留验证失败：${error.message}`, "error");
+        } finally {
+          button.disabled = false;
+        }
+      }
+
       function renderKeyTable() {
         const latestVital = latestByKind("vital");
         const latestEnv = latestByKind("env");
@@ -2183,6 +2293,11 @@
       $("save-heart-baseline").addEventListener("click", () => saveBaseline("save-heart-baseline", buildHeartBaseline));
       $("save-spo2-baseline").addEventListener("click", () => saveBaseline("save-spo2-baseline", buildSpo2Baseline));
       $("save-bathroom-baseline").addEventListener("click", () => saveBaseline("save-bathroom-baseline", buildBathroomBaseline));
+      $("baseline-manual-mode").addEventListener("click", () => setBaselineMode("manual"));
+      $("baseline-auto-mode").addEventListener("click", () => setBaselineMode("auto"));
+      $("auto-vitals-baseline").addEventListener("click", runAutoVitalsBaseline);
+      $("auto-bathroom-baseline").addEventListener("click", runAutoBathroomBaseline);
+      $("demo-bathroom-stay").addEventListener("click", runBathroomStayDemo);
 
       $("clear-local").addEventListener("click", () => {
         setRecords([]);
@@ -2199,6 +2314,7 @@
 
       applyTemplate(state.activeTemplate);
       fillBaselineDefaults();
+      setBaselineMode("manual");
       updateScenarioPreview();
       loadSnapshot();
       loadDevices().catch((error) => {

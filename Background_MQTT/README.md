@@ -118,6 +118,34 @@ python Background_MQTT\generate_scenario_data.py --scene morning_getup --host lo
 - 提交成功后，网页等待 MQTT 回流再显示记录，避免只在前端假显示成功
 - 如果 v2 主系统已经启动，RK3588 主系统会按同一条链路完成 Edge 入库、规则分级、workflow、本地 AI/云端复核和 Dashboard 推送
 
+## 个人基线设置
+
+8090 页面提供两种个人基线设置方式：
+
+- `手动设置基线`：直接填写并保存心率、血氧、卫生间停留基线。
+- `自动生成基线`：先生成 MQTT 模拟数据，让 Edge MCP 入库为 `v2_raw_observations`，再显式触发行为片段和个人基线重算。
+
+自动心率/血氧基线默认生成 `3000` 组生命体征数据，逻辑采样间隔为 `5 秒`，约等于 `4 小时 10 分钟`。数据链路为：
+
+```text
+8090 自动生成 vital MQTT
+-> Mosquitto
+-> Edge MCP v2_raw_observations
+-> BehaviorAnalyticsWorker heart_rate_window / spo2_window
+-> POST /api/v2/baselines/rebuild
+-> personal_baselines heart_rate_daily / spo2_daily
+```
+
+自动卫生间停留基线默认生成多次进入/离开卫生间的 presence 轨迹，Edge 会整理为 `bathroom_stay` 行为片段，再统计 `bathroom_routine`：
+
+```text
+home_environment_snapshot_v1 presence
+-> bathroom_stay 行为片段
+-> bathroom_routine 个人基线
+```
+
+`卫生间停留验证` 可以手动输入一次停留时间。系统会发送一个 open 的 bathroom presence 片段；如果持续时间超过当前 `bathroom_stay_p90_sec`，Edge 会生成 `bathroom_stay_anomaly` Candidate，并交给 v2 Orchestrator 本地模型复核。
+
 手动录入页面会展示当前 v2 真实生效的阈值：
 
 - 心率：低于 45 或高于 130 触发 P1；轻度波动只记录，后续可进入个人基线候选分析

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -24,7 +25,7 @@ from guardian_shared.v2 import (
     WorkflowV2,
 )
 
-from app.behavior_worker import BehaviorAnalyticsWorker
+from app.behavior_worker import BehaviorAnalyticsWorker, build_baselines, build_candidates, build_presence_segments, build_vital_segments
 from app.config import settings
 from app.database import SessionLocal, init_db
 from app import repository
@@ -157,6 +158,38 @@ async def create_personal_baseline(baseline: PersonalBaselineV2) -> dict[str, An
     with SessionLocal() as db:
         record = repository.create_personal_baseline(db, baseline)
     return {"ok": True, "personal_baseline": record}
+
+
+@app.post("/api/v2/baselines/rebuild")
+async def rebuild_personal_baselines(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    target_elder_id = str((payload or {}).get("elder_id") or settings.elder_id)
+    requested_types = set((payload or {}).get("baseline_types") or [])
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        observations = repository.list_observations(db, target_elder_id, limit=5000)
+        presence_segments = build_presence_segments(observations, now=now)
+        vital_segments = build_vital_segments(observations)
+        for segment in [*presence_segments, *vital_segments]:
+            repository.upsert_behavior_segment(db, segment)
+        segments = repository.list_behavior_segments(db, target_elder_id, limit=5000)
+        baselines = build_baselines(target_elder_id, segments, now=now)
+        if requested_types:
+            baselines = [baseline for baseline in baselines if baseline.baseline_type in requested_types]
+        records = [repository.create_personal_baseline(db, baseline) for baseline in baselines]
+        all_baselines = repository.list_personal_baselines(db, target_elder_id)
+        existing = repository.list_ai_review_candidates(db, target_elder_id, limit=200)
+        candidates = build_candidates(target_elder_id, segments, all_baselines, existing, now=now)
+        candidate_records = [repository.create_ai_review_candidate(db, candidate) for candidate in candidates]
+    for record in candidate_records:
+        if settings.orchestrator_url:
+            asyncio.create_task(forward_candidate_to_orchestrator(record))
+    return {
+        "ok": True,
+        "elder_id": target_elder_id,
+        "behavior_segments": len(presence_segments) + len(vital_segments),
+        "personal_baselines": records,
+        "ai_review_candidates": candidate_records,
+    }
 
 
 @app.get("/api/v2/ai-review-candidates")
