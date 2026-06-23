@@ -262,6 +262,79 @@
         font-size: 13px;
       }
 
+      .presence-monitor {
+        margin-top: 16px;
+        border: 1px solid #cddcec;
+        border-radius: 10px;
+        padding: 14px;
+        background: #f8fbff;
+      }
+
+      .presence-monitor h3 {
+        margin: 0 0 8px;
+      }
+
+      .presence-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(130px, 1fr));
+        gap: 10px;
+        margin: 12px 0;
+      }
+
+      .presence-room {
+        border: 1px solid #d9e2ee;
+        border-radius: 8px;
+        padding: 10px;
+        background: #fff;
+      }
+
+      .presence-room strong {
+        display: block;
+        margin-bottom: 6px;
+      }
+
+      .presence-room.present {
+        border-color: #62b58d;
+        background: #edf9f1;
+      }
+
+      .presence-summary {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(150px, 1fr));
+        gap: 10px;
+      }
+
+      .presence-summary div,
+      .presence-trace li {
+        border: 1px solid #edf1f6;
+        border-radius: 8px;
+        padding: 8px 10px;
+        background: #fff;
+      }
+
+      .presence-summary span {
+        display: block;
+        color: #607086;
+        font-size: 12px;
+      }
+
+      .presence-summary strong {
+        display: block;
+        margin-top: 4px;
+        color: #17324d;
+        overflow-wrap: anywhere;
+      }
+
+      .presence-trace {
+        display: grid;
+        gap: 6px;
+        max-height: 210px;
+        margin: 10px 0 0;
+        padding: 0;
+        overflow: auto;
+        list-style: none;
+      }
+
       .template-grid {
         display: grid;
         grid-template-columns: repeat(7, minmax(135px, 1fr));
@@ -995,6 +1068,23 @@
               </div>
             </section>
           </div>
+          <section class="presence-monitor" aria-label="红外卫生间停留验证">
+            <h3>红外卫生间停留验证</h3>
+            <p class="muted">红外传感器输出只用于判断老人当前所在房间和卫生间停留时长；超过个人停留参考上限后，Edge 会生成 bathroom_stay_anomaly Candidate。</p>
+            <div class="presence-summary">
+              <div><span>当前老人所在房间</span><strong id="pir-current-room">--</strong></div>
+              <div><span>卫生间红外状态</span><strong id="pir-bathroom-present">--</strong></div>
+              <div><span>进入卫生间时间</span><strong id="pir-entered-at">--</strong></div>
+              <div><span>当前判断</span><strong id="pir-status">--</strong></div>
+              <div><span>已停留时间</span><strong id="pir-elapsed">--</strong></div>
+              <div><span>停留参考上限</span><strong id="pir-limit">--</strong></div>
+              <div><span>最近离开时间</span><strong id="pir-exited-at">--</strong></div>
+              <div><span>上次停留时长</span><strong id="pir-last-stay">--</strong></div>
+            </div>
+            <div id="pir-room-grid" class="presence-grid"></div>
+            <h4>最近红外轨迹</h4>
+            <ul id="pir-trace" class="presence-trace"></ul>
+          </section>
         </div>
       </article>
 
@@ -1251,6 +1341,7 @@
         devices: [],
         deviceLog: [],
         roomEnv: {},
+        bathroomStayMonitor: null,
         activeTemplate: "normal",
         scenarioRunning: false,
         scenarioJob: null,
@@ -1258,7 +1349,14 @@
       };
 
       const roomOrder = ["bedroom", "kitchen", "living_room", "bathroom"];
+      const recordLimit = 3100;
       const deviceActionLogTypes = new Set(["device_command", "manual_command"]);
+      const roomLabels = {
+        bedroom: "卧室",
+        kitchen: "厨房",
+        living_room: "客厅",
+        bathroom: "卫生间",
+      };
 
       const deviceLabels = {
         bedroom: "Bedroom",
@@ -1450,6 +1548,27 @@
 
       function valueOrDash(value) {
         return value === null || value === undefined || value === "" ? "--" : value;
+      }
+
+      function formatDuration(seconds) {
+        if (seconds === null || seconds === undefined || seconds === "") return "--";
+        const total = Math.max(0, Math.round(Number(seconds)));
+        const minutes = Math.floor(total / 60);
+        const rest = total % 60;
+        return minutes > 0 ? `${minutes} 分 ${rest} 秒` : `${rest} 秒`;
+      }
+
+      function presenceLabel(value) {
+        return value ? "有人" : "无人";
+      }
+
+      function bathroomStatusLabel(status) {
+        const labels = {
+          not_in_bathroom: "未进入卫生间",
+          in_bathroom: "正在停留",
+          over_limit: "已超过参考上限",
+        };
+        return labels[status] || status || "--";
       }
 
       function numberOrNull(value) {
@@ -1698,6 +1817,7 @@
         setDevices(data.devices);
         setDeviceLog(data.device_log);
         setRoomEnv(data.room_env);
+        setBathroomStayMonitor(data.bathroom_stay_monitor);
       }
 
       function buildVitalPayload() {
@@ -2082,7 +2202,7 @@
         $("vital-count").textContent = records.length;
         $("vital-empty").style.display = records.length === 0 ? "block" : "none";
         $("vital-rows").innerHTML = records
-          .slice(0, 400)
+          .slice(0, recordLimit)
           .map((record, index) => {
             const data = record.payload ?? {};
             const displayNo = records.length - index;
@@ -2107,7 +2227,7 @@
         $("env-count").textContent = records.length;
         $("env-empty").style.display = records.length === 0 ? "block" : "none";
         $("env-rows").innerHTML = records
-          .slice(0, 400)
+          .slice(0, recordLimit)
           .map((record, index) => {
             const data = record.payload ?? {};
             const displayNo = records.length - index;
@@ -2129,6 +2249,38 @@
           .join("");
       }
 
+      function renderBathroomStayMonitor() {
+        const monitor = state.bathroomStayMonitor ?? {};
+        const roomPresence = monitor.room_presence ?? {};
+        setText("pir-current-room", monitor.current_room ? `${roomLabels[monitor.current_room] || monitor.current_room} (${monitor.current_room})` : "--");
+        setText("pir-bathroom-present", presenceLabel(Boolean(monitor.bathroom_present)));
+        setText("pir-entered-at", formatTime(monitor.bathroom_entered_at));
+        setText("pir-status", bathroomStatusLabel(monitor.status));
+        setText("pir-elapsed", formatDuration(monitor.bathroom_elapsed_sec));
+        setText("pir-limit", formatDuration(monitor.bathroom_reference_limit_sec));
+        setText("pir-exited-at", formatTime(monitor.bathroom_exited_at));
+        setText("pir-last-stay", formatDuration(monitor.last_stay_seconds));
+        $("pir-room-grid").innerHTML = roomOrder
+          .map((room) => {
+            const present = Boolean(roomPresence[room]);
+            return `
+              <div class="presence-room ${present ? "present" : ""}">
+                <strong>${roomLabels[room] || room}</strong>
+                <span>${presenceLabel(present)}</span>
+                <small>${room}</small>
+              </div>
+            `;
+          })
+          .join("");
+        const events = monitor.recent_presence_events ?? [];
+        $("pir-trace").innerHTML = events.length
+          ? events
+              .slice(0, 10)
+              .map((event) => `<li><strong>${formatTime(event.timestamp)}</strong><br />当前房间：${valueOrDash(event.current_room)}，卫生间：${presenceLabel(Boolean(event.bathroom_present))}<br /><small>${valueOrDash(event.summary)}</small></li>`)
+              .join("")
+          : `<li>暂无红外轨迹。</li>`;
+      }
+
       function renderRecords() {
         renderVitalRows(recordsByKind("vital"));
         renderEnvRows(recordsByKind("env"));
@@ -2138,6 +2290,7 @@
         renderKeyTable();
         renderRecords();
         renderCurrentSceneStatus();
+        renderBathroomStayMonitor();
       }
 
       function setRecords(records) {
@@ -2145,13 +2298,18 @@
         renderAll();
       }
 
+      function setBathroomStayMonitor(monitor) {
+        state.bathroomStayMonitor = monitor ?? state.bathroomStayMonitor;
+        renderBathroomStayMonitor();
+      }
+
       function addRecord(record) {
-        state.records = [record, ...state.records].slice(0, 1000);
+        state.records = [record, ...state.records].slice(0, recordLimit);
         renderAll();
       }
 
       async function loadSnapshot() {
-        const response = await fetch("/api/records?limit=800");
+        const response = await fetch(`/api/records?limit=${recordLimit}`);
         const data = await response.json();
         setRecords(data.items);
       }
@@ -2173,6 +2331,7 @@
             setDevices(message.devices);
             setDeviceLog(message.device_log);
             setRoomEnv(message.room_env);
+            setBathroomStayMonitor(message.bathroom_stay_monitor);
           }
           if (message.type === "mqtt_record") {
             addRecord(message.data);
@@ -2185,6 +2344,9 @@
           }
           if (message.device_log) {
             setDeviceLog(message.device_log);
+          }
+          if (message.bathroom_stay_monitor) {
+            setBathroomStayMonitor(message.bathroom_stay_monitor);
           }
           if (message.type === "device_state") {
             upsertDevice(message.data);

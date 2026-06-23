@@ -105,6 +105,24 @@ class BackgroundEventTests(unittest.TestCase):
         self.assertIn("visible_device_log()", backend)
         self.assertIn('new Set(["device_command", "manual_command"])', html)
 
+    def test_records_limit_supports_auto_baseline_display(self) -> None:
+        backend = (ROOT / "Background_MQTT" / "backend.py").read_text(encoding="utf-8")
+        html = (ROOT / "Background_MQTT" / "frontend" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('BACKGROUND_MAX_RECORDS", "3100"', backend)
+        self.assertIn("async def list_records(limit: int = 3100)", backend)
+        self.assertIn("const recordLimit = 3100", html)
+        self.assertIn(".slice(0, recordLimit)", html)
+
+    def test_bathroom_presence_monitor_is_exposed_on_8090(self) -> None:
+        backend = (ROOT / "Background_MQTT" / "backend.py").read_text(encoding="utf-8")
+        html = (ROOT / "Background_MQTT" / "frontend" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("bathroom_stay_monitor_snapshot()", backend)
+        self.assertIn("update_bathroom_stay_monitor(env_payload)", backend)
+        self.assertIn('"bathroom_stay_monitor": bathroom_stay_monitor_snapshot()', backend)
+        self.assertIn("红外卫生间停留验证", html)
+        self.assertIn("pir-current-room", html)
+        self.assertIn("setBathroomStayMonitor(message.bathroom_stay_monitor)", html)
+
 
 if __name__ == "__main__":
     unittest.main()

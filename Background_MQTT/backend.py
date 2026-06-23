@@ -32,7 +32,7 @@ MQTT_TOPICS = ("elder/+/sensor/vital", "elder/+/sensor/env", "elder/+/vision/eve
 GUARDIAN_CORE_URL = os.getenv("GUARDIAN_CORE_URL", "http://localhost:8000").rstrip("/")
 EDGE_API_BASE = os.getenv("EDGE_API_BASE", "http://edge-mcp-server:8010").rstrip("/")
 ELDER_ID = os.getenv("ELDER_ID", "elder_001")
-MAX_RECORDS = int(os.getenv("BACKGROUND_MAX_RECORDS", "1000"))
+MAX_RECORDS = int(os.getenv("BACKGROUND_MAX_RECORDS", "3100"))
 ROOM_KEYS = ("bedroom", "kitchen", "living_room", "bathroom")
 DEFAULT_ROOM_ENV: dict[str, dict[str, float | int]] = {
     "bedroom": {"temperature": 24.0, "humidity": 50.0, "co2_ppm": 820},
@@ -62,6 +62,7 @@ device_states: dict[str, dict[str, Any]] = {}
 device_log: deque[dict[str, Any]] = deque(maxlen=100)
 DEVICE_ACTION_LOG_TYPES = {"device_command", "manual_command"}
 room_env_states: dict[str, dict[str, Any]] = {}
+bathroom_stay_monitor: dict[str, Any] = {}
 downgraded_env_overrides: dict[str, dict[str, Any]] = {}
 scenario_task: asyncio.Task[None] | None = None
 FAST_SCENARIO_SAMPLE_DELAY_SEC = 0.1
@@ -205,6 +206,7 @@ def default_room_env_state(room: str) -> dict[str, Any]:
         "temperature": defaults["temperature"],
         "humidity": defaults["humidity"],
         "co2_ppm": defaults["co2_ppm"],
+        "presence": False,
         "timestamp": None,
         "updated_at": None,
         "sample_id": None,
@@ -226,12 +228,14 @@ def update_room_env_state(payload: dict[str, Any]) -> dict[str, Any] | None:
     room = str(payload.get("room", ""))
     if room not in ROOM_KEYS:
         return None
+    presence = payload.get("presence")
     state = {
         **room_env_states.get(room, default_room_env_state(room)),
         "room": room,
         "temperature": payload.get("temperature"),
         "humidity": payload.get("humidity"),
         "co2_ppm": payload.get("co2_ppm"),
+        "presence": presence if isinstance(presence, bool) else room_env_states.get(room, {}).get("presence", False),
         "timestamp": payload.get("timestamp"),
         "updated_at": utc_now(),
         "sample_id": payload.get("sample_id"),
@@ -239,6 +243,120 @@ def update_room_env_state(payload: dict[str, Any]) -> dict[str, Any] | None:
     }
     room_env_states[room] = state
     return state
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+def init_bathroom_stay_monitor() -> None:
+    if bathroom_stay_monitor:
+        return
+    bathroom_stay_monitor.update(
+        {
+            "current_room": None,
+            "room_presence": {room: False for room in ROOM_KEYS},
+            "bathroom_present": False,
+            "bathroom_entered_at": None,
+            "bathroom_exited_at": None,
+            "bathroom_elapsed_sec": 0,
+            "bathroom_reference_limit_sec": 60,
+            "status": "not_in_bathroom",
+            "last_stay_seconds": None,
+            "last_updated_at": None,
+            "elder_id": ELDER_ID,
+            "sample_id": None,
+            "recent_presence_events": [],
+        }
+    )
+
+
+def bathroom_stay_monitor_snapshot() -> dict[str, Any]:
+    init_bathroom_stay_monitor()
+    monitor = dict(bathroom_stay_monitor)
+    entered_at = _parse_datetime(monitor.get("bathroom_entered_at"))
+    if monitor.get("bathroom_present") and entered_at:
+        monitor["bathroom_elapsed_sec"] = max(0, int((datetime.now(timezone.utc) - entered_at).total_seconds()))
+        limit = float(monitor.get("bathroom_reference_limit_sec") or 60)
+        monitor["status"] = "over_limit" if monitor["bathroom_elapsed_sec"] > limit else "in_bathroom"
+    monitor["recent_presence_events"] = list(monitor.get("recent_presence_events") or [])[:10]
+    return monitor
+
+
+async def bathroom_reference_limit_sec(elder_id: str) -> float:
+    return await current_vital_baseline_value(elder_id, "bathroom_routine", "bathroom_stay_p90_sec", 60)
+
+
+def _presence_event_label(room_presence: dict[str, bool]) -> str:
+    return ", ".join(f"{room}={'true' if room_presence.get(room) else 'false'}" for room in ROOM_KEYS)
+
+
+def update_bathroom_stay_monitor(env_payload: dict[str, Any]) -> dict[str, Any]:
+    init_bathroom_stay_monitor()
+    rooms = env_payload.get("rooms") if isinstance(env_payload.get("rooms"), dict) else {}
+    room_presence = {
+        room: bool((rooms.get(room) or {}).get("presence"))
+        for room in ROOM_KEYS
+        if isinstance(rooms.get(room), dict)
+    }
+    if not room_presence:
+        return bathroom_stay_monitor_snapshot()
+    previous_present = bool(bathroom_stay_monitor.get("bathroom_present"))
+    now_value = env_payload.get("timestamp") or env_payload.get("observed_at") or utc_now()
+    now_dt = _parse_datetime(now_value) or datetime.now(timezone.utc)
+    current_room = next((room for room in ROOM_KEYS if room_presence.get(room)), None)
+    bathroom_present = bool(room_presence.get("bathroom"))
+    entered_at = bathroom_stay_monitor.get("bathroom_entered_at")
+    exited_at = bathroom_stay_monitor.get("bathroom_exited_at")
+    last_stay_seconds = bathroom_stay_monitor.get("last_stay_seconds")
+    if bathroom_present and not previous_present:
+        entered_at = now_dt.isoformat()
+        exited_at = None
+        last_stay_seconds = None
+    elif not bathroom_present and previous_present:
+        old_entered = _parse_datetime(bathroom_stay_monitor.get("bathroom_entered_at"))
+        if old_entered:
+            last_stay_seconds = max(0, int((now_dt - old_entered).total_seconds()))
+        exited_at = now_dt.isoformat()
+        entered_at = None
+    active_entered = _parse_datetime(entered_at)
+    elapsed = max(0, int((now_dt - active_entered).total_seconds())) if bathroom_present and active_entered else 0
+    limit = float(bathroom_stay_monitor.get("bathroom_reference_limit_sec") or 60)
+    status = "over_limit" if bathroom_present and elapsed > limit else "in_bathroom" if bathroom_present else "not_in_bathroom"
+    event = {
+        "timestamp": now_dt.isoformat(),
+        "current_room": current_room,
+        "bathroom_present": bathroom_present,
+        "room_presence": dict(room_presence),
+        "summary": _presence_event_label(room_presence),
+        "sample_id": env_payload.get("snapshot_id"),
+    }
+    recent = [event, *list(bathroom_stay_monitor.get("recent_presence_events") or [])][:10]
+    bathroom_stay_monitor.update(
+        {
+            "current_room": current_room,
+            "room_presence": {room: bool(room_presence.get(room)) for room in ROOM_KEYS},
+            "bathroom_present": bathroom_present,
+            "bathroom_entered_at": entered_at,
+            "bathroom_exited_at": exited_at,
+            "bathroom_elapsed_sec": elapsed,
+            "status": status,
+            "last_stay_seconds": last_stay_seconds,
+            "last_updated_at": now_dt.isoformat(),
+            "elder_id": env_payload.get("elder_id", ELDER_ID),
+            "sample_id": env_payload.get("snapshot_id"),
+            "recent_presence_events": recent,
+        }
+    )
+    return bathroom_stay_monitor_snapshot()
 
 
 def init_default_device_states() -> None:
@@ -952,6 +1070,7 @@ def on_message(client: mqtt.Client, userdata: object, msg: mqtt.MQTTMessage) -> 
         override = downgraded_env_overrides.pop(str(payload.get("sample_id")), None)
         env_payload = override or payload
         if env_payload.get("schema") == "home_environment_snapshot_v1" and isinstance(env_payload.get("rooms"), dict):
+            update_bathroom_stay_monitor(env_payload)
             for room, room_payload in env_payload["rooms"].items():
                 if isinstance(room_payload, dict):
                     update_room_env_state(
@@ -971,7 +1090,15 @@ def on_message(client: mqtt.Client, userdata: object, msg: mqtt.MQTTMessage) -> 
         handle_device_state(msg.topic, payload)
     elif msg.topic.endswith("/ack"):
         handle_device_ack(msg.topic, payload)
-    broadcast_from_mqtt({"type": "mqtt_record", "data": record, "total": len(records), "room_env": room_env_snapshot()})
+    broadcast_from_mqtt(
+        {
+            "type": "mqtt_record",
+            "data": record,
+            "total": len(records),
+            "room_env": room_env_snapshot(),
+            "bathroom_stay_monitor": bathroom_stay_monitor_snapshot(),
+        }
+    )
 
 
 @app.on_event("startup")
@@ -979,6 +1106,7 @@ async def startup() -> None:
     global event_loop, mqtt_client
     event_loop = asyncio.get_running_loop()
     init_default_room_env_states()
+    init_bathroom_stay_monitor()
     init_default_device_states()
     await sync_devices_from_guardian_core()
     mqtt_client = mqtt.Client(client_id=f"background-mqtt-monitor-{os.getpid()}")
@@ -1016,7 +1144,7 @@ async def health() -> dict[str, Any]:
 
 
 @app.get("/api/records")
-async def list_records(limit: int = 300) -> dict[str, Any]:
+async def list_records(limit: int = 3100) -> dict[str, Any]:
     clipped = list(records)[: max(1, min(limit, MAX_RECORDS))]
     return {"items": clipped, "total": len(records)}
 
@@ -1024,7 +1152,12 @@ async def list_records(limit: int = 300) -> dict[str, Any]:
 @app.get("/api/devices")
 async def list_devices() -> dict[str, Any]:
     await sync_devices_from_guardian_core()
-    return {"devices": sorted_devices(), "device_log": visible_device_log(), "room_env": room_env_snapshot()}
+    return {
+        "devices": sorted_devices(),
+        "device_log": visible_device_log(),
+        "room_env": room_env_snapshot(),
+        "bathroom_stay_monitor": bathroom_stay_monitor_snapshot(),
+    }
 
 
 @app.get("/api/personal-baselines")
@@ -1044,6 +1177,8 @@ async def create_personal_baseline(request: PersonalBaselineRequest) -> dict[str
         async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
             response = await client.post(f"{EDGE_API_BASE}/api/v2/personal-baselines", json=request.model_dump())
             response.raise_for_status()
+            if request.baseline_type == "bathroom_routine":
+                bathroom_stay_monitor["bathroom_reference_limit_sec"] = float(request.metrics.get("bathroom_stay_p90_sec") or 60)
             return response.json()
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail={"message": "edge personal baseline save failed", "error": str(exc)})
@@ -1116,6 +1251,7 @@ async def auto_bathroom_baseline(request: AutoBathroomBaselineRequest) -> dict[s
         rebuild = await rebuild_edge_baselines(request.elder_id, ["bathroom_routine"])
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail={"message": "edge baseline rebuild failed", "error": str(exc)})
+    bathroom_stay_monitor["bathroom_reference_limit_sec"] = await bathroom_reference_limit_sec(request.elder_id)
     preview = {
         "stay_count": len(durations),
         "avg_stay_sec": round(sum(durations) / len(durations), 1),
@@ -1139,6 +1275,7 @@ async def bathroom_stay_demo(request: BathroomStayDemoRequest) -> dict[str, Any]
         rebuild = await rebuild_edge_baselines(request.elder_id, ["bathroom_routine"])
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail={"message": "edge baseline rebuild failed", "error": str(exc)})
+    bathroom_stay_monitor["bathroom_reference_limit_sec"] = await bathroom_reference_limit_sec(request.elder_id)
     await broadcast({"type": "bathroom_stay_demo", "data": {"duration_seconds": request.duration_seconds, "rebuild": rebuild}})
     return {"ok": True, "elder_id": request.elder_id, "duration_seconds": request.duration_seconds, "rebuild": rebuild}
 
@@ -1257,11 +1394,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     await websocket.send_json(
         {
             "type": "snapshot",
-            "data": list(records)[:300],
+            "data": list(records)[:MAX_RECORDS],
             "total": len(records),
             "devices": sorted_devices(),
             "device_log": visible_device_log(),
             "room_env": room_env_snapshot(),
+            "bathroom_stay_monitor": bathroom_stay_monitor_snapshot(),
         }
     )
     try:
