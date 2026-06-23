@@ -414,7 +414,7 @@ def _bathroom_baseline(elder_id: str, segments: list[dict[str, Any]], now: datet
     quality = "stable" if len(durations) >= 3 else "insufficient_data"
     metrics = {
         "bathroom_stay_avg_sec": round(mean(durations), 1) if durations else 0,
-        "bathroom_stay_p90_sec": _percentile(durations, 0.9) if durations else DEFAULT_BATHROOM_STAY_P90,
+        "bathroom_stay_p90_sec": round(max(durations) + 10, 1) if durations else DEFAULT_BATHROOM_STAY_P90,
         "night_bathroom_visits_avg": round(len(durations) / max(1, LOOKBACK_DAYS), 2),
         "sample_count": len(durations),
         "fallback": "system_default" if quality == "insufficient_data" else None,
@@ -424,30 +424,48 @@ def _bathroom_baseline(elder_id: str, segments: list[dict[str, Any]], now: datet
 
 def _vital_baseline(elder_id: str, segments: list[dict[str, Any]], now: datetime, baseline_type: str, segment_type: str) -> PersonalBaselineV2:
     windows = [item for item in segments if item.get("segment_type") == segment_type]
-    values = [float((item.get("features") or {}).get("avg")) for item in windows if (item.get("features") or {}).get("avg") is not None]
-    quality = "stable" if len(values) >= 20 else "insufficient_data"
+    weighted_sum = 0.0
+    sample_count = 0
+    lows: list[float] = []
+    highs: list[float] = []
+    for item in windows:
+        features = item.get("features") or {}
+        avg = features.get("avg")
+        if avg is None:
+            continue
+        count = int(features.get("sample_count") or item.get("observation_count") or 1)
+        count = max(1, count)
+        weighted_sum += float(avg) * count
+        sample_count += count
+        if features.get("min") is not None:
+            lows.append(float(features["min"]))
+        if features.get("max") is not None:
+            highs.append(float(features["max"]))
+    quality = "stable" if len(windows) >= 20 else "insufficient_data"
     if baseline_type == "heart_rate_daily":
+        average = int(round(weighted_sum / sample_count)) if sample_count else 0
         metrics = {
-            "daily_avg": round(mean(values), 1) if values else 0,
-            "night_avg": round(mean(values), 1) if values else 0,
-            "p10": _percentile(values, 0.1) if values else 60,
-            "p50": _percentile(values, 0.5) if values else 75,
-            "p90": _percentile(values, 0.9) if values else DEFAULT_HEART_RATE_P90,
-            "sample_count": len(values),
+            "daily_avg": average,
+            "night_avg": average,
+            "p10": int(round(min(lows) - 1)) if lows else 60,
+            "p50": average if sample_count else 75,
+            "p90": int(round(max(highs) + 1)) if highs else DEFAULT_HEART_RATE_P90,
+            "sample_count": sample_count,
             "fallback": "system_default" if quality == "insufficient_data" else None,
         }
     else:
+        average = round(weighted_sum / sample_count, 1) if sample_count else 0
         metrics = {
-            "avg": round(mean(values), 1) if values else 0,
-            "night_avg": round(mean(values), 1) if values else 0,
-            "p10": _percentile(values, 0.1) if values else DEFAULT_SPO2_P10,
-            "p50": _percentile(values, 0.5) if values else 96,
-            "p90": _percentile(values, 0.9) if values else 98,
+            "avg": average,
+            "night_avg": average,
+            "p10": round(min(lows) - 0.5, 1) if lows else DEFAULT_SPO2_P10,
+            "p50": average if sample_count else 96,
+            "p90": round(max(highs) + 0.5, 1) if highs else 98,
             "low_count_avg_per_day": 0,
-            "sample_count": len(values),
+            "sample_count": sample_count,
             "fallback": "system_default" if quality == "insufficient_data" else None,
         }
-    return PersonalBaselineV2(elder_id=elder_id, baseline_type=baseline_type, period_end=now, sample_count=len(values), metrics=metrics, quality=quality)
+    return PersonalBaselineV2(elder_id=elder_id, baseline_type=baseline_type, period_end=now, sample_count=sample_count, metrics=metrics, quality=quality)
 
 
 def build_candidates(

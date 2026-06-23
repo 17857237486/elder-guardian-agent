@@ -33,6 +33,83 @@ def run_edge_script(script: str, *, timeout: int = 30, env_overrides: dict[str, 
 
 
 class BehaviorBaselineTests(unittest.TestCase):
+    def test_auto_baselines_use_expanded_normal_bounds(self) -> None:
+        script = textwrap.dedent(
+            """
+            from datetime import datetime, timedelta, timezone
+
+            from app.behavior_worker import build_baselines
+
+            elder_id = "elder_001"
+            base = datetime(2026, 6, 18, 8, 0, tzinfo=timezone.utc)
+
+            segments = []
+            heart_specs = [
+                (62, 74, 68.0, 10),
+                (70, 102, 80.0, 20),
+            ]
+            spo2_specs = [
+                (94.0, 97.0, 95.0, 10),
+                (95.0, 98.0, 96.0, 20),
+            ]
+            for index, (low, high, avg, count) in enumerate(heart_specs):
+                segments.append(
+                    {
+                        "segment_id": f"heart_{index}",
+                        "elder_id": elder_id,
+                        "segment_type": "heart_rate_window",
+                        "start_at": (base + timedelta(minutes=index * 5)).isoformat(),
+                        "features": {"min": low, "max": high, "avg": avg, "sample_count": count},
+                        "status": "closed",
+                    }
+                )
+            for index, (low, high, avg, count) in enumerate(spo2_specs):
+                segments.append(
+                    {
+                        "segment_id": f"spo2_{index}",
+                        "elder_id": elder_id,
+                        "segment_type": "spo2_window",
+                        "start_at": (base + timedelta(minutes=index * 5)).isoformat(),
+                        "features": {"min": low, "max": high, "avg": avg, "sample_count": count},
+                        "status": "closed",
+                    }
+                )
+            for index, duration in enumerate([120, 180, 510]):
+                segments.append(
+                    {
+                        "segment_id": f"bath_{index}",
+                        "elder_id": elder_id,
+                        "segment_type": "bathroom_stay",
+                        "start_at": (base + timedelta(hours=index)).isoformat(),
+                        "duration_seconds": duration,
+                        "status": "closed",
+                    }
+                )
+
+            baselines = build_baselines(elder_id, segments, now=base + timedelta(days=1))
+            baseline_map = {item.baseline_type: item for item in baselines}
+            heart = baseline_map["heart_rate_daily"].metrics
+            spo2 = baseline_map["spo2_daily"].metrics
+            bathroom = baseline_map["bathroom_routine"].metrics
+
+            assert heart["p10"] == 61, heart
+            assert heart["p50"] == 76, heart
+            assert heart["p90"] == 103, heart
+            assert heart["daily_avg"] == 76, heart
+            assert heart["sample_count"] == 30, heart
+
+            assert spo2["p10"] == 93.5, spo2
+            assert spo2["p50"] == 95.7, spo2
+            assert spo2["p90"] == 98.5, spo2
+            assert spo2["avg"] == 95.7, spo2
+            assert spo2["sample_count"] == 30, spo2
+
+            assert bathroom["bathroom_stay_p90_sec"] == 520, bathroom
+            """
+        )
+        result = run_edge_script(script)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_presence_and_vital_segments_baselines_and_candidates(self) -> None:
         script = textwrap.dedent(
             """

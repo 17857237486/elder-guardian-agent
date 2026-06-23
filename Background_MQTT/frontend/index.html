@@ -923,9 +923,9 @@
               <div class="baseline-fields">
                 <label><span>老人 ID</span><input id="baseline-elder" value="elder_001" /></label>
                 <label><span>样本数量</span><input id="baseline-sample-count" type="number" min="1" step="1" value="1" /></label>
-                <label><span>偏低参考 p10</span><input id="hr-p10" type="number" step="1" value="60" /></label>
-                <label><span>中位心率 p50</span><input id="hr-p50" type="number" step="1" value="76" /></label>
-                <label><span>偏高参考 p90</span><input id="hr-p90" type="number" step="1" value="100" /></label>
+                <label><span>偏低参考心率</span><input id="hr-p10" type="number" step="1" value="60" /></label>
+                <label><span>正常参考心率</span><input id="hr-p50" type="number" step="1" value="76" /></label>
+                <label><span>偏高参考心率</span><input id="hr-p90" type="number" step="1" value="100" /></label>
                 <label><span>夜间平均心率</span><input id="hr-night-avg" type="number" step="1" value="68" /></label>
                 <label><span>日常平均心率</span><input id="hr-daily-avg" type="number" step="1" value="78" /></label>
               </div>
@@ -937,11 +937,11 @@
             <section class="baseline-card">
               <h3>血氧个人基线</h3>
               <div class="baseline-fields">
-                <label><span>偏低参考 p10</span><input id="spo2-p10" type="number" min="0" max="100" step="1" value="95" /></label>
-                <label><span>中位血氧 p50</span><input id="spo2-p50" type="number" min="0" max="100" step="1" value="96" /></label>
-                <label><span>偏高参考 p90</span><input id="spo2-p90" type="number" min="0" max="100" step="1" value="98" /></label>
-                <label><span>夜间平均血氧</span><input id="spo2-night-avg" type="number" min="0" max="100" step="1" value="95" /></label>
-                <label><span>日常平均血氧</span><input id="spo2-avg" type="number" min="0" max="100" step="1" value="96" /></label>
+                <label><span>偏低参考血氧</span><input id="spo2-p10" type="number" min="0" max="100" step="0.1" value="95" /></label>
+                <label><span>正常参考血氧</span><input id="spo2-p50" type="number" min="0" max="100" step="0.1" value="96" /></label>
+                <label><span>偏高参考血氧</span><input id="spo2-p90" type="number" min="0" max="100" step="0.1" value="98" /></label>
+                <label><span>夜间平均血氧</span><input id="spo2-night-avg" type="number" min="0" max="100" step="0.1" value="95" /></label>
+                <label><span>日常平均血氧</span><input id="spo2-avg" type="number" min="0" max="100" step="0.1" value="96" /></label>
               </div>
               <div class="form-actions">
                 <button id="save-spo2-baseline" class="primary" type="button">保存血氧基线</button>
@@ -952,7 +952,7 @@
               <h3>卫生间停留基线</h3>
               <div class="baseline-fields">
                 <label><span>平均停留时间（秒）</span><input id="bathroom-stay-avg" type="number" min="0" step="1" value="180" /></label>
-                <label><span>90% 情况不超过（秒）</span><input id="bathroom-stay-p90" type="number" min="0" step="1" value="60" /></label>
+                <label><span>停留参考上限（秒）</span><input id="bathroom-stay-p90" type="number" min="0" step="1" value="60" /></label>
                 <label><span>样本数量</span><input id="bathroom-sample-count" type="number" min="1" step="1" value="1" /></label>
               </div>
               <div class="form-actions">
@@ -967,7 +967,7 @@
                 <label><span>生成组数</span><input id="auto-vital-count" type="number" min="24" max="5000" step="1" value="3000" /></label>
                 <label><span>逻辑采样间隔（秒）</span><input id="auto-vital-interval" type="number" min="1" max="60" step="1" value="5" /></label>
               </div>
-              <p class="muted">生成正常心率/血氧 MQTT 数据，Edge 先整理为行为片段，再重算个人基线。</p>
+              <p class="muted">生成正常心率/血氧 MQTT 数据，Edge 整理为行为片段后按“最低/平均/最高边界外扩”重算个人基线。</p>
               <div class="form-actions">
                 <button id="auto-vitals-baseline" class="primary" type="button">生成 3000 组并统计基线</button>
               </div>
@@ -977,9 +977,9 @@
               <div class="baseline-fields">
                 <label><span>停留记录次数</span><input id="auto-bathroom-count" type="number" min="3" max="80" step="1" value="20" /></label>
                 <label><span>平均停留目标（秒）</span><input id="auto-bathroom-avg" type="number" min="10" max="3600" step="1" value="180" /></label>
-                <label><span>90% 不超过目标（秒）</span><input id="auto-bathroom-p90" type="number" min="20" max="7200" step="1" value="480" /></label>
+                <label><span>最长停留目标（秒）</span><input id="auto-bathroom-p90" type="number" min="20" max="7200" step="1" value="480" /></label>
               </div>
-              <p class="muted">发送多段进入/离开卫生间 presence 轨迹，Edge 生成 bathroom_stay 行为片段后重算基线。</p>
+              <p class="muted">发送多段进入/离开卫生间 presence 轨迹，Edge 生成 bathroom_stay 行为片段后按“历史最长停留 + 10秒”重算基线。</p>
               <div class="form-actions">
                 <button id="auto-bathroom-baseline" class="primary" type="button">生成卫生间停留基线</button>
               </div>
@@ -989,7 +989,7 @@
               <div class="baseline-fields">
                 <label><span>本次停留时间（秒）</span><input id="demo-bathroom-duration" type="number" min="10" max="7200" step="1" value="600" /></label>
               </div>
-              <p class="muted">输入一次停留时长，系统发送 open bathroom_stay 片段；超过当前 p90 后应生成 Candidate。</p>
+              <p class="muted">输入一次停留时长，系统发送 open bathroom_stay 片段；超过当前停留参考上限后应生成 Candidate。</p>
               <div class="form-actions">
                 <button id="demo-bathroom-stay" class="primary" type="button">发送一次停留验证</button>
               </div>
@@ -1312,7 +1312,7 @@
           name: "心率基线异常",
           event: "vital_baseline_anomaly",
           risk: "P2",
-          reason: "心率约 115 bpm，未达到 P1 硬规则，但高于个人 p90，创建 Candidate 交给本地模型复核。",
+          reason: "心率约 115 bpm，未达到 P1 硬规则，但高于个人偏高参考，创建 Candidate 交给本地模型复核。",
           vital: { heart_rate: 115, spo2: 96, systolic_bp: 136, diastolic_bp: 84, body_temperature: 36.7 },
           env: { room: "living_room", temperature: 25.0, humidity: 50.0, co2_ppm: 920, gas_ppm: 0, smoke_ppm: 0 },
         },
@@ -1320,7 +1320,7 @@
           name: "血氧基线异常",
           event: "vital_baseline_anomaly",
           risk: "P2",
-          reason: "血氧约 94%，未达到 P1/P0 硬规则，但低于个人 p10，创建 Candidate 交给本地模型复核。",
+          reason: "血氧约 94%，未达到 P1/P0 硬规则，但低于个人偏低参考，创建 Candidate 交给本地模型复核。",
           vital: { heart_rate: 86, spo2: 94, systolic_bp: 128, diastolic_bp: 80, body_temperature: 36.6 },
           env: { room: "living_room", temperature: 25.0, humidity: 50.0, co2_ppm: 920, gas_ppm: 0, smoke_ppm: 0 },
         },
@@ -1328,7 +1328,7 @@
           name: "卫生间停留过长",
           event: "bathroom_stay_anomaly",
           risk: "P2",
-          reason: "老人持续停留在卫生间，超过个人 p90 后创建 Candidate 交给本地模型复核。",
+          reason: "老人持续停留在卫生间，超过个人停留参考上限后创建 Candidate 交给本地模型复核。",
           vital: { heart_rate: 78, spo2: 96, systolic_bp: 128, diastolic_bp: 80, body_temperature: 36.6 },
           env: { room: "bathroom", temperature: 24.0, humidity: 58.0, co2_ppm: 780, gas_ppm: 0, smoke_ppm: 0 },
         },
@@ -1401,7 +1401,7 @@
         heart_rate_abnormal: "心率在触发点前后升高，高于 130 bpm 后触发 heart_rate_abnormal P1。",
         heart_rate_baseline_anomaly: "心率在触发点后维持约 115 bpm，不触发硬规则；8090 创建 vital_baseline_anomaly Candidate，由本地模型判断是否升级为 P2。",
         spo2_baseline_anomaly: "血氧在触发点后维持约 94%，不触发 spo2_low P1/P0；8090 创建 vital_baseline_anomaly Candidate，由本地模型判断是否升级为 P2。",
-        bathroom_stay_anomaly_demo: "触发点后持续发送卫生间 presence=true；超过 bathroom_stay_p90_sec 后生成 bathroom_stay_anomaly Candidate。",
+        bathroom_stay_anomaly_demo: "触发点后持续发送卫生间 presence=true；超过卫生间停留参考上限后生成 bathroom_stay_anomaly Candidate。",
         suspected_fall: "在触发点发布 suspected_fall 视觉事件，触发 P1；无关键帧时本地视觉模型会安全降级。",
         long_static: "在触发点发布 long_static 视觉事件，触发 P2；用于模拟一级视觉检测器上报。",
         co2_high: "CO2 在触发点前后升高，超过 1500 ppm 后触发 co2_high P3。",
@@ -1728,7 +1728,7 @@
         const triggerSecond = Number($("scenario-trigger").value);
         $("scenario-trigger-label").textContent = `第 ${triggerSecond} 秒`;
         const methodText = eventType === "bathroom_stay_anomaly_demo"
-          ? `生成卫生间持续停留 MQTT 数据，逻辑采样每 5 秒 1 组；从第 ${triggerSecond} 秒开始保持 bathroom 有人，直到超过卫生间 p90 后自动停止。真实演示模式每 2 秒发送 1 组，快速模式每组约 100ms。`
+          ? `生成卫生间持续停留 MQTT 数据，逻辑采样每 5 秒 1 组；从第 ${triggerSecond} 秒开始保持 bathroom 有人，直到超过卫生间停留参考上限后自动停止。真实演示模式每 2 秒发送 1 组，快速模式每组约 100ms。`
           : `生成 2 分钟基础 MQTT 数据，每 5 秒 1 组共 24 组，并在第 ${triggerSecond} 秒向 ${deviceLabel(eventRoom)} 注入 ${riskEventLabel(eventType)}；真实演示模式每 2 秒发送 1 组，快速模式每组约 100ms。`;
         setText(
           "scenario-method",

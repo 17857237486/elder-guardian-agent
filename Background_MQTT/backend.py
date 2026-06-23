@@ -446,17 +446,17 @@ def vital_metric_preview(sample_count: int) -> dict[str, Any]:
             "min": min(heart_values),
             "max": max(heart_values),
             "avg": round(sum(heart_values) / len(heart_values), 1),
-            "p10": percentile(heart_values, 0.1),
-            "p50": percentile(heart_values, 0.5),
-            "p90": percentile(heart_values, 0.9),
+            "low_reference": int(round(min(heart_values) - 1)),
+            "normal_reference": int(round(sum(heart_values) / len(heart_values))),
+            "high_reference": int(round(max(heart_values) + 1)),
         },
         "spo2": {
             "min": min(spo2_values),
             "max": max(spo2_values),
             "avg": round(sum(spo2_values) / len(spo2_values), 1),
-            "p10": percentile(spo2_values, 0.1),
-            "p50": percentile(spo2_values, 0.5),
-            "p90": percentile(spo2_values, 0.9),
+            "low_reference": round(min(spo2_values) - 0.5, 1),
+            "normal_reference": round(sum(spo2_values) / len(spo2_values), 1),
+            "high_reference": round(max(spo2_values) + 0.5, 1),
         },
     }
 
@@ -589,7 +589,7 @@ def publish_risk_signal(event_type: str, elder_id: str, room: str) -> int:
     return 0
 
 
-async def current_vital_baseline_value(elder_id: str, baseline_type: str, metric_key: str, default: int) -> int:
+async def current_vital_baseline_value(elder_id: str, baseline_type: str, metric_key: str, default: float) -> float:
     try:
         async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
             response = await client.get(f"{EDGE_API_BASE}/api/v2/personal-baselines", params={"elder_id": elder_id})
@@ -606,15 +606,15 @@ async def current_vital_baseline_value(elder_id: str, baseline_type: str, metric
     return default
 
 
-async def current_heart_rate_p90(elder_id: str) -> int:
+async def current_heart_rate_p90(elder_id: str) -> float:
     return await current_vital_baseline_value(elder_id, "heart_rate_daily", "p90", 100)
 
 
-async def current_spo2_p10(elder_id: str) -> int:
+async def current_spo2_p10(elder_id: str) -> float:
     return await current_vital_baseline_value(elder_id, "spo2_daily", "p10", 95)
 
 
-async def current_bathroom_stay_p90(elder_id: str) -> int:
+async def current_bathroom_stay_p90(elder_id: str) -> float:
     return await current_vital_baseline_value(elder_id, "bathroom_routine", "bathroom_stay_p90_sec", 60)
 
 
@@ -1119,7 +1119,7 @@ async def auto_bathroom_baseline(request: AutoBathroomBaselineRequest) -> dict[s
     preview = {
         "stay_count": len(durations),
         "avg_stay_sec": round(sum(durations) / len(durations), 1),
-        "p90_stay_sec": percentile([float(item) for item in durations], 0.9),
+        "reference_limit_sec": max(durations) + 10,
         "durations": durations,
     }
     await broadcast({"type": "auto_baseline", "data": {"kind": "bathroom", "preview": preview, "rebuild": rebuild}})

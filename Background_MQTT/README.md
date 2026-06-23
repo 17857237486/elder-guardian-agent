@@ -136,6 +136,15 @@ python Background_MQTT\generate_scenario_data.py --scene morning_getup --host lo
 -> personal_baselines heart_rate_daily / spo2_daily
 ```
 
+自动统计时按正常历史数据的边界外扩生成参考值，而不是按 10%/90% 分位数生成告警线：
+
+- 心率偏低参考：历史最低心率 - 1，取整
+- 心率正常参考：历史平均心率，取整
+- 心率偏高参考：历史最高心率 + 1，取整
+- 血氧偏低参考：历史最低血氧 - 0.5
+- 血氧正常参考：历史平均血氧，保留 1 位小数
+- 血氧偏高参考：历史最高血氧 + 0.5
+
 自动卫生间停留基线默认生成多次进入/离开卫生间的 presence 轨迹，Edge 会整理为 `bathroom_stay` 行为片段，再统计 `bathroom_routine`：
 
 ```text
@@ -144,7 +153,7 @@ home_environment_snapshot_v1 presence
 -> bathroom_routine 个人基线
 ```
 
-`卫生间停留验证` 可以手动输入一次停留时间。系统会发送一个 open 的 bathroom presence 片段；如果持续时间超过当前 `bathroom_stay_p90_sec`，Edge 会生成 `bathroom_stay_anomaly` Candidate，并交给 v2 Orchestrator 本地模型复核。
+卫生间停留参考上限按 `历史最长停留时间 + 10 秒` 生成，并继续保存在兼容字段 `bathroom_stay_p90_sec` 中。`卫生间停留验证` 可以手动输入一次停留时间。系统会发送一个 open 的 bathroom presence 片段；如果持续时间超过当前停留参考上限，Edge 会生成 `bathroom_stay_anomaly` Candidate，并交给 v2 Orchestrator 本地模型复核。
 
 手动录入页面会展示当前 v2 真实生效的阈值：
 
@@ -160,9 +169,9 @@ home_environment_snapshot_v1 presence
 - `正常状态`：P4 正常记录
 - `血氧异常`：血氧低于 88%，触发 `spo2_low` 紧急风险
 - `心率异常`：心率高于 130，触发 `heart_rate_abnormal`
-- `心率基线异常`：心率约 115 bpm，不触发硬规则；创建 `vital_baseline_anomaly` Candidate，由本地模型复核是否升级为 P2
-- `血氧基线异常`：血氧约 94%，不触发 `spo2_low` 硬规则；创建 `vital_baseline_anomaly` Candidate，由本地模型复核是否升级为 P2
-- `卫生间停留过长`：持续发送整屋环境快照和 bathroom presence，超过手动 `bathroom_stay_p90_sec` 后创建 `bathroom_stay_anomaly` Candidate
+- `心率基线异常`：心率约 115 bpm，不触发硬规则；高于个人偏高参考后创建 `vital_baseline_anomaly` Candidate，由本地模型复核是否升级为 P2
+- `血氧基线异常`：血氧约 94%，不触发 `spo2_low` 硬规则；低于个人偏低参考后创建 `vital_baseline_anomaly` Candidate，由本地模型复核是否升级为 P2
+- `卫生间停留过长`：持续发送整屋环境快照和 bathroom presence，超过手动停留参考上限后创建 `bathroom_stay_anomaly` Candidate
 - `CO2 偏高`：CO2 高于 1500 ppm，触发 `co2_high`
 - `燃气泄漏`：燃气高于 100 ppm，触发 `gas_leak` P0 告警
 
@@ -177,9 +186,9 @@ home_environment_snapshot_v1 presence
 
 这种方式会先生成基础 MQTT 数据，再在触发点前后向指定房间平滑注入风险事件。例如 `kitchen + 燃气异常 + 第 60 秒` 会让厨房燃气数据从低值逐步升高，并在触发点后超过 P0 阈值，而不是突然发送一条孤立异常值。
 
-`P2 卫生间停留过长（Candidate复核）` 是持续发送模式：触发点后持续发送 `home_environment_snapshot_v1`，其中 `bathroom.presence=true`、其他房间为 false；发送到 `bathroom_stay_p90_sec + 15s` 后自动停止，Edge MCP 生成 open `bathroom_stay` 并在超过个人 p90 后创建 Candidate。
+`P2 卫生间停留过长（Candidate复核）` 是持续发送模式：触发点后持续发送 `home_environment_snapshot_v1`，其中 `bathroom.presence=true`、其他房间为 false；发送到 `卫生间停留参考上限 + 15s` 后自动停止，Edge MCP 生成 open `bathroom_stay` 并在超过个人参考上限后创建 Candidate。
 
-未勾选 `按真实时间发送` 时，页面使用快速演示模式，每组数据约间隔 100ms 发布；勾选后网页每 2 秒发布 1 组，但 MQTT 样本时间戳仍按 5 秒采样。普通风险事件默认 24 组；卫生间停留事件按个人 p90 自动延长。
+未勾选 `按真实时间发送` 时，页面使用快速演示模式，每组数据约间隔 100ms 发布；勾选后网页每 2 秒发布 1 组，但 MQTT 样本时间戳仍按 5 秒采样。普通风险事件默认 24 组；卫生间停留事件按个人停留参考上限自动延长。
 
 页面展示的 v2 处理链路为：
 
