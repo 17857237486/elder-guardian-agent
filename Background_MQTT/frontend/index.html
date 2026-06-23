@@ -1142,15 +1142,15 @@
               <div class="baseline-fields">
                 <label><span>本次停留时间（秒）</span><input id="demo-bathroom-duration" type="number" min="10" max="7200" step="1" value="600" /></label>
               </div>
-              <p class="muted">输入一次停留时长，系统发送 open bathroom_stay 片段；超过当前停留参考上限后应生成 Candidate。</p>
+              <p class="muted">输入一次停留时长，系统会按逻辑 5 秒 1 组发送整屋环境数据；每组数据都包含四个房间红外 presence，用这一次流程证明“老人持续在卫生间”如何形成 open bathroom_stay。</p>
               <div class="form-actions">
-                <button id="demo-bathroom-stay" class="primary" type="button">发送一次停留验证</button>
+                <button id="demo-bathroom-stay" class="primary" type="button">发送一次红外停留流程</button>
               </div>
             </section>
           </div>
           <section class="presence-monitor" aria-label="红外卫生间停留验证">
             <h3>红外卫生间停留验证</h3>
-            <p class="muted">红外传感器输出只用于判断老人当前所在房间和卫生间停留时长；超过个人停留参考上限后，Edge 会生成 bathroom_stay_anomaly Candidate。</p>
+            <p class="muted">这里展示的是一次演示流程：整屋环境 MQTT 数据里包含四房间红外 presence；当 bathroom=true 持续出现时，系统计算老人本次卫生间停留时长。批量生成基线的 20 次历史停留不会占用这个流程展示。</p>
             <div class="presence-summary">
               <div><span>当前老人所在房间</span><strong id="pir-current-room">--</strong></div>
               <div><span>卫生间红外状态</span><strong id="pir-bathroom-present">--</strong></div>
@@ -2239,13 +2239,15 @@
       async function runBathroomStayDemo() {
         const button = $("demo-bathroom-stay");
         button.disabled = true;
-        setSubmitStatus("baseline-submit-status", "正在发送一次卫生间停留验证");
+        setSubmitStatus("baseline-submit-status", "正在按 5 秒逻辑间隔发送整屋环境 presence 数据");
         try {
           const result = await postJson("/api/bathroom-stay/demo", {
             elder_id: $("baseline-elder").value.trim() || "elder_001",
             duration_seconds: Number($("demo-bathroom-duration").value || 600),
+            logical_interval_sec: 5,
           });
-          setSubmitStatus("baseline-submit-status", `卫生间停留验证已发送：${summarizeBaselineRebuild(result)}`, "ok");
+          if (result.bathroom_stay_monitor) setBathroomStayMonitor(result.bathroom_stay_monitor);
+          setSubmitStatus("baseline-submit-status", `红外停留流程已发送：${result.published_snapshots ?? "--"} 组整屋环境数据；${summarizeBaselineRebuild(result)}`, "ok");
         } catch (error) {
           setSubmitStatus("baseline-submit-status", `停留验证失败：${error.message}`, "error");
         } finally {

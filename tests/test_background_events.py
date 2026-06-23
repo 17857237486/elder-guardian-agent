@@ -123,6 +123,21 @@ class BackgroundEventTests(unittest.TestCase):
         self.assertIn("pir-current-room", html)
         self.assertIn("setBathroomStayMonitor(message.bathroom_stay_monitor)", html)
 
+    def test_bathroom_demo_sends_continuous_home_environment_snapshots(self) -> None:
+        backend = (ROOT / "Background_MQTT" / "backend.py").read_text(encoding="utf-8")
+        html = (ROOT / "Background_MQTT" / "frontend" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("logical_interval_sec: int = Field(default=5", backend)
+        self.assertIn("for index in range(steps + 1):", backend)
+        self.assertIn("home_presence_snapshot(request.elder_id, \"bathroom\", observed_at, source=\"bathroom_stay_demo\")", backend)
+        self.assertIn("\"published_snapshots\": published", backend)
+        self.assertIn("批量生成基线的 20 次历史停留不会占用这个流程展示", html)
+        self.assertIn("logical_interval_sec: 5", html)
+
+    def test_bathroom_baseline_generator_does_not_take_over_demo_monitor(self) -> None:
+        backend = (ROOT / "Background_MQTT" / "backend.py").read_text(encoding="utf-8")
+        self.assertIn('if env_payload.get("source") == "bathroom_baseline_generator":', backend)
+        self.assertIn("return bathroom_stay_monitor_snapshot()", backend)
+
 
 if __name__ == "__main__":
     unittest.main()

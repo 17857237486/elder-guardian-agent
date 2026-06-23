@@ -139,6 +139,7 @@ class AutoBathroomBaselineRequest(BaseModel):
 class BathroomStayDemoRequest(BaseModel):
     elder_id: str = "elder_001"
     duration_seconds: int = Field(default=600, ge=10, le=7200)
+    logical_interval_sec: int = Field(default=5, ge=1, le=60)
     rebuild_delay_sec: float = Field(default=1.0, ge=0.0, le=10.0)
 
 
@@ -315,6 +316,8 @@ def _presence_event_label(room_presence: dict[str, bool]) -> str:
 
 def update_bathroom_stay_monitor(env_payload: dict[str, Any]) -> dict[str, Any]:
     init_bathroom_stay_monitor()
+    if env_payload.get("source") == "bathroom_baseline_generator":
+        return bathroom_stay_monitor_snapshot()
     rooms = env_payload.get("rooms") if isinstance(env_payload.get("rooms"), dict) else {}
     room_presence = {
         room: bool((rooms.get(room) or {}).get("presence"))
@@ -1310,10 +1313,27 @@ async def auto_bathroom_baseline(request: AutoBathroomBaselineRequest) -> dict[s
 @app.post("/api/bathroom-stay/demo")
 async def bathroom_stay_demo(request: BathroomStayDemoRequest) -> dict[str, Any]:
     ensure_mqtt_connected()
+    bathroom_stay_monitor["bathroom_reference_limit_sec"] = await bathroom_reference_limit_sec(request.elder_id)
     now = datetime.now(timezone.utc)
     start_at = now - timedelta(seconds=request.duration_seconds)
-    publish_json(elder_sensor_env(request.elder_id), home_presence_snapshot(request.elder_id, "living_room", start_at - timedelta(seconds=5), source="bathroom_stay_demo"))
-    publish_json(elder_sensor_env(request.elder_id), home_presence_snapshot(request.elder_id, "bathroom", start_at, source="bathroom_stay_demo"))
+    published = 0
+    flow_preview: list[dict[str, Any]] = []
+    pre_entry = home_presence_snapshot(request.elder_id, "living_room", start_at - timedelta(seconds=request.logical_interval_sec), source="bathroom_stay_demo")
+    publish_json(elder_sensor_env(request.elder_id), pre_entry)
+    flow_preview.append({"room": "living_room", "observed_at": pre_entry["observed_at"], "elapsed_sec": 0})
+    published += 1
+    steps = max(1, int(request.duration_seconds // request.logical_interval_sec))
+    for index in range(steps + 1):
+        observed_at = start_at + timedelta(seconds=index * request.logical_interval_sec)
+        if observed_at > now:
+            observed_at = now
+        snapshot = home_presence_snapshot(request.elder_id, "bathroom", observed_at, source="bathroom_stay_demo")
+        publish_json(elder_sensor_env(request.elder_id), snapshot)
+        if index in {0, steps} or index % max(1, steps // 4) == 0:
+            flow_preview.append({"room": "bathroom", "observed_at": snapshot["observed_at"], "elapsed_sec": int((observed_at - start_at).total_seconds())})
+        published += 1
+        if observed_at >= now:
+            break
     if request.rebuild_delay_sec:
         await asyncio.sleep(request.rebuild_delay_sec)
     try:
@@ -1321,8 +1341,30 @@ async def bathroom_stay_demo(request: BathroomStayDemoRequest) -> dict[str, Any]
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail={"message": "edge baseline rebuild failed", "error": str(exc)})
     bathroom_stay_monitor["bathroom_reference_limit_sec"] = await bathroom_reference_limit_sec(request.elder_id)
-    await broadcast({"type": "bathroom_stay_demo", "data": {"duration_seconds": request.duration_seconds, "rebuild": rebuild}})
-    return {"ok": True, "elder_id": request.elder_id, "duration_seconds": request.duration_seconds, "rebuild": rebuild}
+    monitor = bathroom_stay_monitor_snapshot()
+    await broadcast(
+        {
+            "type": "bathroom_stay_demo",
+            "data": {
+                "duration_seconds": request.duration_seconds,
+                "logical_interval_sec": request.logical_interval_sec,
+                "published_snapshots": published,
+                "flow_preview": flow_preview,
+                "rebuild": rebuild,
+            },
+            "bathroom_stay_monitor": monitor,
+        }
+    )
+    return {
+        "ok": True,
+        "elder_id": request.elder_id,
+        "duration_seconds": request.duration_seconds,
+        "logical_interval_sec": request.logical_interval_sec,
+        "published_snapshots": published,
+        "flow_preview": flow_preview,
+        "bathroom_stay_monitor": monitor,
+        "rebuild": rebuild,
+    }
 
 
 @app.post("/api/device/command")
