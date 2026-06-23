@@ -240,7 +240,16 @@ class MqttBridge:
                 for record in records:
                     asyncio.create_task(self._forward_to_orchestrator(record))
             return
-        observation = RawObservationV2(elder_id=elder_id, kind=kind, source="mqtt", topic=topic, payload=data)
+        observation_payload = {
+            "elder_id": elder_id,
+            "kind": kind,
+            "source": "mqtt",
+            "topic": topic,
+            "payload": data,
+        }
+        if data.get("observed_at") or data.get("timestamp"):
+            observation_payload["observed_at"] = data.get("observed_at") or data.get("timestamp")
+        observation = RawObservationV2(**observation_payload)
         with SessionLocal() as db:
             record = repository.create_observation(db, observation)
         if settings.orchestrator_url:

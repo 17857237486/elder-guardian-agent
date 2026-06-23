@@ -495,7 +495,7 @@ async def rebuild_edge_baselines(elder_id: str, baseline_types: list[str] | None
     payload: dict[str, Any] = {"elder_id": elder_id}
     if baseline_types:
         payload["baseline_types"] = baseline_types
-    async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
+    async with httpx.AsyncClient(timeout=180, trust_env=False) as client:
         response = await client.post(f"{EDGE_API_BASE}/api/v2/baselines/rebuild", json=payload)
         response.raise_for_status()
         return response.json()
