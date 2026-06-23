@@ -221,7 +221,7 @@ services:
       MQTT_PORT: 1883
       GUARDIAN_CORE_URL: http://guardian-core:8000
       ELDER_ID: ${ELDER_ID:-elder_001}
-      BACKGROUND_MAX_RECORDS: ${BACKGROUND_MAX_RECORDS:-1000}
+      BACKGROUND_MAX_RECORDS: ${BACKGROUND_MAX_RECORDS:-3100}
     ports: ["${BACKGROUND_PUBLIC_PORT:-8090}:8090"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/api/health', timeout=3)"]
