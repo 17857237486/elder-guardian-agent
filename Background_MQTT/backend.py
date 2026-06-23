@@ -143,6 +143,14 @@ class BathroomStayDemoRequest(BaseModel):
     rebuild_delay_sec: float = Field(default=1.0, ge=0.0, le=10.0)
 
 
+class DailyHealthSummaryProxyRequest(BaseModel):
+    elder_id: str = "elder_001"
+    date: str | None = None
+    timezone: str = "Asia/Shanghai"
+    use_cloud: bool = True
+    generated_by: str = "background_mqtt"
+
+
 class VisionCaptureProxyRequest(BaseModel):
     elder_id: str = "elder_001"
     camera_id: str = "living_room"
@@ -1239,6 +1247,33 @@ async def rebuild_baselines(payload: dict[str, Any] | None = None) -> dict[str, 
         return await rebuild_edge_baselines(elder_id)
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail={"message": "edge baseline rebuild failed", "error": str(exc)})
+
+
+@app.get("/api/daily-health-summary")
+async def list_daily_health_summary(elder_id: str = ELDER_ID, limit: int = 7) -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+            response = await client.get(
+                f"{EDGE_API_BASE}/api/v2/daily-health-summaries",
+                params={"elder_id": elder_id, "limit": limit},
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail={"message": "edge daily health summary query failed", "error": str(exc)})
+
+
+@app.post("/api/daily-health-summary/generate")
+async def generate_daily_health_summary(request: DailyHealthSummaryProxyRequest) -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(timeout=240, trust_env=False) as client:
+            response = await client.post(f"{EDGE_API_BASE}/api/v2/daily-health-summaries/generate", json=request.model_dump())
+            response.raise_for_status()
+            data = response.json()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail={"message": "edge daily health summary generation failed", "error": str(exc)})
+    await broadcast({"type": "daily_health_summary", "data": data})
+    return data
 
 
 @app.post("/api/baselines/auto-vitals")

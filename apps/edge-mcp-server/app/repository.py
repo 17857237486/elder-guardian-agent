@@ -13,6 +13,7 @@ from guardian_shared.v2 import (
     DeviceReadingV2,
     AiReviewCandidateV2,
     BehaviorSegmentV2,
+    DailyHealthSummaryV2,
     HmiPromptV2,
     HmiResponseV2,
     NormalizedEventV2,
@@ -65,6 +66,8 @@ def row_to_dict(row: Any) -> dict[str, Any]:
         "baseline_refs_json",
         "units_json",
         "state_json",
+        "local_stats_json",
+        "cloud_summary_json",
     ]:
         if key in data:
             base = key.replace("_json", "")
@@ -664,6 +667,70 @@ def list_hmi_responses(db: Session, elder_id: str, limit: int = 10) -> list[dict
     return [row_to_dict(row) for row in rows]
 
 
+def upsert_daily_health_summary(db: Session, summary: DailyHealthSummaryV2) -> dict[str, Any]:
+    obj = (
+        db.query(models.DailyHealthSummaryModel)
+        .filter(
+            models.DailyHealthSummaryModel.elder_id == summary.elder_id,
+            models.DailyHealthSummaryModel.summary_date == summary.summary_date,
+            models.DailyHealthSummaryModel.timezone == summary.timezone,
+        )
+        .first()
+    )
+    if obj is None:
+        obj = models.DailyHealthSummaryModel(
+            summary_id=summary.summary_id,
+            elder_id=summary.elder_id,
+            summary_date=summary.summary_date,
+            timezone=summary.timezone,
+            created_at=summary.created_at,
+        )
+        db.add(obj)
+    obj.status = summary.status
+    obj.local_stats_json = _json(summary.local_stats)
+    obj.cloud_summary_json = _json(summary.cloud_summary)
+    obj.cloud_error = summary.cloud_error
+    obj.risk_level = str(summary.risk_level)
+    obj.generated_by = summary.generated_by
+    obj.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(obj)
+    return row_to_dict(obj)
+
+
+def update_daily_health_summary(db: Session, summary_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    obj = db.query(models.DailyHealthSummaryModel).filter(models.DailyHealthSummaryModel.summary_id == summary_id).first()
+    if obj is None:
+        return None
+    for field in ["status", "cloud_error", "risk_level", "generated_by"]:
+        if field in payload:
+            setattr(obj, field, payload[field])
+    if "local_stats" in payload:
+        obj.local_stats_json = _json(payload["local_stats"])
+    if "cloud_summary" in payload:
+        obj.cloud_summary_json = _json(payload["cloud_summary"])
+    obj.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(obj)
+    return row_to_dict(obj)
+
+
+def list_daily_health_summaries(db: Session, elder_id: str, limit: int = 7) -> list[dict[str, Any]]:
+    rows = (
+        db.query(models.DailyHealthSummaryModel)
+        .filter(models.DailyHealthSummaryModel.elder_id == elder_id)
+        .order_by(desc(models.DailyHealthSummaryModel.summary_date), desc(models.DailyHealthSummaryModel.updated_at))
+        .limit(limit)
+        .all()
+    )
+    return [row_to_dict(row) for row in rows]
+
+
+def get_daily_health_summary(db: Session, summary_id: str) -> dict[str, Any] | None:
+    row = db.query(models.DailyHealthSummaryModel).filter(models.DailyHealthSummaryModel.summary_id == summary_id).first()
+    return row_to_dict(row) if row else None
+
+
 def clear_demo_runtime_history(
     db: Session,
     elder_id: str,
@@ -737,4 +804,5 @@ def dashboard_state(db: Session, elder_id: str) -> dict[str, Any]:
         "hmi_responses": list_hmi_responses(db, elder_id=elder_id, limit=10),
         "current_hmi_prompt": latest_waiting_hmi_prompt(db, elder_id=elder_id),
         "alerts": list_alerts(db, elder_id=elder_id),
+        "daily_health_summaries": list_daily_health_summaries(db, elder_id=elder_id, limit=7),
     }

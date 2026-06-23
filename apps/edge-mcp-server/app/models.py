@@ -244,3 +244,21 @@ class HmiResponseModel(Base):
     response_text: Mapped[str] = mapped_column(Text)
     outcome: Mapped[str] = mapped_column(String(64), default="recorded", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+
+
+class DailyHealthSummaryModel(Base):
+    __tablename__ = "v2_daily_health_summaries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    summary_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    elder_id: Mapped[str] = mapped_column(String(64), index=True)
+    summary_date: Mapped[str] = mapped_column(String(32), index=True)
+    timezone: Mapped[str] = mapped_column(String(64), default="Asia/Shanghai")
+    status: Mapped[str] = mapped_column(String(64), default="pending", index=True)
+    local_stats_json: Mapped[str] = mapped_column(Text, default="{}")
+    cloud_summary_json: Mapped[str] = mapped_column(Text, default="{}")
+    cloud_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    risk_level: Mapped[str] = mapped_column(String(8), default="P4", index=True)
+    generated_by: Mapped[str] = mapped_column(String(64), default="manual", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)

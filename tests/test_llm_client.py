@@ -465,6 +465,69 @@ class LLMClientParserTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["rejected_model_content"], "not valid JSON")
 
+    def test_cloud_daily_health_summary_completes_without_device_control(self) -> None:
+        captured: dict[str, object] = {}
+        cloud_output = {
+            "overall_status": "今日整体平稳",
+            "risk_level": "P2",
+            "key_findings": ["心率血氧稳定", "卫生间停留未超出参考"],
+            "family_message": "今天整体平稳，建议保持观察。",
+            "recommended_followup": ["晚间确认饮水和休息"],
+            "data_quality_note": "生命体征样本充足",
+        }
+
+        class FakeResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                return {"choices": [{"message": {"content": json.dumps(cloud_output, ensure_ascii=False)}}]}
+
+        class FakeClient:
+            def __init__(self, **_: object) -> None:
+                pass
+
+            async def __aenter__(self) -> "FakeClient":
+                return self
+
+            async def __aexit__(self, *_: object) -> None:
+                return None
+
+            async def post(self, _: str, **kwargs: object) -> FakeResponse:
+                captured.update(kwargs)
+                return FakeResponse()
+
+        fake_settings = SimpleNamespace(
+            cloud_llm_enabled=True,
+            cloud_llm_base_url="https://example.invalid/v1",
+            cloud_llm_api_key="secret",
+            cloud_llm_model="qwen3-vl-plus",
+            cloud_llm_timeout_sec=120,
+            llm_max_tokens=512,
+        )
+        with (
+            patch("app.llm_client.settings", fake_settings),
+            patch("app.llm_client.httpx.AsyncClient", FakeClient),
+        ):
+            result = asyncio.run(
+                CloudLLMClient().daily_health_summary(
+                    {
+                        "elder_id": "elder_001",
+                        "summary_date": "2026-06-23",
+                        "risk_level": "P2",
+                        "local_stats": {"events": {"highest_risk": "P2"}, "vitals": {"heart_rate": {"count": 24}}},
+                    }
+                )
+            )
+
+        body = captured["json"]
+        self.assertFalse(body["enable_thinking"])
+        self.assertEqual(body["response_format"], {"type": "json_object"})
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["risk_level"], "P2")
+        self.assertEqual(result["family_message"], "今天整体平稳，建议保持观察。")
+        self.assertEqual(result["model"], "qwen3-vl-plus")
+
     def test_cloud_five_frame_review_completes(self) -> None:
         captured: dict[str, object] = {}
         cloud_output = {

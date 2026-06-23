@@ -2,18 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
 from guardian_shared.v2 import (
     ActionRequestV2,
     AiReviewCandidateV2,
     AlertRequestV2,
     BehaviorSegmentV2,
+    DailyHealthSummaryV2,
     DeviceReadingV2,
     HmiPromptV2,
     HmiResponseV2,
@@ -35,6 +38,8 @@ from app.tool_service import EdgeToolService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
+RISK_ORDER = {"P4": 0, "P3": 1, "P2": 2, "P1": 3, "P0": 4}
+SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 app = FastAPI(title="Elder Guardian Edge MCP Server", version="0.1.0")
 app.add_middleware(
@@ -50,6 +55,14 @@ behavior_worker = BehaviorAnalyticsWorker()
 mcp = build_mcp(tool_service)
 if mcp is not None and hasattr(mcp, "streamable_http_app"):
     app.mount("/mcp", mcp.streamable_http_app())
+
+
+class DailyHealthSummaryRequest(BaseModel):
+    elder_id: str = Field(default_factory=lambda: settings.elder_id)
+    date: str | None = None
+    timezone: str = "Asia/Shanghai"
+    use_cloud: bool = True
+    generated_by: str = "manual"
 
 
 @app.on_event("startup")
@@ -134,6 +147,187 @@ async def forward_candidate_to_orchestrator(record: dict[str, Any]) -> None:
         logger.exception("Failed to forward AI review candidate to orchestrator")
 
 
+def _parse_dt(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+def _summary_day_range(summary_date: str | None, tz_name: str) -> tuple[str, ZoneInfo, datetime, datetime]:
+    tz = ZoneInfo(tz_name or "Asia/Shanghai")
+    if summary_date:
+        day = date.fromisoformat(summary_date)
+    else:
+        day = datetime.now(tz).date()
+    start = datetime.combine(day, time.min, tzinfo=tz)
+    end = datetime.combine(day, time.max, tzinfo=tz)
+    return day.isoformat(), tz, start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+def _in_range(value: Any, start: datetime, end: datetime) -> bool:
+    parsed = _parse_dt(value)
+    return bool(parsed and start <= parsed.astimezone(timezone.utc) <= end)
+
+
+def _avg(values: list[float]) -> float | None:
+    return round(sum(values) / len(values), 1) if values else None
+
+
+def _risk_max(values: list[str]) -> str:
+    result = "P4"
+    for value in values:
+        level = str(value or "P4")
+        if RISK_ORDER.get(level, 0) > RISK_ORDER.get(result, 0):
+            result = level
+    return result
+
+
+def _baseline_metrics(baselines: list[dict[str, Any]], baseline_type: str) -> dict[str, Any]:
+    for item in baselines:
+        if item.get("baseline_type") == baseline_type:
+            metrics = item.get("metrics")
+            return metrics if isinstance(metrics, dict) else {}
+    return {}
+
+
+def _vital_stats(observations: list[dict[str, Any]], baselines: list[dict[str, Any]]) -> dict[str, Any]:
+    heart_values: list[float] = []
+    spo2_values: list[float] = []
+    for item in observations:
+        if str(item.get("kind")) != "vital":
+            continue
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        if isinstance(payload.get("heart_rate"), (int, float)):
+            heart_values.append(float(payload["heart_rate"]))
+        if isinstance(payload.get("spo2"), (int, float)):
+            spo2_values.append(float(payload["spo2"]))
+    heart_base = _baseline_metrics(baselines, "heart_rate_daily")
+    spo2_base = _baseline_metrics(baselines, "spo2_daily")
+    return {
+        "heart_rate": {
+            "count": len(heart_values),
+            "avg": _avg(heart_values),
+            "min": min(heart_values) if heart_values else None,
+            "max": max(heart_values) if heart_values else None,
+            "baseline_low": heart_base.get("p10"),
+            "baseline_normal": heart_base.get("p50") or heart_base.get("daily_avg"),
+            "baseline_high": heart_base.get("p90"),
+            "abnormal_window_count": 0,
+        },
+        "spo2": {
+            "count": len(spo2_values),
+            "avg": _avg(spo2_values),
+            "min": min(spo2_values) if spo2_values else None,
+            "max": max(spo2_values) if spo2_values else None,
+            "baseline_low": spo2_base.get("p10"),
+            "baseline_normal": spo2_base.get("p50") or spo2_base.get("avg"),
+            "baseline_high": spo2_base.get("p90"),
+            "abnormal_window_count": 0,
+        },
+    }
+
+
+def _behavior_stats(segments: list[dict[str, Any]], baselines: list[dict[str, Any]]) -> dict[str, Any]:
+    room_seconds: dict[str, int] = {}
+    bathroom_durations: list[int] = []
+    for segment in segments:
+        duration = int(segment.get("duration_seconds") or 0)
+        if segment.get("segment_type") == "room_stay" and segment.get("room"):
+            room = str(segment["room"])
+            room_seconds[room] = room_seconds.get(room, 0) + duration
+        if segment.get("segment_type") == "bathroom_stay":
+            bathroom_durations.append(duration)
+    bathroom_base = _baseline_metrics(baselines, "bathroom_routine")
+    return {
+        "room_stay_seconds": room_seconds,
+        "room_stay_top": [
+            {"room": room, "duration_min": round(seconds / 60, 1)}
+            for room, seconds in sorted(room_seconds.items(), key=lambda item: item[1], reverse=True)[:4]
+        ],
+        "bathroom_visits": len(bathroom_durations),
+        "bathroom_stay_avg_sec": _avg([float(item) for item in bathroom_durations]) or 0,
+        "bathroom_stay_max_sec": max(bathroom_durations) if bathroom_durations else 0,
+        "bathroom_reference_limit_sec": bathroom_base.get("bathroom_stay_p90_sec"),
+    }
+
+
+def _event_stats(events: list[dict[str, Any]]) -> dict[str, Any]:
+    by_level = {level: 0 for level in RISK_ORDER}
+    by_type: dict[str, int] = {}
+    levels: list[str] = []
+    for event in events:
+        level = str(event.get("final_risk_level") or event.get("risk_level") or "P4")
+        by_level[level] = by_level.get(level, 0) + 1
+        levels.append(level)
+        event_type = str(event.get("event_type") or "unknown")
+        by_type[event_type] = by_type.get(event_type, 0) + 1
+    return {"highest_risk": _risk_max(levels), "by_level": by_level, "by_type": by_type, "total": len(events)}
+
+
+def _hmi_stats(responses: list[dict[str, Any]], prompts: list[dict[str, Any]]) -> dict[str, Any]:
+    counts = {"safe": 0, "need_help": 0, "contact_family": 0, "other": 0, "unanswered": 0}
+    for response in responses:
+        kind = str(response.get("response_type") or "")
+        if kind in counts:
+            counts[kind] += 1
+        elif kind in {"我没事", "safe"}:
+            counts["safe"] += 1
+        else:
+            counts["other"] += 1
+    counts["unanswered"] = sum(1 for prompt in prompts if str(prompt.get("status")) == "waiting")
+    return counts
+
+
+def _action_stats(actions: list[dict[str, Any]]) -> dict[str, Any]:
+    by_device: dict[str, int] = {}
+    by_action: dict[str, int] = {}
+    for item in actions:
+        command = item.get("command") if isinstance(item.get("command"), dict) else {}
+        device = str(command.get("device") or "unknown")
+        action = str(command.get("action") or "unknown")
+        by_device[device] = by_device.get(device, 0) + 1
+        by_action[action] = by_action.get(action, 0) + 1
+    return {"total": len(actions), "by_device": by_device, "by_action": by_action}
+
+
+def build_daily_local_stats(db: Any, elder_id: str, summary_date: str | None, tz_name: str) -> tuple[str, dict[str, Any], str]:
+    date_text, _, start, end = _summary_day_range(summary_date, tz_name)
+    observations = [item for item in repository.list_observations(db, elder_id, limit=5000) if _in_range(item.get("observed_at"), start, end)]
+    segments = [item for item in repository.list_behavior_segments(db, elder_id, limit=5000) if _in_range(item.get("start_at"), start, end)]
+    events = [item for item in repository.list_events(db, elder_id, limit=500) if _in_range(item.get("created_at"), start, end)]
+    hmi_prompts = [item for item in repository.list_hmi_prompts(db, elder_id, limit=500) if _in_range(item.get("created_at"), start, end)]
+    hmi_responses = [item for item in repository.list_hmi_responses(db, elder_id, limit=500) if _in_range(item.get("created_at"), start, end)]
+    actions = [item for item in repository.list_action_executions(db, elder_id, limit=500) if _in_range(item.get("created_at"), start, end)]
+    baselines = repository.list_personal_baselines(db, elder_id)
+    vital_count = sum(1 for item in observations if str(item.get("kind")) == "vital")
+    env_count = sum(1 for item in observations if str(item.get("kind")) == "environment")
+    data_quality = {
+        "vital_samples": vital_count,
+        "environment_samples": env_count,
+        "behavior_segments": len(segments),
+        "status": "sufficient" if vital_count >= 24 or env_count >= 24 or segments else "insufficient_data",
+    }
+    data_quality["note"] = "今日数据足够生成摘要" if data_quality["status"] == "sufficient" else "今日数据较少，摘要仅供参考"
+    stats = {
+        "date": date_text,
+        "elder_id": elder_id,
+        "timezone": tz_name,
+        "vitals": _vital_stats(observations, baselines),
+        "behavior": _behavior_stats(segments, baselines),
+        "events": _event_stats(events),
+        "hmi": _hmi_stats(hmi_responses, hmi_prompts),
+        "actions": _action_stats(actions),
+        "data_quality": data_quality,
+    }
+    return date_text, stats, stats["events"]["highest_risk"]
+
+
 @app.get("/api/v2/behavior-segments")
 async def list_behavior_segments(elder_id: str | None = None, limit: int = 100) -> dict[str, Any]:
     with SessionLocal() as db:
@@ -158,6 +352,76 @@ async def create_personal_baseline(baseline: PersonalBaselineV2) -> dict[str, An
     with SessionLocal() as db:
         record = repository.create_personal_baseline(db, baseline)
     return {"ok": True, "personal_baseline": record}
+
+
+@app.get("/api/v2/daily-health-summaries")
+async def list_daily_health_summaries(elder_id: str | None = None, limit: int = 7) -> dict[str, Any]:
+    with SessionLocal() as db:
+        return {"daily_health_summaries": repository.list_daily_health_summaries(db, elder_id or settings.elder_id, limit)}
+
+
+@app.get("/api/v2/daily-health-summaries/{summary_id}")
+async def get_daily_health_summary(summary_id: str) -> dict[str, Any]:
+    with SessionLocal() as db:
+        record = repository.get_daily_health_summary(db, summary_id)
+    return {"ok": record is not None, "daily_health_summary": record or {"summary_id": summary_id, "status": "not_found"}}
+
+
+@app.post("/api/v2/daily-health-summaries/generate")
+async def generate_daily_health_summary(request: DailyHealthSummaryRequest) -> dict[str, Any]:
+    date_text: str
+    with SessionLocal() as db:
+        date_text, local_stats, risk_level = build_daily_local_stats(db, request.elder_id, request.date, request.timezone)
+        record = repository.upsert_daily_health_summary(
+            db,
+            DailyHealthSummaryV2(
+                elder_id=request.elder_id,
+                summary_date=date_text,
+                timezone=request.timezone,
+                status="local_ready",
+                local_stats=local_stats,
+                risk_level=risk_level,
+                generated_by=request.generated_by,
+            ),
+        )
+    if not request.use_cloud:
+        return {"ok": True, "daily_health_summary": record}
+    if not settings.orchestrator_url:
+        with SessionLocal() as db:
+            record = repository.update_daily_health_summary(
+                db,
+                record["summary_id"],
+                {"status": "cloud_disabled", "cloud_error": "orchestrator_url is not configured"},
+            ) or record
+        return {"ok": True, "daily_health_summary": record}
+    try:
+        async with httpx.AsyncClient(timeout=180) as client:
+            response = await client.post(
+                f"{settings.orchestrator_url.rstrip('/')}/api/v2/orchestrator/daily-health-summary",
+                json={"daily_health_summary": record},
+            )
+            response.raise_for_status()
+            cloud = response.json().get("cloud_summary_result", {})
+    except Exception as exc:
+        with SessionLocal() as db:
+            record = repository.update_daily_health_summary(
+                db,
+                record["summary_id"],
+                {"status": "cloud_failed", "cloud_error": str(exc)},
+            ) or record
+        return {"ok": True, "daily_health_summary": record}
+    status = str(cloud.get("status") or "cloud_failed")
+    payload: dict[str, Any] = {
+        "status": "cloud_completed" if status == "completed" else status,
+        "cloud_summary": cloud if status == "completed" else {},
+        "cloud_error": cloud.get("error"),
+    }
+    if status == "completed":
+        cloud_risk = str(cloud.get("risk_level") or risk_level)
+        payload["risk_level"] = cloud_risk if RISK_ORDER.get(cloud_risk, 0) >= RISK_ORDER.get(risk_level, 0) else risk_level
+    with SessionLocal() as db:
+        record = repository.update_daily_health_summary(db, record["summary_id"], payload) or record
+    return {"ok": True, "daily_health_summary": record}
 
 
 @app.post("/api/v2/baselines/rebuild")

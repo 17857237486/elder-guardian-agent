@@ -80,3 +80,10 @@ async def handle_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     result = await runner.run_candidate(candidate)
     return {"ok": True, **result}
 
+
+@app.post("/api/v2/orchestrator/daily-health-summary")
+async def handle_daily_health_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    summary = payload.get("daily_health_summary") if isinstance(payload.get("daily_health_summary"), dict) else payload
+    result = await runner.cloud_llm.daily_health_summary(summary)
+    return {"ok": True, "cloud_summary_result": result}
+

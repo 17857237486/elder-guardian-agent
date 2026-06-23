@@ -1169,6 +1169,51 @@
       </article>
 
       <article class="panel">
+        <h2>每日健康摘要</h2>
+        <div class="baseline-panel">
+          <p class="muted">将今天的生命体征、行为片段、风险事件、老人反馈和设备动作压缩成本地统计摘要；可选调用云端大模型生成家属可读说明。</p>
+          <div class="form-actions">
+            <label><span>老人 ID</span><input id="daily-summary-elder" value="elder_001" /></label>
+            <label><span>日期</span><input id="daily-summary-date" type="date" /></label>
+            <button id="daily-summary-local" type="button">只生成本地统计</button>
+            <button id="daily-summary-cloud" class="primary" type="button">生成今日健康摘要</button>
+            <button id="daily-summary-load" type="button">读取最近摘要</button>
+            <span id="daily-summary-status" class="submit-status">等待生成</span>
+          </div>
+          <div class="baseline-grid">
+            <section class="baseline-card">
+              <h3>生命体征统计</h3>
+              <div id="daily-vitals">暂无摘要</div>
+            </section>
+            <section class="baseline-card">
+              <h3>行为片段统计</h3>
+              <div id="daily-behavior">暂无摘要</div>
+            </section>
+            <section class="baseline-card">
+              <h3>风险事件统计</h3>
+              <div id="daily-events">暂无摘要</div>
+            </section>
+            <section class="baseline-card">
+              <h3>老人反馈</h3>
+              <div id="daily-hmi">暂无摘要</div>
+            </section>
+            <section class="baseline-card">
+              <h3>设备动作</h3>
+              <div id="daily-actions">暂无摘要</div>
+            </section>
+            <section class="baseline-card">
+              <h3>数据质量</h3>
+              <div id="daily-quality">暂无摘要</div>
+            </section>
+            <section class="baseline-card">
+              <h3>云端家属摘要</h3>
+              <div id="daily-cloud">暂无云端摘要</div>
+            </section>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel">
         <h2>手动输入数据</h2>
         <div class="template-grid" aria-label="事件模板">
           <button class="template-button active" type="button" data-template="normal">P4 正常状态<br />正常记录</button>
@@ -1423,6 +1468,7 @@
         roomEnv: {},
         bathroomStayMonitor: null,
         visionCaptures: [],
+        dailyHealthSummaries: [],
         activeTemplate: "normal",
         scenarioRunning: false,
         scenarioJob: null,
@@ -2196,6 +2242,126 @@
         return `${labels} 已更新，行为片段 ${segmentCount} 条`;
       }
 
+      function todayDateValue() {
+        const date = new Date();
+        const offset = date.getTimezoneOffset();
+        return new Date(date.getTime() - offset * 60000).toISOString().slice(0, 10);
+      }
+
+      function metricLine(label, value, suffix = "") {
+        return `<div><span>${label}</span><strong>${valueOrDash(value)}${value === null || value === undefined ? "" : suffix}</strong></div>`;
+      }
+
+      function renderMetricBlock(items) {
+        return `<div class="baseline-fields">${items.join("")}</div>`;
+      }
+
+      function renderDailyHealthSummary(summary) {
+        const stats = summary?.local_stats ?? {};
+        const vitals = stats.vitals ?? {};
+        const heart = vitals.heart_rate ?? {};
+        const spo2 = vitals.spo2 ?? {};
+        $("daily-vitals").innerHTML = renderMetricBlock([
+          metricLine("心率样本", heart.count),
+          metricLine("心率平均", heart.avg, " bpm"),
+          metricLine("心率最低/最高", `${valueOrDash(heart.min)} / ${valueOrDash(heart.max)}`, " bpm"),
+          metricLine("心率参考", `${valueOrDash(heart.baseline_low)} / ${valueOrDash(heart.baseline_normal)} / ${valueOrDash(heart.baseline_high)}`),
+          metricLine("血氧样本", spo2.count),
+          metricLine("血氧平均", spo2.avg, "%"),
+          metricLine("血氧最低/最高", `${valueOrDash(spo2.min)} / ${valueOrDash(spo2.max)}`, "%"),
+          metricLine("血氧参考", `${valueOrDash(spo2.baseline_low)} / ${valueOrDash(spo2.baseline_normal)} / ${valueOrDash(spo2.baseline_high)}`),
+        ]);
+        const behavior = stats.behavior ?? {};
+        const topRooms = (behavior.room_stay_top ?? []).map((item) => `${valueOrDash(item.room)} ${valueOrDash(item.duration_min)}分钟`).join("，") || "--";
+        $("daily-behavior").innerHTML = renderMetricBlock([
+          metricLine("主要停留房间", topRooms),
+          metricLine("卫生间次数", behavior.bathroom_visits),
+          metricLine("卫生间平均停留", behavior.bathroom_stay_avg_sec, " 秒"),
+          metricLine("卫生间最长停留", behavior.bathroom_stay_max_sec, " 秒"),
+          metricLine("停留参考上限", behavior.bathroom_reference_limit_sec, " 秒"),
+        ]);
+        const events = stats.events ?? {};
+        const byLevel = events.by_level ?? {};
+        const byType = events.by_type ?? {};
+        const typeText = Object.entries(byType).map(([key, value]) => `${key}: ${value}`).join("，") || "--";
+        $("daily-events").innerHTML = renderMetricBlock([
+          metricLine("今日最高风险", events.highest_risk ?? summary?.risk_level),
+          metricLine("P0/P1/P2/P3/P4", `${byLevel.P0 ?? 0}/${byLevel.P1 ?? 0}/${byLevel.P2 ?? 0}/${byLevel.P3 ?? 0}/${byLevel.P4 ?? 0}`),
+          metricLine("事件类型", typeText),
+        ]);
+        const hmi = stats.hmi ?? {};
+        $("daily-hmi").innerHTML = renderMetricBlock([
+          metricLine("我没事", hmi.safe ?? 0),
+          metricLine("需要帮助", hmi.need_help ?? 0),
+          metricLine("联系家属", hmi.contact_family ?? 0),
+          metricLine("未响应", hmi.unanswered ?? 0),
+        ]);
+        const actions = stats.actions ?? {};
+        const byDevice = Object.entries(actions.by_device ?? {}).map(([key, value]) => `${key}: ${value}`).join("，") || "--";
+        const byAction = Object.entries(actions.by_action ?? {}).map(([key, value]) => `${key}: ${value}`).join("，") || "--";
+        $("daily-actions").innerHTML = renderMetricBlock([
+          metricLine("动作总数", actions.total ?? 0),
+          metricLine("按设备", byDevice),
+          metricLine("按动作", byAction),
+        ]);
+        const quality = stats.data_quality ?? {};
+        $("daily-quality").innerHTML = renderMetricBlock([
+          metricLine("生命体征样本", quality.vital_samples),
+          metricLine("环境样本", quality.environment_samples),
+          metricLine("行为片段", quality.behavior_segments),
+          metricLine("完整性", quality.status),
+          metricLine("说明", quality.note),
+        ]);
+        const cloud = summary?.cloud_summary ?? {};
+        if (summary?.status === "cloud_disabled") {
+          $("daily-cloud").innerHTML = "云端摘要未启用，本地统计摘要仍然有效。";
+        } else if (summary?.status === "cloud_failed") {
+          $("daily-cloud").innerHTML = `云端摘要生成失败：${valueOrDash(summary.cloud_error)}`;
+        } else if (cloud.status === "completed" || summary?.status === "cloud_completed") {
+          const findings = (cloud.key_findings ?? []).map((item) => `<li>${item}</li>`).join("");
+          const followup = (cloud.recommended_followup ?? []).map((item) => `<li>${item}</li>`).join("");
+          $("daily-cloud").innerHTML = `
+            <p><strong>整体状态：</strong>${valueOrDash(cloud.overall_status)}</p>
+            <p><strong>今日风险：</strong>${valueOrDash(cloud.risk_level ?? summary.risk_level)}</p>
+            <p><strong>给家属的话：</strong>${valueOrDash(cloud.family_message)}</p>
+            <p><strong>关键发现：</strong></p><ul>${findings || "<li>--</li>"}</ul>
+            <p><strong>建议关注：</strong></p><ul>${followup || "<li>--</li>"}</ul>
+          `;
+        } else {
+          $("daily-cloud").innerHTML = "暂无云端摘要。";
+        }
+      }
+
+      async function loadDailyHealthSummaries() {
+        const elderId = $("daily-summary-elder").value.trim() || $("baseline-elder").value.trim() || "elder_001";
+        const response = await fetch(`/api/daily-health-summary?elder_id=${encodeURIComponent(elderId)}&limit=7`);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail ?? data);
+          throw new Error(detail || `HTTP ${response.status}`);
+        }
+        state.dailyHealthSummaries = data.daily_health_summaries ?? [];
+        if (state.dailyHealthSummaries[0]) renderDailyHealthSummary(state.dailyHealthSummaries[0]);
+        return data;
+      }
+
+      async function generateDailyHealthSummary(useCloud) {
+        setSubmitStatus("daily-summary-status", useCloud ? "正在生成本地统计并调用云端摘要" : "正在生成本地统计");
+        const result = await postJson("/api/daily-health-summary/generate", {
+          elder_id: $("daily-summary-elder").value.trim() || $("baseline-elder").value.trim() || "elder_001",
+          date: $("daily-summary-date").value || todayDateValue(),
+          timezone: "Asia/Shanghai",
+          use_cloud: useCloud,
+          generated_by: "background_mqtt",
+        });
+        const summary = result.daily_health_summary;
+        if (summary) {
+          renderDailyHealthSummary(summary);
+          setSubmitStatus("daily-summary-status", `摘要已生成：${summary.summary_date} · ${summary.status} · ${summary.risk_level}`, "ok");
+        }
+        return result;
+      }
+
       async function runAutoVitalsBaseline() {
         const button = $("auto-vitals-baseline");
         button.disabled = true;
@@ -2496,6 +2662,9 @@
           if (message.bathroom_stay_monitor) {
             setBathroomStayMonitor(message.bathroom_stay_monitor);
           }
+          if (message.type === "daily_health_summary" && message.data?.daily_health_summary) {
+            renderDailyHealthSummary(message.data.daily_health_summary);
+          }
           if (message.type === "device_state") {
             upsertDevice(message.data);
           }
@@ -2608,6 +2777,37 @@
       $("auto-vitals-baseline").addEventListener("click", runAutoVitalsBaseline);
       $("auto-bathroom-baseline").addEventListener("click", runAutoBathroomBaseline);
       $("demo-bathroom-stay").addEventListener("click", runBathroomStayDemo);
+      $("daily-summary-local").addEventListener("click", async () => {
+        const button = $("daily-summary-local");
+        button.disabled = true;
+        try {
+          await generateDailyHealthSummary(false);
+        } catch (error) {
+          setSubmitStatus("daily-summary-status", `本地统计失败：${error.message}`, "error");
+        } finally {
+          button.disabled = false;
+        }
+      });
+      $("daily-summary-cloud").addEventListener("click", async () => {
+        const button = $("daily-summary-cloud");
+        button.disabled = true;
+        try {
+          await generateDailyHealthSummary(true);
+        } catch (error) {
+          setSubmitStatus("daily-summary-status", `每日摘要失败：${error.message}`, "error");
+        } finally {
+          button.disabled = false;
+        }
+      });
+      $("daily-summary-load").addEventListener("click", async () => {
+        setSubmitStatus("daily-summary-status", "读取最近摘要中");
+        try {
+          await loadDailyHealthSummaries();
+          setSubmitStatus("daily-summary-status", "最近摘要已读取", "ok");
+        } catch (error) {
+          setSubmitStatus("daily-summary-status", `读取摘要失败：${error.message}`, "error");
+        }
+      });
       $("vision-capture-one").addEventListener("click", async () => {
         const button = $("vision-capture-one");
         button.disabled = true;
@@ -2670,6 +2870,8 @@
       applyTemplate(state.activeTemplate);
       fillBaselineDefaults();
       setBaselineMode("manual");
+      $("daily-summary-date").value = todayDateValue();
+      $("daily-summary-elder").value = $("baseline-elder").value.trim() || "elder_001";
       updateScenarioPreview();
       loadSnapshot();
       loadDevices().catch((error) => {
@@ -2677,6 +2879,9 @@
       });
       loadPersonalBaselines().catch((error) => {
         setSubmitStatus("baseline-submit-status", `基线读取失败：${error.message}`, "error");
+      });
+      loadDailyHealthSummaries().catch((error) => {
+        setSubmitStatus("daily-summary-status", `摘要读取失败：${error.message}`, "error");
       });
       refreshVisionCaptures().catch(() => {});
       refreshScenarioStatus().catch(() => {});

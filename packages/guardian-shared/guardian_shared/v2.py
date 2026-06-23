@@ -269,3 +269,18 @@ class HmiResponseV2(GuardianModel):
     response_type: str
     response_text: str
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class DailyHealthSummaryV2(GuardianModel):
+    summary_id: str = Field(default_factory=lambda: new_id("daily"))
+    elder_id: str
+    summary_date: str
+    timezone: str = "Asia/Shanghai"
+    status: str = "pending"
+    local_stats: dict[str, Any] = Field(default_factory=dict)
+    cloud_summary: dict[str, Any] = Field(default_factory=dict)
+    cloud_error: str | None = None
+    risk_level: RiskLevel = RiskLevel.P4
+    generated_by: str = "manual"
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
