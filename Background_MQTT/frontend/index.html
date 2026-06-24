@@ -335,6 +335,35 @@
         list-style: none;
       }
 
+      .presence-flow-wrap {
+        max-height: 360px;
+        margin-top: 12px;
+        border: 1px solid #edf1f6;
+        border-radius: 8px;
+        background: #fff;
+      }
+
+      .presence-result {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 12px;
+        margin-top: 12px;
+        padding: 10px 14px;
+        border: 1px solid #cddcec;
+        border-radius: 8px;
+        background: #fff;
+      }
+
+      .presence-result span {
+        color: #607086;
+        font-size: 13px;
+      }
+
+      .presence-result strong {
+        color: #0d6674;
+        font-size: 20px;
+      }
+
       .vision-capture-panel {
         display: grid;
         gap: 12px;
@@ -1132,7 +1161,7 @@
                 <label><span>平均停留目标（秒）</span><input id="auto-bathroom-avg" type="number" min="10" max="3600" step="1" value="180" /></label>
                 <label><span>最长停留目标（秒）</span><input id="auto-bathroom-p90" type="number" min="20" max="7200" step="1" value="480" /></label>
               </div>
-              <p class="muted">发送多段进入/离开卫生间 presence 轨迹，Edge 生成 bathroom_stay 行为片段后按“历史最长停留 + 10秒”重算基线。</p>
+              <p class="muted">这里会生成 20 次历史卫生间停留记录，用于统计个人卫生间停留基线；这些历史记录不逐条展示，只展示统计结果。</p>
               <div class="form-actions">
                 <button id="auto-bathroom-baseline" class="primary" type="button">生成卫生间停留基线</button>
               </div>
@@ -1148,22 +1177,30 @@
               </div>
             </section>
           </div>
-          <section class="presence-monitor" aria-label="红外卫生间停留验证">
-            <h3>红外卫生间停留验证</h3>
-            <p class="muted">这里展示的是一次演示流程：整屋环境 MQTT 数据里包含四房间红外 presence；当 bathroom=true 持续出现时，系统计算老人本次卫生间停留时长。批量生成基线的 20 次历史停留不会占用这个流程展示。</p>
-            <div class="presence-summary">
-              <div><span>当前老人所在房间</span><strong id="pir-current-room">--</strong></div>
-              <div><span>卫生间红外状态</span><strong id="pir-bathroom-present">--</strong></div>
-              <div><span>进入卫生间时间</span><strong id="pir-entered-at">--</strong></div>
-              <div><span>当前判断</span><strong id="pir-status">--</strong></div>
-              <div><span>已停留时间</span><strong id="pir-elapsed">--</strong></div>
-              <div><span>停留参考上限</span><strong id="pir-limit">--</strong></div>
-              <div><span>最近离开时间</span><strong id="pir-exited-at">--</strong></div>
-              <div><span>上次停留时长</span><strong id="pir-last-stay">--</strong></div>
+          <section class="presence-monitor" aria-label="卫生间停留时长推导">
+            <h3>卫生间停留时长推导</h3>
+            <p class="muted">每 5 秒输入一组整屋环境数据，其中包含四个房间红外 presence。系统根据 bathroom=true 的连续时间，计算本次卫生间停留时长。</p>
+            <div class="table-wrap presence-flow-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>序号</th>
+                    <th>采样时间</th>
+                    <th>老人所在房间</th>
+                    <th>当前房间停留时长</th>
+                    <th>卫生间状态</th>
+                    <th>卫生间累计停留时长</th>
+                  </tr>
+                </thead>
+                <tbody id="pir-flow-rows">
+                  <tr><td colspan="6">暂无卫生间停留推导流程。</td></tr>
+                </tbody>
+              </table>
             </div>
-            <div id="pir-room-grid" class="presence-grid"></div>
-            <h4>最近红外轨迹</h4>
-            <ul id="pir-trace" class="presence-trace"></ul>
+            <div class="presence-result">
+              <span>本次卫生间停留时长</span>
+              <strong id="pir-final-stay">--</strong>
+            </div>
           </section>
         </div>
       </article>
@@ -2500,34 +2537,26 @@
 
       function renderBathroomStayMonitor() {
         const monitor = state.bathroomStayMonitor ?? {};
-        const roomPresence = monitor.room_presence ?? {};
-        setText("pir-current-room", monitor.current_room ? `${roomLabels[monitor.current_room] || monitor.current_room} (${monitor.current_room})` : "--");
-        setText("pir-bathroom-present", presenceLabel(Boolean(monitor.bathroom_present)));
-        setText("pir-entered-at", formatTime(monitor.bathroom_entered_at));
-        setText("pir-status", bathroomStatusLabel(monitor.status));
-        setText("pir-elapsed", formatDuration(monitor.bathroom_elapsed_sec));
-        setText("pir-limit", formatDuration(monitor.bathroom_reference_limit_sec));
-        setText("pir-exited-at", formatTime(monitor.bathroom_exited_at));
-        setText("pir-last-stay", formatDuration(monitor.last_stay_seconds));
-        $("pir-room-grid").innerHTML = roomOrder
-          .map((room) => {
-            const present = Boolean(roomPresence[room]);
-            return `
-              <div class="presence-room ${present ? "present" : ""}">
-                <strong>${roomLabels[room] || room}</strong>
-                <span>${presenceLabel(present)}</span>
-                <small>${room}</small>
-              </div>
-            `;
-          })
-          .join("");
-        const events = monitor.recent_presence_events ?? [];
-        $("pir-trace").innerHTML = events.length
-          ? events
-              .slice(0, 10)
-              .map((event) => `<li><strong>${formatTime(event.timestamp)}</strong><br />当前房间：${valueOrDash(event.current_room)}，卫生间：${presenceLabel(Boolean(event.bathroom_present))}<br /><small>${valueOrDash(event.summary)}</small></li>`)
+        const rows = monitor.demo_flow_rows ?? [];
+        $("pir-flow-rows").innerHTML = rows.length
+          ? rows
+              .map((row) => {
+                const room = row.current_room ? `${roomLabels[row.current_room] || row.current_room} (${row.current_room})` : "--";
+                return `
+                  <tr>
+                    <td>${valueOrDash(row.index)}</td>
+                    <td>${formatTime(row.timestamp)}</td>
+                    <td>${room}</td>
+                    <td>${formatDuration(row.current_room_elapsed_sec)}</td>
+                    <td>${presenceLabel(Boolean(row.bathroom_present))}</td>
+                    <td>${formatDuration(row.bathroom_elapsed_sec)}</td>
+                  </tr>
+                `;
+              })
               .join("")
-          : `<li>暂无红外轨迹。</li>`;
+          : `<tr><td colspan="6">暂无卫生间停留推导流程。</td></tr>`;
+        const finalStay = monitor.demo_final_bathroom_stay_sec ?? monitor.last_stay_seconds ?? (monitor.bathroom_present ? monitor.bathroom_elapsed_sec : null);
+        setText("pir-final-stay", formatDuration(finalStay));
       }
 
       function renderRecords() {

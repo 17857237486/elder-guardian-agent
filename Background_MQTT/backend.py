@@ -298,6 +298,11 @@ def init_bathroom_stay_monitor() -> None:
             "elder_id": ELDER_ID,
             "sample_id": None,
             "recent_presence_events": [],
+            "demo_flow_rows": [],
+            "demo_flow_seen_sample_ids": [],
+            "demo_flow_current_room": None,
+            "demo_flow_room_entered_at": None,
+            "demo_final_bathroom_stay_sec": None,
         }
     )
 
@@ -311,6 +316,7 @@ def bathroom_stay_monitor_snapshot() -> dict[str, Any]:
         limit = float(monitor.get("bathroom_reference_limit_sec") or 60)
         monitor["status"] = "over_limit" if monitor["bathroom_elapsed_sec"] > limit else "in_bathroom"
     monitor["recent_presence_events"] = list(monitor.get("recent_presence_events") or [])[:10]
+    monitor["demo_flow_rows"] = list(monitor.get("demo_flow_rows") or [])
     return monitor
 
 
@@ -356,15 +362,42 @@ def update_bathroom_stay_monitor(env_payload: dict[str, Any]) -> dict[str, Any]:
     elapsed = max(0, int((now_dt - active_entered).total_seconds())) if bathroom_present and active_entered else 0
     limit = float(bathroom_stay_monitor.get("bathroom_reference_limit_sec") or 60)
     status = "over_limit" if bathroom_present and elapsed > limit else "in_bathroom" if bathroom_present else "not_in_bathroom"
+    source = str(env_payload.get("source") or "")
+    sample_id = str(env_payload.get("snapshot_id") or "")
     event = {
         "timestamp": now_dt.isoformat(),
         "current_room": current_room,
         "bathroom_present": bathroom_present,
         "room_presence": dict(room_presence),
         "summary": _presence_event_label(room_presence),
-        "sample_id": env_payload.get("snapshot_id"),
+        "sample_id": sample_id or None,
     }
     recent = [event, *list(bathroom_stay_monitor.get("recent_presence_events") or [])][:10]
+    demo_flow_rows = list(bathroom_stay_monitor.get("demo_flow_rows") or [])
+    demo_seen_sample_ids = list(bathroom_stay_monitor.get("demo_flow_seen_sample_ids") or [])
+    demo_current_room = bathroom_stay_monitor.get("demo_flow_current_room")
+    demo_room_entered_at = bathroom_stay_monitor.get("demo_flow_room_entered_at")
+    demo_final_stay = bathroom_stay_monitor.get("demo_final_bathroom_stay_sec")
+    if source == "bathroom_stay_demo" and (not sample_id or sample_id not in demo_seen_sample_ids):
+        if current_room != demo_current_room:
+            demo_current_room = current_room
+            demo_room_entered_at = now_dt.isoformat()
+        room_entered_dt = _parse_datetime(demo_room_entered_at) or now_dt
+        current_room_elapsed = max(0, int((now_dt - room_entered_dt).total_seconds())) if current_room else 0
+        row = {
+            "index": len(demo_flow_rows) + 1,
+            "sample_id": sample_id or None,
+            "timestamp": now_dt.isoformat(),
+            "current_room": current_room,
+            "current_room_elapsed_sec": current_room_elapsed,
+            "bathroom_present": bathroom_present,
+            "bathroom_elapsed_sec": elapsed,
+        }
+        demo_flow_rows = [*demo_flow_rows, row][-1500:]
+        if sample_id:
+            demo_seen_sample_ids = [*demo_seen_sample_ids, sample_id][-1500:]
+        if not bathroom_present and previous_present and last_stay_seconds is not None:
+            demo_final_stay = last_stay_seconds
     bathroom_stay_monitor.update(
         {
             "current_room": current_room,
@@ -379,6 +412,11 @@ def update_bathroom_stay_monitor(env_payload: dict[str, Any]) -> dict[str, Any]:
             "elder_id": env_payload.get("elder_id", ELDER_ID),
             "sample_id": env_payload.get("snapshot_id"),
             "recent_presence_events": recent,
+            "demo_flow_rows": demo_flow_rows,
+            "demo_flow_seen_sample_ids": demo_seen_sample_ids,
+            "demo_flow_current_room": demo_current_room,
+            "demo_flow_room_entered_at": demo_room_entered_at,
+            "demo_final_bathroom_stay_sec": demo_final_stay,
         }
     )
     return bathroom_stay_monitor_snapshot()
@@ -1349,11 +1387,21 @@ async def auto_bathroom_baseline(request: AutoBathroomBaselineRequest) -> dict[s
 async def bathroom_stay_demo(request: BathroomStayDemoRequest) -> dict[str, Any]:
     ensure_mqtt_connected()
     bathroom_stay_monitor["bathroom_reference_limit_sec"] = await bathroom_reference_limit_sec(request.elder_id)
+    bathroom_stay_monitor.update(
+        {
+            "demo_flow_rows": [],
+            "demo_flow_seen_sample_ids": [],
+            "demo_flow_current_room": None,
+            "demo_flow_room_entered_at": None,
+            "demo_final_bathroom_stay_sec": None,
+        }
+    )
     now = datetime.now(timezone.utc)
     start_at = now - timedelta(seconds=request.duration_seconds)
     published = 0
     flow_preview: list[dict[str, Any]] = []
     pre_entry = home_presence_snapshot(request.elder_id, "living_room", start_at - timedelta(seconds=request.logical_interval_sec), source="bathroom_stay_demo")
+    update_bathroom_stay_monitor(pre_entry)
     publish_json(elder_sensor_env(request.elder_id), pre_entry)
     flow_preview.append({"room": "living_room", "observed_at": pre_entry["observed_at"], "elapsed_sec": 0})
     published += 1
@@ -1363,6 +1411,7 @@ async def bathroom_stay_demo(request: BathroomStayDemoRequest) -> dict[str, Any]
         if observed_at > now:
             observed_at = now
         snapshot = home_presence_snapshot(request.elder_id, "bathroom", observed_at, source="bathroom_stay_demo")
+        update_bathroom_stay_monitor(snapshot)
         publish_json(elder_sensor_env(request.elder_id), snapshot)
         if index in {0, steps} or index % max(1, steps // 4) == 0:
             flow_preview.append({"room": "bathroom", "observed_at": snapshot["observed_at"], "elapsed_sec": int((observed_at - start_at).total_seconds())})
@@ -1376,6 +1425,7 @@ async def bathroom_stay_demo(request: BathroomStayDemoRequest) -> dict[str, Any]
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail={"message": "edge baseline rebuild failed", "error": str(exc)})
     bathroom_stay_monitor["bathroom_reference_limit_sec"] = await bathroom_reference_limit_sec(request.elder_id)
+    bathroom_stay_monitor["demo_final_bathroom_stay_sec"] = request.duration_seconds
     monitor = bathroom_stay_monitor_snapshot()
     await broadcast(
         {
