@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from guardian_shared.v2 import NormalizedEventV2
 
 from app.config import settings
-from app.event_cooldown import GasLeakCooldown, P3EnvironmentCooldown, VitalEventCooldown
+from app.event_cooldown import CooldownResult, GasLeakCooldown, P0VitalCooldown, P3EnvironmentCooldown, VitalEventCooldown
 from app.rules import classify_observation
 from app.workflow import WorkflowRunner
 
@@ -19,6 +19,7 @@ runner = WorkflowRunner()
 p3_environment_cooldown = P3EnvironmentCooldown(settings.p3_environment_cooldown_sec)
 p1_vital_cooldown = VitalEventCooldown(settings.p1_vital_cooldown_sec)
 p0_gas_cooldown = GasLeakCooldown(settings.p0_gas_cooldown_sec)
+p0_vital_cooldown = P0VitalCooldown(settings.p0_vital_cooldown_sec)
 
 
 app = FastAPI(title="Elder Guardian Orchestrator", version="0.1.0")
@@ -27,6 +28,43 @@ app = FastAPI(title="Elder Guardian Orchestrator", version="0.1.0")
 @app.get("/health")
 async def health() -> dict[str, Any]:
     return {"ok": True, "service": "guardian-orchestrator"}
+
+
+def _suppressed_response(reason: str, cooldown: CooldownResult) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "triggered": False,
+        "suppressed": True,
+        "suppressed_reason": reason,
+        "dedupe_key": cooldown.dedupe_key,
+        "remaining_sec": round(cooldown.remaining_sec, 3),
+    }
+
+
+def _cooldown_check(event: NormalizedEventV2, observation_id: str | None = None) -> tuple[str, CooldownResult] | None:
+    checks = [
+        ("p0_gas_cooldown", p0_gas_cooldown.check(event)),
+        ("p0_vital_cooldown", p0_vital_cooldown.check(event)),
+        ("p3_environment_cooldown", p3_environment_cooldown.check(event)),
+        ("p1_vital_cooldown", p1_vital_cooldown.check(event)),
+    ]
+    for reason, cooldown in checks:
+        if not cooldown.suppressed:
+            continue
+        logger.info(
+            "suppressed duplicate risk event",
+            extra={
+                "event_type": str(event.event_type),
+                "risk_level": str(event.risk_level),
+                "room": event.room,
+                "observation_id": observation_id,
+                "dedupe_key": cooldown.dedupe_key,
+                "remaining_sec": round(cooldown.remaining_sec, 3),
+                "suppressed_reason": reason,
+            },
+        )
+        return reason, cooldown
+    return None
 
 
 @app.post("/api/v2/orchestrator/observations")
@@ -47,72 +85,18 @@ async def handle_observation(observation: dict[str, Any]) -> dict[str, Any]:
             "confidence": max(event.confidence, event.risk_score, float(payload.get("confidence") or 0)),
         }
     )
-    gas_cooldown = p0_gas_cooldown.check(event)
-    if gas_cooldown.suppressed:
-        logger.info(
-            "suppressed duplicate P0 gas event",
-            extra={
-                "event_type": str(event.event_type),
-                "room": event.room,
-                "observation_id": observation.get("observation_id"),
-                "dedupe_key": gas_cooldown.dedupe_key,
-                "remaining_sec": round(gas_cooldown.remaining_sec, 3),
-            },
-        )
-        return {
-            "ok": True,
-            "triggered": False,
-            "suppressed": True,
-            "suppressed_reason": "p0_gas_cooldown",
-            "dedupe_key": gas_cooldown.dedupe_key,
-            "remaining_sec": round(gas_cooldown.remaining_sec, 3),
-        }
-
-    cooldown = p3_environment_cooldown.check(event)
-    if cooldown.suppressed:
-        logger.info(
-            "suppressed duplicate P3 environment event",
-            extra={
-                "event_type": str(event.event_type),
-                "room": event.room,
-                "observation_id": observation.get("observation_id"),
-                "dedupe_key": cooldown.dedupe_key,
-                "remaining_sec": round(cooldown.remaining_sec, 3),
-            },
-        )
-        return {
-            "ok": True,
-            "triggered": False,
-            "suppressed": True,
-            "suppressed_reason": "p3_environment_cooldown",
-            "dedupe_key": cooldown.dedupe_key,
-            "remaining_sec": round(cooldown.remaining_sec, 3),
-        }
-    vital_cooldown = p1_vital_cooldown.check(event)
-    if vital_cooldown.suppressed:
-        logger.info(
-            "suppressed duplicate P1 vital event",
-            extra={
-                "event_type": str(event.event_type),
-                "observation_id": observation.get("observation_id"),
-                "dedupe_key": vital_cooldown.dedupe_key,
-                "remaining_sec": round(vital_cooldown.remaining_sec, 3),
-            },
-        )
-        return {
-            "ok": True,
-            "triggered": False,
-            "suppressed": True,
-            "suppressed_reason": "p1_vital_cooldown",
-            "dedupe_key": vital_cooldown.dedupe_key,
-            "remaining_sec": round(vital_cooldown.remaining_sec, 3),
-        }
+    suppressed = _cooldown_check(event, str(observation.get("observation_id") or ""))
+    if suppressed:
+        return _suppressed_response(*suppressed)
     result = await runner.run(event)
     return {"ok": True, "triggered": True, **result}
 
 
 @app.post("/api/v2/orchestrator/events")
 async def handle_event(event: NormalizedEventV2) -> dict[str, Any]:
+    suppressed = _cooldown_check(event)
+    if suppressed:
+        return _suppressed_response(*suppressed)
     result = await runner.run(event)
     return {"ok": True, **result}
 

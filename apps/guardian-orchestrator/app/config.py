@@ -45,6 +45,7 @@ class Settings:
     p3_environment_cooldown_sec: int
     p1_vital_cooldown_sec: int
     p0_gas_cooldown_sec: int
+    p0_vital_cooldown_sec: int
 
 
 def get_settings() -> Settings:
@@ -71,6 +72,7 @@ def get_settings() -> Settings:
         p3_environment_cooldown_sec=max(0, _env_int("P3_ENVIRONMENT_COOLDOWN_SEC", 120)),
         p1_vital_cooldown_sec=max(0, _env_int("P1_VITAL_COOLDOWN_SEC", 120)),
         p0_gas_cooldown_sec=max(0, _env_int("P0_GAS_COOLDOWN_SEC", 120)),
+        p0_vital_cooldown_sec=max(0, _env_int("P0_VITAL_COOLDOWN_SEC", 120)),
     )
 
 

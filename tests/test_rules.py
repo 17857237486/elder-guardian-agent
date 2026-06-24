@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT / "packages" / "guardian-shared"))
 sys.path.insert(0, str(ROOT / "apps" / "guardian-orchestrator"))
 
 from app import rules
-from app.event_cooldown import GasLeakCooldown, P3EnvironmentCooldown, VitalEventCooldown
+from app.event_cooldown import GasLeakCooldown, P0VitalCooldown, P3EnvironmentCooldown, VitalEventCooldown
 from guardian_shared.enums import EventType, RiskLevel
 from guardian_shared.v2 import NormalizedEventV2
 
@@ -224,6 +224,43 @@ class RuleTests(unittest.TestCase):
 
         clock["now"] = 1121.0
         self.assertFalse(cooldown.check(kitchen).suppressed)
+
+    def test_p0_vital_cooldown_suppresses_duplicate_critical_spo2(self) -> None:
+        clock = {"now": 1000.0}
+        cooldown = P0VitalCooldown(120, clock=lambda: clock["now"])
+        event = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type=EventType.SPO2_LOW,
+            risk_level=RiskLevel.P0,
+            source_kind="vital",
+        )
+
+        self.assertFalse(cooldown.check(event).suppressed)
+        self.assertTrue(cooldown.check(event).suppressed)
+
+        clock["now"] = 1121.0
+        self.assertFalse(cooldown.check(event).suppressed)
+
+    def test_p0_cooldowns_do_not_require_source_kind_for_direct_events(self) -> None:
+        clock = {"now": 1000.0}
+        gas_cooldown = GasLeakCooldown(120, clock=lambda: clock["now"])
+        spo2_cooldown = P0VitalCooldown(120, clock=lambda: clock["now"])
+        gas = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type=EventType.GAS_LEAK,
+            risk_level=RiskLevel.P0,
+            room="kitchen",
+        )
+        spo2 = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type=EventType.SPO2_LOW,
+            risk_level=RiskLevel.P0,
+        )
+
+        self.assertFalse(gas_cooldown.check(gas).suppressed)
+        self.assertTrue(gas_cooldown.check(gas).suppressed)
+        self.assertFalse(spo2_cooldown.check(spo2).suppressed)
+        self.assertTrue(spo2_cooldown.check(spo2).suppressed)
 
 
 if __name__ == "__main__":
