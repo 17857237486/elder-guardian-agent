@@ -44,6 +44,7 @@ class Settings:
     cloud_llm_timeout_sec: int
     p3_environment_cooldown_sec: int
     p1_vital_cooldown_sec: int
+    p0_gas_cooldown_sec: int
 
 
 def get_settings() -> Settings:
@@ -69,6 +70,7 @@ def get_settings() -> Settings:
         cloud_llm_timeout_sec=max(5, _env_int("CLOUD_LLM_TIMEOUT_SEC", 60)),
         p3_environment_cooldown_sec=max(0, _env_int("P3_ENVIRONMENT_COOLDOWN_SEC", 120)),
         p1_vital_cooldown_sec=max(0, _env_int("P1_VITAL_COOLDOWN_SEC", 120)),
+        p0_gas_cooldown_sec=max(0, _env_int("P0_GAS_COOLDOWN_SEC", 120)),
     )
 
 

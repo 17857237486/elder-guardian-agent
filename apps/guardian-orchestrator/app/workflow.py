@@ -922,6 +922,55 @@ class WorkflowRunner:
             result["rejected_model_output"] = parsed_output
         return result
 
+    @staticmethod
+    def _event_payload(event: NormalizedEventV2) -> dict[str, Any]:
+        for evidence in event.evidence or []:
+            if isinstance(evidence, dict) and isinstance(evidence.get("payload"), dict):
+                return evidence["payload"]
+        return {}
+
+    @staticmethod
+    def _room_label(room: str | None) -> str:
+        return {
+            "bedroom": "卧室",
+            "bathroom": "卫生间",
+            "living_room": "客厅",
+            "kitchen": "厨房",
+            "local": "本地",
+        }.get(str(room or ""), room or "当前房间")
+
+    @classmethod
+    def _p0_hmi_message(cls, event: NormalizedEventV2) -> str:
+        if str(event.event_type) == EventType.GAS_LEAK.value:
+            room = cls._room_label(event.room)
+            return f"检测到{room}燃气异常，系统已打开窗户、关闭燃气阀并通知家属。请尽快远离厨房，确认您现在是否安全。"
+        if str(event.event_type) == EventType.SPO2_LOW.value:
+            return "检测到血氧严重偏低，系统已启动紧急告警。请确认您现在是否需要帮助。"
+        return "检测到紧急风险，系统已启动紧急处置并通知家属。请确认您现在是否需要帮助。"
+
+    @classmethod
+    def _family_alert_message(cls, event: NormalizedEventV2, alert_level: RiskLevel) -> str:
+        payload = cls._event_payload(event)
+        event_type = str(event.event_type)
+        if event_type == EventType.GAS_LEAK.value:
+            gas = payload.get("gas_ppm")
+            gas_text = f" {gas:g} ppm" if isinstance(gas, (int, float)) else ""
+            room = cls._room_label(event.room)
+            return f"{room}检测到燃气{gas_text}，系统已关闭燃气阀、打开窗户并启动本地报警。"
+        if event_type == EventType.HEART_RATE_ABNORMAL.value:
+            heart_rate = payload.get("heart_rate")
+            value = f"{heart_rate:g} bpm" if isinstance(heart_rate, (int, float)) else "异常"
+            return f"检测到老人心率 {value}，超过安全阈值，已在 HMI 询问老人。"
+        if event_type == EventType.SPO2_LOW.value:
+            spo2 = payload.get("spo2")
+            value = f"{spo2:g}%" if isinstance(spo2, (int, float)) else "偏低"
+            if alert_level == RiskLevel.P0:
+                return f"检测到老人血氧 {value}，严重低于安全阈值，系统已启动紧急告警。"
+            return f"检测到老人血氧 {value}，低于安全阈值，已在 HMI 询问老人。"
+        if alert_level == RiskLevel.P0:
+            return f"紧急告警：{event.summary}"
+        return f"高风险事件：{event.summary}"
+
     async def _execute_p0(self, workflow: WorkflowV2, event: NormalizedEventV2) -> dict[str, Any]:
         if str(event.event_type) == EventType.GAS_LEAK.value:
             commands = [
@@ -949,10 +998,11 @@ class WorkflowRunner:
                 event_id=event.event_id,
                 elder_id=event.elder_id,
                 alert_level=RiskLevel.P0,
-                message=f"紧急告警：{event.summary}",
+                message=self._family_alert_message(event, RiskLevel.P0),
             )
         )
-        return {"action": action, "alert": alert}
+        prompt = await self._create_hmi_prompt(workflow, event, self._p0_hmi_message(event))
+        return {"action": action, "alert": alert, "prompt": prompt}
 
     async def _create_hmi_prompt(self, workflow: WorkflowV2, event: NormalizedEventV2, message: str) -> dict[str, Any]:
         return await self.edge.create_hmi_prompt(
@@ -1108,7 +1158,7 @@ class WorkflowRunner:
                         event_id=event.event_id,
                         elder_id=event.elder_id,
                         alert_level=RiskLevel.P1,
-                        message=f"高风险事件：{event.summary}",
+                        message=self._family_alert_message(event, RiskLevel.P1),
                     )
                 )
             return {"status": "waiting_hmi", "prompt": prompt, "alert": alert}

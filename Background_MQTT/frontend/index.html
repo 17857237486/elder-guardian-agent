@@ -951,20 +951,20 @@
             <div class="timeline-field">
               <label for="scenario-event">风险事件</label>
               <select id="scenario-event">
-                <option value="normal">P4 正常状态</option>
+                <option value="gas_leak" selected>P0 燃气异常</option>
                 <option value="spo2_critical">P0 严重低血氧</option>
                 <option value="spo2_low">P1 低血氧</option>
                 <option value="heart_rate_abnormal">P1 心率异常</option>
+                <option value="suspected_fall">P1 疑似跌倒</option>
+                <option value="long_static">P2 长时间静止</option>
                 <option value="heart_rate_baseline_anomaly">P2 心率基线异常（Candidate复核）</option>
                 <option value="spo2_baseline_anomaly">P2 血氧基线异常（Candidate复核）</option>
                 <option value="bathroom_stay_anomaly_demo">P2 卫生间停留过长（Candidate复核）</option>
-                <option value="suspected_fall">P1 疑似跌倒</option>
-                <option value="long_static">P2 长时间静止</option>
                 <option value="co2_high">P3 CO2 偏高</option>
-                <option value="gas_leak" selected>P0 燃气异常</option>
                 <option value="temperature_high">P3 室温过高</option>
                 <option value="temperature_low">P3 室温过低</option>
                 <option value="humidity_abnormal">P3 湿度异常</option>
+                <option value="normal">P4 正常状态</option>
               </select>
             </div>
             <div class="timeline-field">
@@ -1020,20 +1020,20 @@
       </article>
 
       <article class="panel">
-        <h2>?????????</h2>
+        <h2>真实摄像头拍照验证</h2>
         <div class="vision-capture-panel">
-          <p class="muted">??????????????Vision Service ????????????????????????????????????????????????????????????????????</p>
+          <p class="muted">通过 Vision Service 调用真实摄像头拍照。演示时先拍满五张照片，再用最近五张触发疑似跌倒或长时间静止；本地模型分析中间三张，云端复核五张原图。</p>
           <div class="timeline-grid">
             <div class="timeline-field">
-              <label for="vision-elder">?? ID</label>
+              <label for="vision-elder">老人 ID</label>
               <input id="vision-elder" value="elder_001" />
             </div>
             <div class="timeline-field">
-              <label for="vision-camera">??? ID</label>
+              <label for="vision-camera">摄像头 ID</label>
               <input id="vision-camera" value="living_room" />
             </div>
             <div class="timeline-field">
-              <label for="vision-room">????</label>
+              <label for="vision-room">拍摄房间</label>
               <select id="vision-room">
                 <option value="bedroom">bedroom</option>
                 <option value="kitchen">kitchen</option>
@@ -1043,17 +1043,17 @@
             </div>
           </div>
           <div class="form-actions">
-            <button id="vision-capture-one" class="primary" type="button">?????</button>
-            <button id="vision-refresh-captures" type="button">??????</button>
-            <button id="vision-clear-captures" type="button">?????????</button>
-            <button id="vision-trigger-fall" type="button">???????????</button>
-            <button id="vision-trigger-static" type="button">????????????</button>
-            <span id="vision-submit-status" class="submit-status">????</span>
+            <button id="vision-capture-one" class="primary" type="button">拍一张照片</button>
+            <button id="vision-refresh-captures" type="button">查看最近五张</button>
+            <button id="vision-clear-captures" type="button">一键清除已拍摄图片</button>
+            <button id="vision-trigger-fall" type="button">用最近五张触发疑似跌倒</button>
+            <button id="vision-trigger-static" type="button">用最近五张触发长时间静止</button>
+            <span id="vision-submit-status" class="submit-status">等待操作</span>
           </div>
           <div class="vision-capture-summary">
-            <div><span>??????</span><strong id="vision-capture-count">0 / 5</strong></div>
-            <div><span>??????</span><strong>? 2?3?4 ?</strong></div>
-            <div><span>??????</span><strong>5 ???</strong></div>
+            <div><span>待使用照片</span><strong id="vision-capture-count">0 / 5</strong></div>
+            <div><span>本地模型</span><strong>第 2、3、4 张</strong></div>
+            <div><span>云端复核</span><strong>5 张原图</strong></div>
           </div>
           <ol id="vision-capture-list" class="vision-capture-list"></ol>
         </div>
@@ -1216,20 +1216,20 @@
       <article class="panel">
         <h2>手动输入数据</h2>
         <div class="template-grid" aria-label="事件模板">
-          <button class="template-button active" type="button" data-template="normal">P4 正常状态<br />正常记录</button>
+          <button class="template-button" type="button" data-template="gas_leak">P0 燃气异常<br />紧急告警</button>
           <button class="template-button" type="button" data-template="spo2_critical">P0 严重低血氧<br />紧急风险</button>
           <button class="template-button" type="button" data-template="spo2_low">P1 低血氧<br />高风险确认</button>
           <button class="template-button" type="button" data-template="heart_rate_abnormal">P1 心率异常<br />本地询问</button>
+          <button class="template-button" type="button" data-template="suspected_fall">P1 疑似跌倒<br />视觉事件</button>
+          <button class="template-button" type="button" data-template="long_static">P2 长时间静止<br />视觉事件</button>
           <button class="template-button" type="button" data-template="heart_rate_baseline_anomaly">P2 心率基线异常<br />Candidate复核</button>
           <button class="template-button" type="button" data-template="spo2_baseline_anomaly">P2 血氧基线异常<br />Candidate复核</button>
           <button class="template-button" type="button" data-template="bathroom_stay_anomaly_demo">P2 卫生间停留过长<br />Candidate复核</button>
-          <button class="template-button" type="button" data-template="suspected_fall">P1 疑似跌倒<br />视觉事件</button>
-          <button class="template-button" type="button" data-template="long_static">P2 长时间静止<br />视觉事件</button>
           <button class="template-button" type="button" data-template="co2_high">P3 CO2 偏高<br />通风建议</button>
-          <button class="template-button" type="button" data-template="gas_leak">P0 燃气异常<br />紧急告警</button>
           <button class="template-button" type="button" data-template="temperature_high">P3 室温过高<br />降温建议</button>
           <button class="template-button" type="button" data-template="temperature_low">P3 室温过低<br />升温建议</button>
           <button class="template-button" type="button" data-template="humidity_abnormal">P3 湿度异常<br />环境事件</button>
+          <button class="template-button active" type="button" data-template="normal">P4 正常状态<br />正常记录</button>
         </div>
         <div class="template-note">
           <table>

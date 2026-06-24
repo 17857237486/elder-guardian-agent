@@ -854,6 +854,57 @@ class LLMClientParserTests(unittest.TestCase):
                 else:
                     runner.edge.request_home_action.assert_awaited_once()
 
+    def test_p0_events_execute_emergency_policy_and_create_hmi_prompt(self) -> None:
+        runner = WorkflowRunner()
+        runner.edge.request_home_action = AsyncMock(return_value={"ok": True, "executions": ["action"]})
+        runner.edge.raise_family_alert = AsyncMock(return_value={"alert_id": "alert_p0", "status": "sent"})
+        runner.edge.create_hmi_prompt = AsyncMock(return_value={"prompt_id": "prompt_p0", "status": "waiting"})
+        event = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type=EventType.GAS_LEAK,
+            risk_level=RiskLevel.P0,
+            room="kitchen",
+            summary="gas leak",
+            confidence=1.0,
+            source_kind="environment",
+            evidence=[{"payload": {"room": "kitchen", "gas_ppm": 180}}],
+        )
+
+        result = asyncio.run(runner._execute_policy(SimpleNamespace(workflow_id="wf_p0"), event, {}))
+
+        self.assertIn("action", result)
+        self.assertIn("alert", result)
+        self.assertIn("prompt", result)
+        runner.edge.request_home_action.assert_awaited_once()
+        runner.edge.raise_family_alert.assert_awaited_once()
+        runner.edge.create_hmi_prompt.assert_awaited_once()
+        prompt = runner.edge.create_hmi_prompt.await_args.args[0]
+        alert = runner.edge.raise_family_alert.await_args.args[0]
+        self.assertEqual(prompt.options, ["我没事", "需要帮助", "联系家属"])
+        self.assertIn("燃气异常", prompt.message)
+        self.assertIn("180 ppm", alert.message)
+        self.assertIn("关闭燃气阀", alert.message)
+
+    def test_p1_family_alert_messages_include_vital_value(self) -> None:
+        runner = WorkflowRunner()
+        heart_event = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type=EventType.HEART_RATE_ABNORMAL,
+            risk_level=RiskLevel.P1,
+            summary="heart rate abnormal",
+            evidence=[{"payload": {"heart_rate": 138, "spo2": 96}}],
+        )
+        spo2_event = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type=EventType.SPO2_LOW,
+            risk_level=RiskLevel.P1,
+            summary="spo2 low",
+            evidence=[{"payload": {"heart_rate": 82, "spo2": 90}}],
+        )
+
+        self.assertIn("138 bpm", runner._family_alert_message(heart_event, RiskLevel.P1))
+        self.assertIn("90%", runner._family_alert_message(spo2_event, RiskLevel.P1))
+
     def test_hmi_risk_messages_use_chinese_templates(self) -> None:
         cases = [
             (

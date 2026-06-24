@@ -14,6 +14,20 @@ const DEFAULT_HOME_ENV: Record<string, AnyRecord> = {
   living_room: { room: "living_room", temperature: 24.5, humidity: 49.0, co2_ppm: 850, gas_ppm: 0, smoke_ppm: 0, presence: false, is_default: true },
   kitchen: { room: "kitchen", temperature: 25.0, humidity: 52.0, co2_ppm: 880, gas_ppm: 0, smoke_ppm: 0, presence: false, is_default: true }
 };
+const EVENT_LABELS: Record<string, string> = {
+  normal: "正常状态",
+  gas_leak: "燃气异常",
+  spo2_low: "低血氧",
+  heart_rate_abnormal: "心率异常",
+  suspected_fall: "疑似跌倒",
+  long_static: "长时间静止",
+  co2_high: "CO2 偏高",
+  temperature_high: "室温过高",
+  temperature_low: "室温过低",
+  humidity_abnormal: "湿度异常",
+  vital_baseline_anomaly: "生命体征基线异常",
+  bathroom_stay_anomaly: "卫生间停留过长"
+};
 const IMPORTANT_STEPS = new Set([
   "rule_gate",
   "frame_collection",
@@ -300,6 +314,13 @@ function riskOf(item: AnyRecord): string {
   return String(item.final_risk_level ?? item.local_risk_level ?? item.rule_risk_level ?? item.risk_level ?? "--");
 }
 
+function eventLabel(itemOrType?: AnyRecord | string | null): string {
+  const item = typeof itemOrType === "object" && itemOrType !== null ? itemOrType : null;
+  const eventType = typeof itemOrType === "string" ? itemOrType : String(item?.event_type ?? "");
+  if (eventType === "spo2_low" && item && riskOf(item) === "P0") return "严重低血氧";
+  return EVENT_LABELS[eventType] ?? (eventType || "未知事件");
+}
+
 const RULE_RESULT_STATES = new Set([
   "event_detected",
   "rule_classified",
@@ -507,10 +528,10 @@ const demoTitle = computed(() => {
     return `当前演示：Candidate · ${candidateLabel(item.candidate_type)} · ${item.status ?? "--"}`;
   }
   if (target.kind === "risk_input") {
-    return `当前演示：${target.item.event_type ?? "--"} · ${riskOf(target.item)} · 异常数据已输入`;
+    return `当前演示：${eventLabel(target.item)} · ${riskOf(target.item)} · 异常数据已输入`;
   }
   if (target.kind === "normal_input") {
-    return "当前演示：normal · P4 · 正常数据已记录";
+    return "当前演示：正常状态 · P4 · 正常数据已记录";
   }
   const item = target.item;
   const risk = riskOf(item);
@@ -518,10 +539,10 @@ const demoTitle = computed(() => {
   const responses = relatedItems(target, "hmi_responses");
   const waitingPrompt = prompts.some((prompt) => String(prompt.status ?? "").toLowerCase() === "waiting");
   if (waitingPrompt) {
-    return `当前演示：${item.event_type ?? "--"} · ${risk} · 等待老人反馈`;
+    return `当前演示：${eventLabel(item)} · ${risk} · 等待老人反馈`;
   }
   if (responses.length) {
-    return `当前演示：${item.event_type ?? "--"} · ${risk} · 老人反馈已完成`;
+    return `当前演示：${eventLabel(item)} · ${risk} · 老人反馈已完成`;
   }
   if (isDeterministicRuleOnlyEvent(item, risk)) {
     const actions = relatedItems(target, "action_executions");
@@ -529,12 +550,12 @@ const demoTitle = computed(() => {
     const phase = hasEventRuleResult(item, risk) || actions.length || alerts.length
       ? "规则处置已完成"
       : "规则处理中";
-    return `当前演示：${item.event_type ?? "--"} · ${risk} · ${phase}`;
+    return `当前演示：${eventLabel(item)} · ${risk} · ${phase}`;
   }
   const finalStep = findTargetStep(target, "final_advisory");
   const localStep = findTargetStep(target, "local_multiframe_analysis");
   const phase = finalStep ? "最终建议已生成" : localStep ? "本地模型已处理" : "规则处理中";
-  return `当前演示：${item.event_type ?? "--"} · ${riskOf(item)} · ${phase}`;
+  return `当前演示：${eventLabel(item)} · ${riskOf(item)} · ${phase}`;
 });
 
 const demoNodes = computed(() => {
@@ -715,7 +736,7 @@ const demoNodes = computed(() => {
       key: "edge",
       name: "Edge MCP",
       state: "completed" as DemoNodeState,
-      note: shortText(isCandidate ? `候选 ${candidateStatus || "--"}` : `事件 ${item.event_type ?? "--"}`),
+      note: shortText(isCandidate ? `候选 ${candidateStatus || "--"}` : `事件 ${eventLabel(item)}`),
       time: eventTime(item)
     },
     {
@@ -862,7 +883,6 @@ const hmiPromptItems = computed<AnyRecord[]>(() => {
     .slice(0, DISPLAY_LIMIT);
 });
 const familyAlertItems = computed<AnyRecord[]>(() => filteredAlerts.value.slice(0, DISPLAY_LIMIT));
-const elderFeedback = computed(() => filteredResponses.value.slice(0, DISPLAY_LIMIT));
 const realDevices = computed(() => filteredDeviceReadings.value.slice(0, DISPLAY_LIMIT));
 const latestContextFusion = computed(() =>
   filteredWorkflowSteps.value.find(
@@ -1166,16 +1186,6 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
         </ul></div>
       </article>
 
-      <article class="panel feedback-panel">
-        <h2>老人反馈</h2>
-        <div class="panel-scroll"><p v-if="!elderFeedback.length" class="empty">暂无老人反馈</p><ul>
-          <li v-for="feedback in elderFeedback" :key="`${feedback.prompt_id}-${feedback.created_at}`">
-            <div class="row-head"><strong>{{ feedback.response_text }}</strong><time>{{ formatTime(feedback.created_at) }}</time></div>
-            <b>{{ feedback.outcome === "resolved" ? "已确认安全" : "已升级家属告警" }}</b>
-            <p>事件 {{ feedback.event_id }} · {{ feedback.response_type }}</p>
-          </li>
-        </ul></div>
-      </article>
     </section>
   </main>
 </template>

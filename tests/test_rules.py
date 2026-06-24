@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT / "packages" / "guardian-shared"))
 sys.path.insert(0, str(ROOT / "apps" / "guardian-orchestrator"))
 
 from app import rules
-from app.event_cooldown import P3EnvironmentCooldown, VitalEventCooldown
+from app.event_cooldown import GasLeakCooldown, P3EnvironmentCooldown, VitalEventCooldown
 from guardian_shared.enums import EventType, RiskLevel
 from guardian_shared.v2 import NormalizedEventV2
 
@@ -205,6 +205,25 @@ class RuleTests(unittest.TestCase):
 
         clock["now"] = 1121.0
         self.assertFalse(cooldown.check(p1).suppressed)
+
+    def test_p0_gas_cooldown_suppresses_duplicate_same_room(self) -> None:
+        clock = {"now": 1000.0}
+        cooldown = GasLeakCooldown(120, clock=lambda: clock["now"])
+        kitchen = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type=EventType.GAS_LEAK,
+            risk_level=RiskLevel.P0,
+            source_kind="environment",
+            room="kitchen",
+        )
+        living_room = kitchen.model_copy(update={"room": "living_room"})
+
+        self.assertFalse(cooldown.check(kitchen).suppressed)
+        self.assertTrue(cooldown.check(kitchen).suppressed)
+        self.assertFalse(cooldown.check(living_room).suppressed)
+
+        clock["now"] = 1121.0
+        self.assertFalse(cooldown.check(kitchen).suppressed)
 
 
 if __name__ == "__main__":

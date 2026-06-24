@@ -49,6 +49,37 @@ class BackgroundEventTests(unittest.TestCase):
         html = (ROOT / "Background_MQTT" / "frontend" / "index.html").read_text(encoding="utf-8")
         self.assertNotIn("night_abnormal_activity", html)
 
+    def test_frontend_risk_events_are_ordered_by_severity(self) -> None:
+        html = (ROOT / "Background_MQTT" / "frontend" / "index.html").read_text(encoding="utf-8")
+        order = [
+            'value="gas_leak"',
+            'value="spo2_critical"',
+            'value="spo2_low"',
+            'value="heart_rate_abnormal"',
+            'value="suspected_fall"',
+            'value="long_static"',
+            'value="heart_rate_baseline_anomaly"',
+            'value="spo2_baseline_anomaly"',
+            'value="bathroom_stay_anomaly_demo"',
+            'value="co2_high"',
+            'value="temperature_high"',
+            'value="temperature_low"',
+            'value="humidity_abnormal"',
+            'value="normal"',
+        ]
+        positions = [html.index(item) for item in order]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_vision_capture_panel_is_chinese_and_not_question_marks(self) -> None:
+        html = (ROOT / "Background_MQTT" / "frontend" / "index.html").read_text(encoding="utf-8")
+        start = html.index("真实摄像头拍照验证")
+        end = html.index("个人基线设置", start)
+        section = html[start:end]
+        self.assertIn("拍一张照片", section)
+        self.assertIn("一键清除已拍摄图片", section)
+        self.assertIn("用最近五张触发疑似跌倒", section)
+        self.assertNotIn("????", section)
+
     def test_spo2_levels_are_distinct(self) -> None:
         critical = build_event_samples("dinner", "spo2_critical", 0, 10, 5, "elder_001")[-1]
         warning = build_event_samples("dinner", "spo2_low", 0, 10, 5, "elder_001")[-1]
