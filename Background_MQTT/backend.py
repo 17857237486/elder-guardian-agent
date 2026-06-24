@@ -1389,6 +1389,14 @@ async def bathroom_stay_demo(request: BathroomStayDemoRequest) -> dict[str, Any]
     bathroom_stay_monitor["bathroom_reference_limit_sec"] = await bathroom_reference_limit_sec(request.elder_id)
     bathroom_stay_monitor.update(
         {
+            "current_room": None,
+            "room_presence": {room: False for room in ROOM_KEYS},
+            "bathroom_present": False,
+            "bathroom_entered_at": None,
+            "bathroom_exited_at": None,
+            "bathroom_elapsed_sec": 0,
+            "status": "not_in_bathroom",
+            "last_stay_seconds": None,
             "demo_flow_rows": [],
             "demo_flow_seen_sample_ids": [],
             "demo_flow_current_room": None,
