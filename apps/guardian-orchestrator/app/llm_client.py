@@ -220,6 +220,54 @@ def _is_candidate_payload(payload: dict[str, Any]) -> bool:
     return isinstance(event, dict) and str(event.get("source_kind") or "") == "ai_review_candidate"
 
 
+def _candidate_local_input(payload: dict[str, Any]) -> dict[str, Any]:
+    context = payload.get("context")
+    if isinstance(context, dict) and isinstance(context.get("candidate_local_input"), dict):
+        return context["candidate_local_input"]
+    return {}
+
+
+def _number(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _spo2_candidate_adjusted_risk(payload: dict[str, Any], reviewed: str) -> tuple[str, str | None]:
+    if reviewed not in {"P0", "P1"} or not _is_candidate_payload(payload):
+        return reviewed, None
+    compact = _candidate_local_input(payload)
+    if str(compact.get("t") or "") != "vital_baseline_anomaly":
+        return reviewed, None
+    if str(compact.get("metric") or "") != "spo2" or str(compact.get("dir") or "") != "low":
+        return reviewed, None
+
+    latest = _number(compact.get("latest"))
+    minimum = _number(compact.get("min"))
+    p10 = _number(compact.get("p10"))
+    baseline_low = _number(compact.get("bp10"))
+    sample_count = _number(compact.get("n")) or 0
+    observed_low = min(value for value in (latest, minimum, p10) if value is not None) if any(
+        value is not None for value in (latest, minimum, p10)
+    ) else None
+
+    if observed_low is None:
+        return "P2", "spo2_candidate_missing_numeric_evidence"
+    if observed_low < 92:
+        return reviewed, None
+    if baseline_low is None:
+        return "P2", "spo2_candidate_missing_baseline"
+    if latest is not None and latest >= baseline_low:
+        return "P2", "spo2_candidate_not_below_low_reference"
+    drop = baseline_low - observed_low
+    if sample_count >= 24 and drop >= 2.0:
+        return reviewed, None
+    return "P2", "spo2_candidate_drop_not_severe_enough_for_p1"
+
+
 def _minimum_allowed_risk(payload: dict[str, Any]) -> str:
     rule_risk = _event_risk_level(payload) or "P4"
     event_floor = EVENT_MINIMUM_RISK.get(_event_type(payload) or "", "P4")
@@ -628,6 +676,7 @@ def _normalize_local_multimodal_output(payload: dict[str, Any], output: dict[str
         raise LLMOutputError(f"invalid risk level: {reviewed}")
     if RISK_ORDER[reviewed] < RISK_ORDER[original]:
         raise LLMOutputError(f"model attempted to downgrade risk from {original} to {reviewed}")
+    reviewed, risk_adjustment = _spo2_candidate_adjusted_risk(payload, reviewed)
     evidence = output.get("supporting_evidence")
     repaired_fields: list[str] = []
     try:
@@ -670,6 +719,9 @@ def _normalize_local_multimodal_output(payload: dict[str, Any], output: dict[str
         "recommended_followup": [],
         "family_summary": output["family_summary"],
     }
+    if risk_adjustment:
+        normalized["risk_guardrail_adjustment"] = risk_adjustment
+        repaired_fields.append("risk_level")
     if repaired_fields:
         normalized["schema_repaired_fields"] = repaired_fields
     return normalized
@@ -794,8 +846,10 @@ def _build_candidate_local_prompt(event: dict[str, Any], context: dict[str, Any]
     candidate_input = context.get("candidate_local_input")
     compact = candidate_input if isinstance(candidate_input, dict) else {}
     return (
-        "判断老人安全candidate候选是否升级。"
-        "等级:P0生命危险;P1严重风险;P2需关注;P3轻微记录;P4无风险。"
+        "判断老人安全candidate候选事件是否升级。"
+        "等级:P0=即时生命危险;P1=严重风险;P2=需要关注;P3=轻微记录;P4=无风险。"
+        "血氧基线候选规则:spo2>=92不是硬规则低血氧;spo2>=bp10时不得仅凭基线异常输出P1/P0;"
+        "spo2<bp10且>=92通常为P2,只有明显持续下降或伴随其他危险证据才可P1。"
         "只输出JSON:{event_semantics,risk_level,confidence,family_summary};"
         "risk_level只能是P0/P1/P2/P3/P4之一,禁止复合等级和设备控制。"
         "输入:"
@@ -947,7 +1001,7 @@ class LocalMultimodalClient:
             )
             response.raise_for_status()
         raw_content = response.json()["choices"][0]["message"].get("content") or ""
-        return _normalize_local_multimodal_response({"event": event}, raw_content)
+        return _normalize_local_multimodal_response({"event": event, "context": context}, raw_content)
 
 
 class CloudLLMClient:

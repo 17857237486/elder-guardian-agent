@@ -181,6 +181,11 @@ const activeDemoTarget = computed<DemoTarget>(() => {
   const events = filteredEvents.value;
   const steps = filteredWorkflowSteps.value;
   const candidates = ((state.ai_review_candidates ?? []) as AnyRecord[]).filter(isAfterClearTime);
+  const sortedCandidates = [...candidates].sort((a, b) => new Date(eventTime(b)).getTime() - new Date(eventTime(a)).getTime());
+  const latestCandidate = sortedCandidates[0] ?? null;
+  const latestCandidateTime = latestCandidate ? new Date(eventTime(latestCandidate)).getTime() : 0;
+  const latestCandidateStatus = String(latestCandidate?.status ?? "").toLowerCase();
+  const candidateInProgress = ["pending", "reviewing"].includes(latestCandidateStatus);
   const latestObservation = latestInputObservation.value;
   const latestObservationTime = latestObservation ? new Date(eventTime(latestObservation)).getTime() : 0;
   const latestEventTime = latestEvent.value ? new Date(eventTime(latestEvent.value)).getTime() : 0;
@@ -201,6 +206,9 @@ const activeDemoTarget = computed<DemoTarget>(() => {
   );
 
   if (latestObservationRisk && latestObservation?.observation_id) {
+    if (latestObservationTime < latestCandidateTime && candidateInProgress && latestCandidate?.candidate_id) {
+      return { kind: "candidate", id: String(latestCandidate.candidate_id), item: latestCandidate };
+    }
     const matchedLatestEvent = latestEvent.value;
     if (matchedLatestEvent && eventMatchesObservationRisk(matchedLatestEvent, latestObservationRisk)) {
       return { kind: "event", id: String(matchedLatestEvent.event_id), item: matchedLatestEvent };
@@ -215,6 +223,7 @@ const activeDemoTarget = computed<DemoTarget>(() => {
     latestObservation?.observation_id &&
     latestObservationTime > latestEventTime &&
     !latestObservationRisk &&
+    !(candidateInProgress && latestCandidate?.candidate_id) &&
     (!latestEvent.value || riskPriority(latestEventRisk) >= riskPriority("P3"))
   ) {
     return {
@@ -231,6 +240,14 @@ const activeDemoTarget = computed<DemoTarget>(() => {
     };
   }
 
+  if (latestCandidate?.candidate_id && latestCandidateTime >= latestEventTime) {
+    if (latestCandidateStatus === "promoted" && latestCandidate.promoted_event_id) {
+      const promotedEvent = events.find((event) => event.event_id === latestCandidate.promoted_event_id);
+      if (promotedEvent?.event_id) return { kind: "event", id: String(promotedEvent.event_id), item: promotedEvent };
+    }
+    return { kind: "candidate", id: String(latestCandidate.candidate_id), item: latestCandidate };
+  }
+
   if (activeEvent?.event_id) {
     return { kind: "event", id: String(activeEvent.event_id), item: activeEvent };
   }
@@ -243,14 +260,12 @@ const activeDemoTarget = computed<DemoTarget>(() => {
   if (workflowEvent?.event_id) return { kind: "event", id: String(workflowEvent.event_id), item: workflowEvent };
 
   if (latestEvent.value?.event_id) return { kind: "event", id: String(latestEvent.value.event_id), item: latestEvent.value };
+  if (latestCandidate?.candidate_id) return { kind: "candidate", id: String(latestCandidate.candidate_id), item: latestCandidate };
   if (promotedCandidateFallback?.candidate_id) return { kind: "candidate", id: String(promotedCandidateFallback.candidate_id), item: promotedCandidateFallback };
   return null;
 });
 const latestLocalAnalysis = computed(() =>
-  filteredWorkflowSteps.value.find(
-    (step: AnyRecord) =>
-      step.event_id === latestEvent.value?.event_id && step.step_name === "local_multiframe_analysis"
-  ) ?? null
+  findTargetStep(activeDemoTarget.value, "local_multiframe_analysis")
 );
 const isNormalInputDemo = computed(() => activeDemoTarget.value?.kind === "normal_input");
 const isRiskInputDemo = computed(() => activeDemoTarget.value?.kind === "risk_input");
@@ -278,8 +293,32 @@ const localSemanticStatus = computed(() => {
     if (fallbackType === "safety_rejected") return { state: "fallback", text: "模型输出未通过安全校验，已采用规则结果" };
     return { state: "fallback", text: "本地模型请求失败，已采用规则结果" };
   }
-  if (latestEvent.value?.local_semantics) {
-    return { state: "completed", text: latestEvent.value.local_semantics };
+  const target = activeDemoTarget.value;
+  const output = analysis?.output ?? {};
+  if (analysis && ["running", "pending", "reviewing"].includes(String(analysis.status ?? "").toLowerCase())) {
+    return { state: "pending", text: "等待 RK3588 本地模型分析" };
+  }
+  if (output.event_semantics || output.family_summary || output.risk_level) {
+    const latency = output.latency_ms !== undefined ? ` · 模型耗时 ${durationText(output.latency_ms)}` : "";
+    const resultText = output.event_semantics ?? output.family_summary ?? "本地模型已完成";
+    const suffix = target?.kind === "candidate" && String(target.item.status ?? "").toLowerCase() === "dismissed"
+      ? " · 未升级为正式风险"
+      : "";
+    return { state: "completed", text: `${resultText} · 本地风险 ${output.risk_level ?? "--"}${latency}${suffix}` };
+  }
+  if (target?.kind === "event" && target.item?.local_semantics) {
+    return { state: "completed", text: target.item.local_semantics };
+  }
+  if (target?.kind === "candidate") {
+    const result = candidateLocalResult(target.item);
+    if (result.event_semantics || result.family_summary || result.risk_level) {
+      const latency = result.latency_ms !== undefined ? ` · 模型耗时 ${durationText(result.latency_ms)}` : "";
+      const suffix = String(target.item.status ?? "").toLowerCase() === "dismissed" ? " · 未升级为正式风险" : "";
+      return {
+        state: result.fallback ? "fallback" : "completed",
+        text: `${result.event_semantics ?? result.family_summary ?? "本地模型已完成"} · 本地风险 ${result.risk_level ?? "--"}${latency}${suffix}`
+      };
+    }
   }
   return { state: "pending", text: "等待 RK3588 本地模型分析" };
 });
@@ -315,6 +354,20 @@ function shortText(value: unknown, length = 40): string {
 
 function riskOf(item: AnyRecord): string {
   return String(item.final_risk_level ?? item.local_risk_level ?? item.rule_risk_level ?? item.risk_level ?? "--");
+}
+
+function candidateLocalResult(item: AnyRecord): AnyRecord {
+  const features = item.features && typeof item.features === "object" ? item.features : {};
+  const result = features.local_result && typeof features.local_result === "object" ? features.local_result : {};
+  return result;
+}
+
+function demoRisk(target: DemoTarget): string {
+  if (!target) return "--";
+  if (target.kind === "normal_input") return "P4";
+  if (target.kind === "risk_input") return riskOf(target.item);
+  if (target.kind === "candidate") return String(candidateLocalResult(target.item).risk_level ?? target.item.risk_level ?? "--");
+  return riskOf(target.item);
 }
 
 function eventLabel(itemOrType?: AnyRecord | string | null): string {
@@ -381,17 +434,34 @@ const summaryRisk = computed(() => {
   const target = activeDemoTarget.value;
   if (target?.kind === "normal_input") return "P4";
   if (target?.kind === "risk_input") return riskOf(target.item);
+  if (target?.kind === "candidate") return demoRisk(target);
   return latestEvent.value?.final_risk_level ?? (isCleared.value ? "P4" : state.current_risk_level);
 });
 const summaryRuleRisk = computed(() => {
   const target = activeDemoTarget.value;
   if (target?.kind === "normal_input") return "P4";
   if (target?.kind === "risk_input") return riskOf(target.item);
+  if (target?.kind === "candidate") return "Candidate";
   return latestEvent.value?.rule_risk_level ?? "P4";
 });
-const summaryLocalRisk = computed(() => (isNormalInputDemo.value || isRiskInputDemo.value ? "--" : (latestEvent.value?.local_risk_level ?? "--")));
-const summaryCloudRisk = computed(() => (isNormalInputDemo.value || isRiskInputDemo.value ? "--" : (latestEvent.value?.cloud_risk_level ?? "--")));
-const summaryDecisionSource = computed(() => (isNormalInputDemo.value ? "rule" : isRiskInputDemo.value ? "rule_pending" : (latestEvent.value?.decision_source ?? "rule")));
+const summaryLocalRisk = computed(() => {
+  const target = activeDemoTarget.value;
+  if (isNormalInputDemo.value || isRiskInputDemo.value) return "--";
+  if (target?.kind === "candidate") return String(candidateLocalResult(target.item).risk_level ?? "--");
+  return target?.kind === "event" ? (target.item.local_risk_level ?? "--") : "--";
+});
+const summaryCloudRisk = computed(() => {
+  const target = activeDemoTarget.value;
+  if (isNormalInputDemo.value || isRiskInputDemo.value || target?.kind === "candidate") return "--";
+  return target?.kind === "event" ? (target.item.cloud_risk_level ?? "--") : "--";
+});
+const summaryDecisionSource = computed(() => {
+  const target = activeDemoTarget.value;
+  if (isNormalInputDemo.value) return "rule";
+  if (isRiskInputDemo.value) return "rule_pending";
+  if (target?.kind === "candidate") return "candidate";
+  return target?.kind === "event" ? (target.item.decision_source ?? "rule") : "rule";
+});
 
 function nodeLabel(stateValue: DemoNodeState): string {
   return {
@@ -526,15 +596,26 @@ function candidateLabel(type?: unknown): string {
   return value || "ai_review_candidate";
 }
 
+function candidateStatusText(status?: unknown): string {
+  const value = String(status ?? "").toLowerCase();
+  return {
+    pending: "等待本地复核",
+    reviewing: "RK3588 本地模型分析中",
+    dismissed: "本地复核完成，未升级为风险",
+    failed: "本地复核失败，已记录",
+    promoted: "本地复核已升级为正式风险"
+  }[value] ?? (value || "--");
+}
+
 const demoTitle = computed(() => {
   const target = activeDemoTarget.value;
   if (!target) return "当前演示：暂无演示事件";
   if (target.kind === "candidate") {
     const item = target.item;
     if (String(item.status ?? "").toLowerCase() === "promoted") {
-      return `当前演示：${candidateLabel(item.candidate_type)} · promoted · 本地复核已升级`;
+      return `当前演示：${candidateLabel(item.candidate_type)} · ${candidateStatusText(item.status)}`;
     }
-    return `当前演示：Candidate · ${candidateLabel(item.candidate_type)} · ${item.status ?? "--"}`;
+    return `当前演示：${candidateLabel(item.candidate_type)} · ${candidateStatusText(item.status)}`;
   }
   if (target.kind === "risk_input") {
     return `当前演示：${eventLabel(target.item)} · ${riskOf(target.item)} · 异常数据已输入`;
@@ -766,7 +847,7 @@ const demoNodes = computed(() => {
       key: "edge",
       name: "Edge MCP",
       state: "completed" as DemoNodeState,
-      note: shortText(isCandidate ? `候选 ${candidateStatus || "--"}` : `事件 ${eventLabel(item)}`),
+      note: shortText(isCandidate ? `候选事件 ${candidateStatusText(candidateStatus)}` : `事件 ${eventLabel(item)}`),
       time: eventTime(item)
     },
     {
@@ -774,7 +855,7 @@ const demoNodes = computed(() => {
       name: "规则判断",
       state: isCandidate || isPromotedCandidateEvent ? "skipped" as DemoNodeState : ruleNodeState(item, risk, ruleStep),
       note: isCandidate
-        ? "非硬规则，进入候选复核"
+        ? "非硬规则事件，进入候选复核"
         : isPromotedCandidateEvent
           ? "Candidate 复核升级，非硬规则"
           : shortText(ruleNodeNote(item, risk, ruleStep)),

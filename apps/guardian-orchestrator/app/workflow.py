@@ -939,6 +939,12 @@ class WorkflowRunner:
             "local": "本地",
         }.get(str(room or ""), room or "当前房间")
 
+    @staticmethod
+    def _format_number(value: Any, suffix: str = "") -> str:
+        if isinstance(value, (int, float)):
+            return f"{value:g}{suffix}"
+        return "异常"
+
     @classmethod
     def _p0_hmi_message(cls, event: NormalizedEventV2) -> str:
         if str(event.event_type) == EventType.GAS_LEAK.value:
@@ -959,17 +965,35 @@ class WorkflowRunner:
             return f"{room}检测到燃气{gas_text}，系统已关闭燃气阀、打开窗户并启动本地报警。"
         if event_type == EventType.HEART_RATE_ABNORMAL.value:
             heart_rate = payload.get("heart_rate")
-            value = f"{heart_rate:g} bpm" if isinstance(heart_rate, (int, float)) else "异常"
+            value = cls._format_number(heart_rate, " bpm")
             return f"检测到老人心率 {value}，超过安全阈值，已在 HMI 询问老人。"
         if event_type == EventType.SPO2_LOW.value:
             spo2 = payload.get("spo2")
-            value = f"{spo2:g}%" if isinstance(spo2, (int, float)) else "偏低"
+            value = cls._format_number(spo2, "%")
             if alert_level == RiskLevel.P0:
                 return f"检测到老人血氧 {value}，严重低于安全阈值，系统已启动紧急告警。"
             return f"检测到老人血氧 {value}，低于安全阈值，已在 HMI 询问老人。"
+        if event_type == "vital_baseline_anomaly":
+            features = cls._candidate_features(event)
+            metric = str(features.get("metric") or "")
+            direction = str(features.get("direction") or "")
+            latest = features.get("latest_value", features.get("latest"))
+            if metric == "heart_rate":
+                label = "高于" if direction == "high" else "低于"
+                return f"检测到老人心率 {cls._format_number(latest, ' bpm')}，{label}个人参考范围，已在 HMI 询问老人。"
+            if metric == "spo2":
+                return f"检测到老人血氧 {cls._format_number(latest, '%')}，低于个人参考范围，已在 HMI 询问老人。"
+            return "检测到老人的生命体征与平时相比有异常，已在 HMI 询问老人。"
+        if event_type == "bathroom_stay_anomaly":
+            features = cls._candidate_features(event)
+            duration = features.get("duration_seconds", features.get("dur"))
+            limit = features.get("baseline_p90_seconds", features.get("p90s"))
+            if isinstance(duration, (int, float)) and isinstance(limit, (int, float)):
+                return f"检测到老人在卫生间停留 {duration:g} 秒，超过个人参考上限 {limit:g} 秒，已在 HMI 询问老人。"
+            return "检测到老人在卫生间停留时间较长，已在 HMI 询问老人。"
         if alert_level == RiskLevel.P0:
-            return f"紧急告警：{event.summary}"
-        return f"高风险事件：{event.summary}"
+            return "检测到紧急风险事件，系统已启动紧急处置并通知家属。"
+        return "检测到高风险事件，系统已在 HMI 询问老人并通知家属。"
 
     async def _execute_p0(self, workflow: WorkflowV2, event: NormalizedEventV2) -> dict[str, Any]:
         if str(event.event_type) == EventType.GAS_LEAK.value:

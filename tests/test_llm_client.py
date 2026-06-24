@@ -1295,6 +1295,76 @@ class LLMClientParserTests(unittest.TestCase):
         self.assertEqual(normalized["supporting_evidence"], ["bathroom stay exceeds p90"])
         self.assertIn("supporting_evidence", normalized["schema_repaired_fields"])
 
+    def test_spo2_candidate_at_or_above_low_reference_cannot_upgrade_to_p1(self) -> None:
+        output = {
+            "event_semantics": "spo2 baseline lower than usual",
+            "risk_level": "P1",
+            "confidence": 0.8,
+            "family_summary": "watch spo2",
+        }
+
+        normalized = _normalize_local_multimodal_output(
+            {
+                "event": {
+                    "event_type": "vital_baseline_anomaly",
+                    "risk_level": "P4",
+                    "summary": "spo2 window below personal p10",
+                    "source_kind": "ai_review_candidate",
+                },
+                "context": {
+                    "candidate_local_input": {
+                        "t": "vital_baseline_anomaly",
+                        "metric": "spo2",
+                        "dir": "low",
+                        "latest": 94,
+                        "min": 94,
+                        "p10": 94,
+                        "bp10": 93.5,
+                        "n": 24,
+                    }
+                },
+            },
+            output,
+        )
+
+        self.assertEqual(normalized["risk_level"], "P2")
+        self.assertEqual(normalized["risk_guardrail_adjustment"], "spo2_candidate_not_below_low_reference")
+
+    def test_spo2_candidate_small_drop_below_reference_is_capped_at_p2(self) -> None:
+        output = {
+            "event_semantics": "spo2 mildly below personal baseline",
+            "risk_level": "P1",
+            "confidence": 0.8,
+            "family_summary": "watch spo2",
+        }
+
+        normalized = _normalize_local_multimodal_output(
+            {
+                "event": {
+                    "event_type": "vital_baseline_anomaly",
+                    "risk_level": "P4",
+                    "summary": "spo2 window below personal p10",
+                    "source_kind": "ai_review_candidate",
+                },
+                "context": {
+                    "candidate_local_input": {
+                        "t": "vital_baseline_anomaly",
+                        "metric": "spo2",
+                        "dir": "low",
+                        "latest": 94,
+                        "min": 94,
+                        "p10": 94,
+                        "bp10": 95,
+                        "n": 24,
+                    }
+                },
+            },
+            output,
+        )
+
+        self.assertEqual(normalized["risk_level"], "P2")
+        self.assertEqual(normalized["risk_guardrail_adjustment"], "spo2_candidate_drop_not_severe_enough_for_p1")
+
     def test_candidate_local_output_repairs_confidence_words(self) -> None:
         output = {
             "event_semantics": "bathroom stay mild",
