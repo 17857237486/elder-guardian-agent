@@ -259,6 +259,9 @@ const localSemanticStatus = computed(() => {
     return { state: "completed", text: "P4 正常状态，无需本地模型" };
   }
   if (isRiskInputDemo.value) {
+    if (activeDemoTarget.value?.kind === "risk_input" && isDeterministicVitalRiskInput(activeDemoTarget.value.item)) {
+      return { state: "completed", text: "确定性生命体征规则，无需本地模型" };
+    }
     return { state: "pending", text: "异常数据已输入，等待规则判断生成风险事件" };
   }
   const analysis = latestLocalAnalysis.value;
@@ -359,6 +362,12 @@ function isDeterministicRuleOnlyEvent(item: AnyRecord, risk: string): boolean {
 
 function isP3EnvironmentRiskInput(item: AnyRecord): boolean {
   return riskOf(item) === "P3" && ["co2_high", "temperature_high", "temperature_low", "humidity_abnormal"].includes(String(item.event_type ?? ""));
+}
+
+function isDeterministicVitalRiskInput(item: AnyRecord): boolean {
+  const risk = riskOf(item);
+  const eventType = String(item.event_type ?? "");
+  return (risk === "P1" && ["heart_rate_abnormal", "spo2_low"].includes(eventType)) || (risk === "P0" && eventType === "spo2_low");
 }
 
 function ruleNodeNote(item: AnyRecord, risk: string, step?: AnyRecord | null): string {
@@ -671,6 +680,7 @@ const demoNodes = computed(() => {
     const kinds = group.map((item) => item.kind).filter(Boolean).join(" / ") || target.item.kind || "observation";
     const room = target.item.room ?? group.find((item) => item.kind === "environment")?.payload?.room ?? target.item.payload?.room ?? "--";
     const isP3Environment = isP3EnvironmentRiskInput(target.item);
+    const isDeterministicVital = isDeterministicVitalRiskInput(target.item);
     return [
       {
         key: "input",
@@ -689,36 +699,56 @@ const demoNodes = computed(() => {
       {
         key: "rule",
         name: "规则判断",
-        state: (isP3Environment ? "completed" : "running") as DemoNodeState,
-        note: isP3Environment ? "P3 环境规则已命中" : "等待 Orchestrator 生成风险事件",
+        state: (isP3Environment || isDeterministicVital ? "completed" : "running") as DemoNodeState,
+        note: isP3Environment
+          ? "P3 环境规则已命中"
+          : isDeterministicVital
+            ? "生命体征硬规则已命中"
+            : "等待 Orchestrator 生成风险事件",
         time: eventTime(target.item)
       },
       {
         key: "local",
         name: "本地 AI / Candidate",
-        state: (isP3Environment ? "skipped" : "idle") as DemoNodeState,
-        note: isP3Environment ? "确定性 P3 规则，无需本地模型" : "等待风险事件",
+        state: (isP3Environment || isDeterministicVital ? "skipped" : "idle") as DemoNodeState,
+        note: isP3Environment
+          ? "确定性 P3 规则，无需本地模型"
+          : isDeterministicVital
+            ? "确定性生命体征规则，无需本地模型"
+            : "等待风险事件",
         time: eventTime(target.item)
       },
       {
         key: "cloud",
         name: "云端复核",
-        state: (isP3Environment ? "skipped" : "idle") as DemoNodeState,
-        note: isP3Environment ? "确定性 P3 规则，无需云端复核" : "等待本地处置结果",
+        state: (isP3Environment || isDeterministicVital ? "skipped" : "idle") as DemoNodeState,
+        note: isP3Environment
+          ? "确定性 P3 规则，无需云端复核"
+          : isDeterministicVital
+            ? "确定性生命体征规则，无需云端复核"
+            : "等待本地处置结果",
         time: eventTime(target.item)
       },
       {
         key: "policy",
         name: "设备策略",
-        state: (isP3Environment ? "completed" : "idle") as DemoNodeState,
-        note: isP3Environment ? "环境联动策略已记录或等待执行" : "等待规则处置",
+        state: (isP3Environment ? "completed" : isDeterministicVital ? "skipped" : "idle") as DemoNodeState,
+        note: isP3Environment
+          ? "环境联动策略已记录或等待执行"
+          : isDeterministicVital
+            ? "生命体征事件无需设备动作"
+            : "等待规则处置",
         time: eventTime(target.item)
       },
       {
         key: "hmi",
         name: "HMI / 家属",
-        state: (isP3Environment ? "running" : "idle") as DemoNodeState,
-        note: isP3Environment ? "等待老人反馈" : "等待提示或告警",
+        state: (isP3Environment || isDeterministicVital ? "running" : "idle") as DemoNodeState,
+        note: isP3Environment
+          ? "等待老人反馈"
+          : isDeterministicVital
+            ? "沿用首条异常的 HMI 询问和家属告警"
+            : "等待提示或告警",
         time: eventTime(target.item)
       }
     ];
@@ -808,6 +838,8 @@ const workflowSteps = computed(() => {
 const workflowEmptyText = computed(() =>
   activeDemoTarget.value?.kind === "risk_input" && isP3EnvironmentRiskInput(activeDemoTarget.value.item)
     ? "P3 冷却窗口内不重复生成工作流，已按规则演示处置链路"
+    : activeDemoTarget.value?.kind === "risk_input" && isDeterministicVitalRiskInput(activeDemoTarget.value.item)
+      ? "生命体征冷却窗口内不重复生成工作流，当前异常数据已入库，并沿用首条异常的 HMI 与家属告警链路"
     : activeDemoTarget.value?.kind === "risk_input"
       ? "等待规则判断生成工作流"
       : "暂无工作流记录"
