@@ -479,13 +479,22 @@ const demoTitle = computed(() => {
   }
   const item = target.item;
   const risk = riskOf(item);
+  const prompts = relatedItems(target, "hmi_prompts");
+  const responses = relatedItems(target, "hmi_responses");
+  const waitingPrompt = prompts.some((prompt) => String(prompt.status ?? "").toLowerCase() === "waiting");
+  if (waitingPrompt) {
+    return `当前演示：${item.event_type ?? "--"} · ${risk} · 等待老人反馈`;
+  }
+  if (responses.length) {
+    return `当前演示：${item.event_type ?? "--"} · ${risk} · 老人反馈已完成`;
+  }
   if (isDeterministicRuleOnlyEvent(item, risk)) {
     const actions = relatedItems(target, "action_executions");
     const alerts = relatedItems(target, "alerts");
     const phase = hasEventRuleResult(item, risk) || actions.length || alerts.length
-      ? "rule handling completed"
-      : "rule processing";
-    return `Current demo: ${item.event_type ?? "--"} · ${risk} · ${phase}`;
+      ? "规则处置已完成"
+      : "规则处理中";
+    return `当前演示：${item.event_type ?? "--"} · ${risk} · ${phase}`;
   }
   const finalStep = findTargetStep(target, "final_advisory");
   const localStep = findTargetStep(target, "local_multiframe_analysis");
@@ -526,8 +535,8 @@ const demoNodes = computed(() => {
   const localLatency = localOutput.latency_ms !== undefined ? ` · ${Math.round(Number(localOutput.latency_ms) / 1000)}s` : "";
   const queueWait = localOutput.queue_wait_ms ? ` · 排队${Math.round(Number(localOutput.queue_wait_ms) / 1000)}s` : "";
   const cloudOutput = cloudStep?.output ?? {};
-  const hasHmi = Boolean(prompts.length || responses.length || alerts.length);
-  const p12Waiting = ["P1", "P2"].includes(risk) && prompts.some((prompt) => String(prompt.status ?? "").toLowerCase() === "waiting");
+  const waitingPrompt = prompts.find((prompt) => String(prompt.status ?? "").toLowerCase() === "waiting");
+  const hasHmiResult = Boolean(responses.length || alerts.length);
   const deterministicRuleOnly = target.kind === "event" && isDeterministicRuleOnlyEvent(item, risk);
 
   if (target.kind === "normal_input") {
@@ -699,7 +708,15 @@ const demoNodes = computed(() => {
     {
       key: "hmi",
       name: "HMI / 家属",
-      state: hasHmi ? "completed" as DemoNodeState : p12Waiting ? "running" as DemoNodeState : ["P3", "P4"].includes(risk) || candidateStatus === "dismissed" ? "skipped" as DemoNodeState : "idle" as DemoNodeState,
+      state: waitingPrompt
+        ? "running" as DemoNodeState
+        : hasHmiResult
+          ? "completed" as DemoNodeState
+          : prompts.length
+            ? "running" as DemoNodeState
+            : ["P3", "P4"].includes(risk) || candidateStatus === "dismissed"
+              ? "skipped" as DemoNodeState
+              : "idle" as DemoNodeState,
       note: shortText(responses.length ? `老人反馈 ${responses[0].response_text}` : alerts.length ? `家属告警 ${alerts[0].status}` : prompts.length ? `HMI ${prompts[0].status}` : "无需询问或告警"),
       time: eventTime(responses[0] ?? alerts[0] ?? prompts[0] ?? finalStep ?? item)
     }
