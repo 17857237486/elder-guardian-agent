@@ -1405,19 +1405,16 @@ async def bathroom_stay_demo(request: BathroomStayDemoRequest) -> dict[str, Any]
     publish_json(elder_sensor_env(request.elder_id), pre_entry)
     flow_preview.append({"room": "living_room", "observed_at": pre_entry["observed_at"], "elapsed_sec": 0})
     published += 1
-    steps = max(1, int(request.duration_seconds // request.logical_interval_sec))
+    steps = max(1, int(math.ceil(request.duration_seconds / request.logical_interval_sec)))
     for index in range(steps + 1):
-        observed_at = start_at + timedelta(seconds=index * request.logical_interval_sec)
-        if observed_at > now:
-            observed_at = now
+        elapsed_sec = min(index * request.logical_interval_sec, request.duration_seconds)
+        observed_at = start_at + timedelta(seconds=elapsed_sec)
         snapshot = home_presence_snapshot(request.elder_id, "bathroom", observed_at, source="bathroom_stay_demo")
         update_bathroom_stay_monitor(snapshot)
         publish_json(elder_sensor_env(request.elder_id), snapshot)
         if index in {0, steps} or index % max(1, steps // 4) == 0:
-            flow_preview.append({"room": "bathroom", "observed_at": snapshot["observed_at"], "elapsed_sec": int((observed_at - start_at).total_seconds())})
+            flow_preview.append({"room": "bathroom", "observed_at": snapshot["observed_at"], "elapsed_sec": int(elapsed_sec)})
         published += 1
-        if observed_at >= now:
-            break
     if request.rebuild_delay_sec:
         await asyncio.sleep(request.rebuild_delay_sec)
     try:
