@@ -251,6 +251,9 @@ const localSemanticStatus = computed(() => {
   if (analysis?.output?.reason === "deterministic_p3_rule") {
     return { state: "completed", text: "确定性规则处置，无需本地模型" };
   }
+  if (analysis?.output?.reason === "deterministic_vital_rule") {
+    return { state: "completed", text: "确定性生命体征规则，无需本地模型" };
+  }
   if (analysis?.status === "failed" || analysis?.output?.fallback) {
     const fallbackType = analysis?.output?.fallback_type;
     if (fallbackType === "service_unavailable") return { state: "fallback", text: "本地模型服务暂不可用，已采用规则结果" };
@@ -328,7 +331,8 @@ function isDeterministicRuleOnlyEvent(item: AnyRecord, risk: string): boolean {
   const eventType = String(item.event_type ?? "");
   return (
     (risk === "P0" && eventType === "gas_leak") ||
-    (risk === "P3" && ["co2_high", "temperature_high", "temperature_low", "humidity_abnormal"].includes(eventType))
+    (risk === "P3" && ["co2_high", "temperature_high", "temperature_low", "humidity_abnormal"].includes(eventType)) ||
+    isDeterministicVitalRuleEvent(item, risk)
   );
 }
 
@@ -374,9 +378,36 @@ function stepState(step?: AnyRecord | null): DemoNodeState {
   const status = String(step.status ?? "").toLowerCase();
   const output = step.output ?? {};
   if (status === "failed" || step.error || output.error || output.fallback) return "failed";
-  if (status === "skipped" || output.reason === "deterministic_p3_rule" || ["disabled", "not_required"].includes(String(output.status ?? "").toLowerCase())) return "skipped";
+  if (
+    status === "skipped" ||
+    ["deterministic_p3_rule", "deterministic_vital_rule"].includes(String(output.reason ?? "")) ||
+    ["disabled", "not_required"].includes(String(output.status ?? "").toLowerCase())
+  ) return "skipped";
   if (["running", "pending", "reviewing"].includes(status)) return "running";
   return "completed";
+}
+
+function durationText(ms?: unknown): string {
+  const value = Number(ms);
+  if (!Number.isFinite(value)) return "";
+  if (value < 1000) return `${Math.max(0, Math.round(value))}ms`;
+  return `${Math.round(value / 100) / 10}s`;
+}
+
+function elapsedSince(value?: string): string {
+  if (!value) return "";
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return "";
+  const elapsed = Math.max(0, Date.now() - timestamp);
+  return durationText(elapsed);
+}
+
+function isDeterministicVitalRuleEvent(item: AnyRecord, risk: string): boolean {
+  const eventType = String(item.event_type ?? "");
+  return (
+    (risk === "P1" && ["heart_rate_abnormal", "spo2_low"].includes(eventType)) ||
+    (risk === "P0" && eventType === "spo2_low")
+  );
 }
 
 function targetSteps(target: DemoTarget): AnyRecord[] {
@@ -437,17 +468,21 @@ function workflowSummary(step: AnyRecord): string {
   }
   if (step.step_name === "local_multiframe_analysis") {
     if (output.reason === "deterministic_p3_rule") return "确定性规则处置，无需本地模型";
+    if (output.reason === "deterministic_vital_rule") return "确定性生命体征规则，无需本地模型";
     const fallbackLabel: Record<string, string> = {
       service_unavailable: "模型服务暂不可用",
       timeout: "模型分析超时",
       safety_rejected: "输出未通过安全校验",
       request_failed: "模型请求失败"
     };
-    return clip(`${output.event_semantics ?? "本地分析"} · ${output.risk_level ?? "--"}${output.fallback ? ` · ${fallbackLabel[output.fallback_type] ?? "规则回退"}` : ""}`);
+    const latency = output.latency_ms !== undefined ? ` · 模型耗时 ${durationText(output.latency_ms)}` : "";
+    const queue = output.queue_wait_ms ? ` · 排队等待 ${durationText(output.queue_wait_ms)}` : "";
+    return clip(`${output.event_semantics ?? "本地分析"} · ${output.risk_level ?? "--"}${latency}${queue}${output.fallback ? ` · ${fallbackLabel[output.fallback_type] ?? "规则回退"}` : ""}`);
   }
   if (step.step_name === "local_policy_execution") return clip(output.status ?? "本地策略已执行");
   if (step.step_name === "cloud_review") {
     if (output.reason === "deterministic_p3_rule") return "确定性规则处置，无需云端复核";
+    if (output.reason === "deterministic_vital_rule") return "确定性生命体征规则，无需云端复核";
     return clip(`${output.status ?? step.status}${output.risk_level ? ` · ${output.risk_level}` : ""}${output.family_summary ? ` · ${output.family_summary}` : ""}`);
   }
   if (step.step_name === "final_advisory") return clip(`${output.final_risk_level ?? "--"} · ${output.family_summary ?? "最终建议已生成"}`);
@@ -532,12 +567,26 @@ const demoNodes = computed(() => {
   const risk = riskOf(item);
   const dataTime = eventTime(item) || (filteredObservations.value?.[0] ? eventTime(filteredObservations.value[0]) : "");
   const localOutput = localStep?.output ?? {};
-  const localLatency = localOutput.latency_ms !== undefined ? ` · ${Math.round(Number(localOutput.latency_ms) / 1000)}s` : "";
-  const queueWait = localOutput.queue_wait_ms ? ` · 排队${Math.round(Number(localOutput.queue_wait_ms) / 1000)}s` : "";
+  const localLatency = localOutput.latency_ms !== undefined ? ` · 模型耗时 ${durationText(localOutput.latency_ms)}` : "";
+  const queueWait = localOutput.queue_wait_ms ? ` · 排队等待 ${durationText(localOutput.queue_wait_ms)}` : "";
   const cloudOutput = cloudStep?.output ?? {};
   const waitingPrompt = prompts.find((prompt) => String(prompt.status ?? "").toLowerCase() === "waiting");
-  const hasHmiResult = Boolean(responses.length || alerts.length);
+  const hasHmiResponse = Boolean(responses.length);
   const deterministicRuleOnly = target.kind === "event" && isDeterministicRuleOnlyEvent(item, risk);
+  const deterministicVitalRule = target.kind === "event" && isDeterministicVitalRuleEvent(item, risk);
+  const localWait = !localStep && ["P0", "P1", "P2"].includes(risk) && !deterministicRuleOnly
+    ? `等待本地模型队列 · 已等待 ${elapsedSince(eventTime(item)) || "--"}`
+    : "等待本地分析";
+  const localNote = localOutput.reason === "deterministic_p3_rule"
+    ? "P3 确定性规则，无需本地模型"
+    : localOutput.reason === "deterministic_vital_rule" || deterministicVitalRule
+      ? "确定性生命体征规则，无需本地模型"
+      : `${localOutput.event_semantics ?? localOutput.status ?? localWait}${localOutput.risk_level ? ` · ${localOutput.risk_level}` : ""}${localLatency}${queueWait}`;
+  const localState = deterministicRuleOnly || localOutput.reason === "deterministic_vital_rule"
+    ? "skipped" as DemoNodeState
+    : localStep
+      ? stepState(localStep)
+      : (["P0", "P1", "P2"].includes(risk) ? "running" as DemoNodeState : "idle" as DemoNodeState);
 
   if (target.kind === "normal_input") {
     const group = latestInputObservationGroup(target.item);
@@ -683,19 +732,21 @@ const demoNodes = computed(() => {
     {
       key: "local",
       name: "本地 AI / Candidate",
-      state: deterministicRuleOnly ? "skipped" as DemoNodeState : stepState(localStep),
-      note: shortText(
-        localOutput.reason === "deterministic_p3_rule"
-          ? "P3 确定性规则，无需本地模型"
-          : `${localOutput.event_semantics ?? localOutput.status ?? "等待本地分析"}${localOutput.risk_level ? ` · ${localOutput.risk_level}` : ""}${localLatency}${queueWait}`
-      ),
+      state: localState,
+      note: shortText(localNote),
       time: eventTime(localStep ?? item)
     },
     {
       key: "cloud",
       name: "云端复核",
       state: deterministicRuleOnly ? "skipped" as DemoNodeState : stepState(cloudStep),
-      note: shortText(cloudOutput.reason === "deterministic_p3_rule" ? "确定性规则跳过云端" : `${cloudOutput.status ?? "等待复核"}${cloudOutput.risk_level ? ` · ${cloudOutput.risk_level}` : ""}`),
+      note: shortText(
+        cloudOutput.reason === "deterministic_vital_rule" || deterministicVitalRule
+          ? "确定性生命体征规则，无需云端复核"
+          : cloudOutput.reason === "deterministic_p3_rule"
+            ? "确定性规则跳过云端"
+            : `${cloudOutput.status ?? "等待复核"}${cloudOutput.risk_level ? ` · ${cloudOutput.risk_level}` : ""}`
+      ),
       time: eventTime(cloudStep ?? item)
     },
     {
@@ -710,14 +761,14 @@ const demoNodes = computed(() => {
       name: "HMI / 家属",
       state: waitingPrompt
         ? "running" as DemoNodeState
-        : hasHmiResult
+        : hasHmiResponse || alerts.length
           ? "completed" as DemoNodeState
           : prompts.length
             ? "running" as DemoNodeState
             : ["P3", "P4"].includes(risk) || candidateStatus === "dismissed"
               ? "skipped" as DemoNodeState
               : "idle" as DemoNodeState,
-      note: shortText(responses.length ? `老人反馈 ${responses[0].response_text}` : alerts.length ? `家属告警 ${alerts[0].status}` : prompts.length ? `HMI ${prompts[0].status}` : "无需询问或告警"),
+      note: shortText(responses.length ? `老人反馈 ${responses[0].response_text}` : alerts.length ? `家属告警 ${statusLabel(alerts[0].status)}` : prompts.length ? `HMI ${statusLabel(prompts[0].status)}` : "无需询问或告警"),
       time: eventTime(responses[0] ?? alerts[0] ?? prompts[0] ?? finalStep ?? item)
     }
   ];
@@ -740,6 +791,60 @@ const workflowEmptyText = computed(() =>
       ? "等待规则判断生成工作流"
       : "暂无工作流记录"
 );
+
+const DEVICE_LABELS: Record<string, string> = {
+  air_conditioner: "空调",
+  window: "窗户",
+  gas_valve: "燃气阀",
+  local_alarm: "本地报警器",
+  alarm: "本地报警器",
+  light: "灯光",
+  fan: "风扇"
+};
+const ACTION_LABELS: Record<string, string> = {
+  turn_on: "打开",
+  turn_off: "关闭",
+  open: "打开",
+  close: "关闭",
+  set_temperature: "设置温度",
+  alarm_on: "启动报警",
+  alarm_off: "关闭报警"
+};
+const STATUS_LABELS: Record<string, string> = {
+  completed: "已完成",
+  success: "已完成",
+  sent: "已发送",
+  accepted: "已接受",
+  pending: "等待中",
+  waiting: "等待中",
+  responded: "已反馈",
+  failed: "失败",
+  skipped: "已跳过",
+  running: "进行中"
+};
+
+function deviceLabel(value: unknown): string {
+  const key = String(value ?? "");
+  return DEVICE_LABELS[key] ?? key ?? "--";
+}
+
+function actionLabel(value: unknown): string {
+  const key = String(value ?? "");
+  return ACTION_LABELS[key] ?? key ?? "--";
+}
+
+function statusLabel(value: unknown): string {
+  const key = String(value ?? "").toLowerCase();
+  return STATUS_LABELS[key] ?? String(value ?? "--");
+}
+
+function policyTitle(item: AnyRecord): string {
+  if (item.itemType !== "execution") return `${item.tool_name ?? "工具调用"} · 异常调用`;
+  const command = item.command ?? {};
+  const room = command.room ? `${command.room} · ` : "";
+  return `${room}${deviceLabel(command.device)} · ${actionLabel(command.action)}`;
+}
+
 const policyExecutions = computed<AnyRecord[]>(() => {
   const executions = filteredActionExecutions.value.map((item: AnyRecord) => ({ ...item, itemType: "execution" }));
   const failedCalls = filteredToolCalls.value
@@ -749,13 +854,14 @@ const policyExecutions = computed<AnyRecord[]>(() => {
     .sort((a, b) => new Date(eventTime(b)).getTime() - new Date(eventTime(a)).getTime())
     .slice(0, DISPLAY_LIMIT);
 });
-const hmiAlerts = computed<AnyRecord[]>(() => {
+const hmiPromptItems = computed<AnyRecord[]>(() => {
   const prompts = filteredPrompts.value.map((item: AnyRecord) => ({ ...item, itemType: "prompt" }));
-  const alerts = filteredAlerts.value.map((item: AnyRecord) => ({ ...item, itemType: "alert" }));
-  return [...prompts, ...alerts]
+  const responses = filteredResponses.value.map((item: AnyRecord) => ({ ...item, itemType: "response" }));
+  return [...prompts, ...responses]
     .sort((a, b) => new Date(eventTime(b)).getTime() - new Date(eventTime(a)).getTime())
     .slice(0, DISPLAY_LIMIT);
 });
+const familyAlertItems = computed<AnyRecord[]>(() => filteredAlerts.value.slice(0, DISPLAY_LIMIT));
 const elderFeedback = computed(() => filteredResponses.value.slice(0, DISPLAY_LIMIT));
 const realDevices = computed(() => filteredDeviceReadings.value.slice(0, DISPLAY_LIMIT));
 const latestContextFusion = computed(() =>
@@ -989,9 +1095,8 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
         <h2>策略与设备执行</h2>
         <div class="panel-scroll"><p v-if="!policyExecutions.length" class="empty">暂无设备执行</p><ul>
           <li v-for="item in policyExecutions" :key="item.execution_id ?? item.call_id">
-            <div class="row-head"><strong>{{ item.status }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
-            <b v-if="item.itemType === 'execution'">{{ item.command?.room }}/{{ item.command?.device }} · {{ item.command?.action }}</b>
-            <b v-else>{{ item.tool_name }} · 异常调用</b>
+            <div class="row-head"><strong>{{ statusLabel(item.status) }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
+            <b>{{ policyTitle(item) }}</b>
             <p>{{ clip(item.reason || item.error || "执行记录") }}</p>
           </li>
         </ul></div>
@@ -1009,12 +1114,23 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
       </article>
 
       <article class="panel">
-        <h2>HMI 与家属告警</h2>
-        <div class="panel-scroll"><p v-if="!hmiAlerts.length" class="empty">暂无提示或告警</p><ul>
-          <li v-for="item in hmiAlerts" :key="item.prompt_id ?? item.alert_id">
-            <div class="row-head"><strong>{{ item.status }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
+        <h2>老人 HMI 反馈</h2>
+        <div class="panel-scroll"><p v-if="!hmiPromptItems.length" class="empty">暂无老人提示或反馈</p><ul>
+          <li v-for="item in hmiPromptItems" :key="item.prompt_id ? `prompt-${item.prompt_id}` : `response-${item.created_at}`">
+            <div class="row-head"><strong>{{ statusLabel(item.status ?? item.response_type) }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
             <b v-if="item.itemType === 'prompt'">HMI · {{ item.risk_level }} · {{ item.event_type }}</b>
-            <b v-else>家属告警 · {{ item.alert_level }} · {{ item.channel }}</b>
+            <b v-else>老人反馈 · {{ item.response_text }}</b>
+            <p>{{ clip(item.message) }}</p>
+          </li>
+        </ul></div>
+      </article>
+
+      <article class="panel">
+        <h2>家属告警</h2>
+        <div class="panel-scroll"><p v-if="!familyAlertItems.length" class="empty">暂无家属告警</p><ul>
+          <li v-for="item in familyAlertItems" :key="item.alert_id">
+            <div class="row-head"><strong>{{ statusLabel(item.status) }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
+            <b>家属告警 · {{ item.alert_level }} · {{ item.channel }}</b>
             <p>{{ clip(item.message) }}</p>
           </li>
         </ul></div>

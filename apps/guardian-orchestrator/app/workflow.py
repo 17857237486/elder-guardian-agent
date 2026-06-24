@@ -38,6 +38,10 @@ DETERMINISTIC_P3_EVENTS = {
     EventType.TEMPERATURE_LOW.value,
     "humidity_abnormal",
 }
+DETERMINISTIC_VITAL_EVENTS = {
+    EventType.HEART_RATE_ABNORMAL.value,
+    EventType.SPO2_LOW.value,
+}
 HMI_OPTIONS = ["我没事", "需要帮助", "联系家属"]
 
 
@@ -96,6 +100,9 @@ class WorkflowRunner:
     ) -> None:
         if self._is_deterministic_p3(event):
             await self._complete_deterministic_p3(workflow, event, saved_event, baseline)
+            return
+        if self._is_deterministic_vital(event):
+            await self._complete_deterministic_vital(workflow, event, saved_event, baseline)
             return
         async with self.llm_semaphore:
             try:
@@ -372,6 +379,14 @@ class WorkflowRunner:
     @staticmethod
     def _is_deterministic_p3(event: NormalizedEventV2) -> bool:
         return risk_text(event.risk_level) == "P3" and str(event.event_type) in DETERMINISTIC_P3_EVENTS
+
+    @staticmethod
+    def _is_deterministic_vital(event: NormalizedEventV2) -> bool:
+        return (
+            risk_text(event.risk_level) in {"P0", "P1"}
+            and str(event.source_kind) == "vital"
+            and str(event.event_type) in DETERMINISTIC_VITAL_EVENTS
+        )
 
     @staticmethod
     def _observation_time(observation: dict[str, Any]) -> datetime:
@@ -738,6 +753,74 @@ class WorkflowRunner:
                     }.get(key, key)
                     result[f"{prefix}_{short_key}"] = metrics[key]
         return result
+
+    async def _complete_deterministic_vital(
+        self,
+        workflow: WorkflowV2,
+        event: NormalizedEventV2,
+        saved_event: dict[str, Any],
+        baseline: dict[str, Any],
+    ) -> None:
+        rule_risk = risk_text(event.risk_level)
+        skipped = {
+            "status": "skipped",
+            "reason": "deterministic_vital_rule",
+            "event_semantics": event.summary,
+            "risk_level": rule_risk,
+            "confidence": event.confidence,
+            "fallback": False,
+            "latency_ms": 0,
+        }
+        await self._record_step(
+            workflow,
+            event,
+            "local_multiframe_analysis",
+            {"event": saved_event},
+            skipped,
+            status=StepStatus.SKIPPED,
+            model=None,
+        )
+        await self._record_step(
+            workflow,
+            event,
+            "local_policy_execution",
+            skipped,
+            {"status": "baseline_retained", "baseline": baseline},
+        )
+        cloud = {"status": "not_required", "reason": "deterministic_vital_rule"}
+        await self._record_step(
+            workflow,
+            event,
+            "cloud_review",
+            skipped,
+            cloud,
+            status=StepStatus.SKIPPED,
+            model=None,
+        )
+        await self.edge.update_event_analysis(
+            event.event_id,
+            {
+                "local_risk_level": None,
+                "local_semantics": event.summary,
+                "cloud_risk_level": None,
+                "final_risk_level": rule_risk,
+                "decision_source": "rule",
+                "confidence": event.confidence,
+                "summary": event.summary,
+            },
+        )
+        await self._record_step(
+            workflow,
+            event,
+            "final_advisory",
+            {"local": skipped, "cloud": cloud},
+            {
+                "final_risk_level": rule_risk,
+                "family_summary": event.summary,
+                "decision_source": "rule",
+            },
+            model=None,
+        )
 
     async def _complete_deterministic_p3(
         self,

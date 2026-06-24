@@ -776,6 +776,50 @@ class LLMClientParserTests(unittest.TestCase):
                 self.assertEqual(steps["cloud_review"]["status"], "not_required")
                 self.assertEqual(steps["final_advisory"]["final_risk_level"], "P3")
 
+    def test_deterministic_vital_events_skip_local_and_cloud_models(self) -> None:
+        cases = (
+            (EventType.HEART_RATE_ABNORMAL, RiskLevel.P1),
+            (EventType.SPO2_LOW, RiskLevel.P1),
+            (EventType.SPO2_LOW, RiskLevel.P0),
+        )
+        for event_type, risk_level in cases:
+            with self.subTest(event_type=str(event_type), risk_level=str(risk_level)):
+                runner = WorkflowRunner()
+                runner.local_llm.analyze = AsyncMock(side_effect=AssertionError("local model must not run"))
+                runner.cloud_llm.review = AsyncMock(side_effect=AssertionError("cloud model must not run"))
+                runner._record_step = AsyncMock()
+                runner.edge.update_event_analysis = AsyncMock(return_value={})
+                event = NormalizedEventV2(
+                    elder_id="elder_001",
+                    event_type=event_type,
+                    risk_level=risk_level,
+                    summary="确定性生命体征异常",
+                    confidence=1.0,
+                    source_kind="vital",
+                )
+
+                asyncio.run(
+                    runner._run_analysis(
+                        SimpleNamespace(workflow_id="wf_vital"),
+                        event,
+                        {"event_type": str(event_type), "risk_level": str(risk_level)},
+                        {"status": "executed", "actions": ["rule"]},
+                    )
+                )
+
+                runner.local_llm.analyze.assert_not_awaited()
+                runner.cloud_llm.review.assert_not_awaited()
+                update_payload = runner.edge.update_event_analysis.await_args.args[1]
+                self.assertEqual(update_payload["final_risk_level"], str(risk_level))
+                self.assertEqual(update_payload["decision_source"], "rule")
+                steps = {call.args[2]: call.args[4] for call in runner._record_step.await_args_list}
+                self.assertEqual(steps["local_multiframe_analysis"]["status"], "skipped")
+                self.assertEqual(steps["local_multiframe_analysis"]["reason"], "deterministic_vital_rule")
+                self.assertEqual(steps["local_multiframe_analysis"]["latency_ms"], 0)
+                self.assertEqual(steps["cloud_review"]["status"], "not_required")
+                self.assertEqual(steps["cloud_review"]["reason"], "deterministic_vital_rule")
+                self.assertEqual(steps["final_advisory"]["final_risk_level"], str(risk_level))
+
     def test_p3_environment_events_create_chinese_hmi_prompt(self) -> None:
         for event_type in (
             EventType.CO2_HIGH,

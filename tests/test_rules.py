@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT / "packages" / "guardian-shared"))
 sys.path.insert(0, str(ROOT / "apps" / "guardian-orchestrator"))
 
 from app import rules
-from app.event_cooldown import P3EnvironmentCooldown
+from app.event_cooldown import P3EnvironmentCooldown, VitalEventCooldown
 from guardian_shared.enums import EventType, RiskLevel
 from guardian_shared.v2 import NormalizedEventV2
 
@@ -169,6 +169,42 @@ class RuleTests(unittest.TestCase):
 
         self.assertFalse(cooldown.check(gas).suppressed)
         self.assertFalse(cooldown.check(gas).suppressed)
+
+    def test_p1_vital_cooldown_suppresses_duplicate_heart_rate(self) -> None:
+        now = 1000.0
+        cooldown = VitalEventCooldown(120, clock=lambda: now)
+        event = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type=EventType.HEART_RATE_ABNORMAL,
+            risk_level=RiskLevel.P1,
+            source_kind="vital",
+        )
+
+        first = cooldown.check(event)
+        second = cooldown.check(event)
+
+        self.assertFalse(first.suppressed)
+        self.assertTrue(second.suppressed)
+        self.assertEqual(second.dedupe_key, "elder_001:heart_rate_abnormal:P1")
+
+    def test_p1_vital_cooldown_suppresses_duplicate_spo2_p1_but_not_p0(self) -> None:
+        clock = {"now": 1000.0}
+        cooldown = VitalEventCooldown(120, clock=lambda: clock["now"])
+        p1 = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type=EventType.SPO2_LOW,
+            risk_level=RiskLevel.P1,
+            source_kind="vital",
+        )
+        p0 = p1.model_copy(update={"risk_level": RiskLevel.P0})
+
+        self.assertFalse(cooldown.check(p1).suppressed)
+        self.assertTrue(cooldown.check(p1).suppressed)
+        self.assertFalse(cooldown.check(p0).suppressed)
+        self.assertFalse(cooldown.check(p0).suppressed)
+
+        clock["now"] = 1121.0
+        self.assertFalse(cooldown.check(p1).suppressed)
 
 
 if __name__ == "__main__":
