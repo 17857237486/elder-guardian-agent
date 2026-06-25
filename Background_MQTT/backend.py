@@ -682,6 +682,36 @@ async def rebuild_edge_baselines(elder_id: str, baseline_types: list[str] | None
         return response.json()
 
 
+async def save_edge_personal_baseline(request: PersonalBaselineRequest) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+        response = await client.post(f"{EDGE_API_BASE}/api/v2/personal-baselines", json=request.model_dump())
+        response.raise_for_status()
+        return response.json()
+
+
+async def save_generated_bathroom_baseline(elder_id: str, durations: list[int]) -> dict[str, Any]:
+    avg_duration = round(sum(durations) / len(durations), 1) if durations else 0
+    reference_limit = max(durations) + 10 if durations else 60
+    request = PersonalBaselineRequest(
+        elder_id=elder_id,
+        baseline_type="bathroom_routine",
+        scope="default",
+        timezone="Asia/Shanghai",
+        lookback_days=14,
+        sample_count=len(durations),
+        quality="stable" if len(durations) >= 3 else "insufficient_data",
+        metrics={
+            "bathroom_stay_avg_sec": avg_duration,
+            "bathroom_stay_p90_sec": reference_limit,
+            "night_bathroom_visits_avg": round(len(durations) / 14, 2),
+            "sample_count": len(durations),
+            "source": "background_mqtt_auto_bathroom_batch",
+            "fallback": None,
+        },
+    )
+    return await save_edge_personal_baseline(request)
+
+
 def ensure_mqtt_connected() -> None:
     if mqtt_client is None or not mqtt_connected:
         raise HTTPException(status_code=503, detail="MQTT not connected")
@@ -1268,12 +1298,10 @@ async def list_personal_baselines(elder_id: str = ELDER_ID) -> dict[str, Any]:
 @app.post("/api/personal-baselines")
 async def create_personal_baseline(request: PersonalBaselineRequest) -> dict[str, Any]:
     try:
-        async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
-            response = await client.post(f"{EDGE_API_BASE}/api/v2/personal-baselines", json=request.model_dump())
-            response.raise_for_status()
-            if request.baseline_type == "bathroom_routine":
-                bathroom_stay_monitor["bathroom_reference_limit_sec"] = float(request.metrics.get("bathroom_stay_p90_sec") or 60)
-            return response.json()
+        result = await save_edge_personal_baseline(request)
+        if request.baseline_type == "bathroom_routine":
+            bathroom_stay_monitor["bathroom_reference_limit_sec"] = float(request.metrics.get("bathroom_stay_p90_sec") or 60)
+        return result
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail={"message": "edge personal baseline save failed", "error": str(exc)})
 
@@ -1370,8 +1398,9 @@ async def auto_bathroom_baseline(request: AutoBathroomBaselineRequest) -> dict[s
         await asyncio.sleep(request.rebuild_delay_sec)
     try:
         rebuild = await rebuild_edge_baselines(request.elder_id, ["bathroom_routine"])
+        generated_baseline = await save_generated_bathroom_baseline(request.elder_id, durations)
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail={"message": "edge baseline rebuild failed", "error": str(exc)})
+        raise HTTPException(status_code=502, detail={"message": "edge bathroom baseline update failed", "error": str(exc)})
     bathroom_stay_monitor["bathroom_reference_limit_sec"] = await bathroom_reference_limit_sec(request.elder_id)
     preview = {
         "stay_count": len(durations),
@@ -1379,8 +1408,16 @@ async def auto_bathroom_baseline(request: AutoBathroomBaselineRequest) -> dict[s
         "reference_limit_sec": max(durations) + 10,
         "durations": durations,
     }
+    rebuild["personal_baselines"] = [generated_baseline.get("personal_baseline", generated_baseline)]
     await broadcast({"type": "auto_baseline", "data": {"kind": "bathroom", "preview": preview, "rebuild": rebuild}})
-    return {"ok": True, "elder_id": request.elder_id, "published_snapshots": published, "preview": preview, "rebuild": rebuild}
+    return {
+        "ok": True,
+        "elder_id": request.elder_id,
+        "published_snapshots": published,
+        "preview": preview,
+        "generated_baseline": generated_baseline,
+        "rebuild": rebuild,
+    }
 
 
 @app.post("/api/bathroom-stay/demo")

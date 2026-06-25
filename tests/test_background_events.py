@@ -177,6 +177,13 @@ class BackgroundEventTests(unittest.TestCase):
         self.assertIn('if env_payload.get("source") == "bathroom_baseline_generator":', backend)
         self.assertIn("return bathroom_stay_monitor_snapshot()", backend)
 
+    def test_auto_bathroom_baseline_uses_current_generated_batch(self) -> None:
+        backend = (ROOT / "Background_MQTT" / "backend.py").read_text(encoding="utf-8")
+        self.assertIn("async def save_generated_bathroom_baseline", backend)
+        self.assertIn('"source": "background_mqtt_auto_bathroom_batch"', backend)
+        self.assertIn("generated_baseline = await save_generated_bathroom_baseline(request.elder_id, durations)", backend)
+        self.assertIn('rebuild["personal_baselines"] = [generated_baseline.get("personal_baseline", generated_baseline)]', backend)
+
 
 if __name__ == "__main__":
     unittest.main()
