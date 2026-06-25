@@ -56,6 +56,14 @@ header p { margin-top: 7px; color: #687284; }
 .panel-scroll::-webkit-scrollbar-track { border-radius: 8px; background: #edf1f5; }
 .panel-scroll::-webkit-scrollbar-thumb { border: 2px solid #edf1f5; border-radius: 8px; background: #8b98aa; }
 .panel-scroll::-webkit-scrollbar-thumb:hover { background: #65758a; }
+.device-control-message { margin: 8px 0; color: #125f93; font-weight: 700; }
+.device-control-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+.device-control-room { border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; background: #f8fbff; }
+.device-control-room h3 { margin: 0 0 8px; font-size: 15px; }
+.device-control-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 6px; margin: 6px 0; }
+.device-control-row button { min-width: 46px; padding: 5px 8px; border: 1px solid #b7c7d9; border-radius: 6px; background: #fff; color: #1f3148; cursor: pointer; }
+.device-control-row button:hover:not(:disabled) { border-color: #1976b9; color: #125f93; }
+.device-control-row button:disabled { opacity: 0.5; cursor: not-allowed; }
 ul { margin: 0; padding: 0; list-style: none; }
 li { padding: 11px 0; border-top: 1px solid #edf1f5; }
 li:first-child { border-top: 0; }

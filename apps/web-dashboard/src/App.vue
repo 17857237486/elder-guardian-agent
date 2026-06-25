@@ -15,6 +15,12 @@ const DEFAULT_HOME_ENV: Record<string, AnyRecord> = {
   living_room: { room: "living_room", temperature: 24.5, humidity: 49.0, co2_ppm: 850, gas_ppm: 0, smoke_ppm: 0, presence: false, is_default: true },
   kitchen: { room: "kitchen", temperature: 25.0, humidity: 52.0, co2_ppm: 880, gas_ppm: 0, smoke_ppm: 0, presence: false, is_default: true }
 };
+const ROOM_LABELS: Record<string, string> = {
+  bedroom: "卧室",
+  bathroom: "卫生间",
+  living_room: "客厅",
+  kitchen: "厨房"
+};
 const EVENT_LABELS: Record<string, string> = {
   normal: "正常状态",
   gas_leak: "燃气异常",
@@ -58,6 +64,8 @@ const loadError = ref("");
 const clearNotice = ref("");
 const clearing = ref(false);
 const clearedAt = ref<string | null>(null);
+const deviceControlBusy = ref("");
+const deviceControlMessage = ref("");
 localStorage.removeItem("dashboardClearedAt");
 let refreshTimer: number | undefined;
 
@@ -946,6 +954,40 @@ const ACTION_LABELS: Record<string, string> = {
   alarm_on: "启动报警",
   alarm_off: "关闭报警"
 };
+const DASHBOARD_DEVICE_CONTROLS = [
+  {
+    room: "bedroom",
+    devices: [
+      { device: "light", label: "灯光", on: "turn_on", off: "turn_off" },
+      { device: "air_conditioner", label: "空调", on: "turn_on", off: "turn_off" },
+      { device: "window", label: "窗户", on: "open", off: "close" }
+    ]
+  },
+  {
+    room: "bathroom",
+    devices: [
+      { device: "light", label: "灯光", on: "turn_on", off: "turn_off" },
+      { device: "air_conditioner", label: "暖风/空调", on: "turn_on", off: "turn_off" },
+      { device: "window", label: "窗户", on: "open", off: "close" }
+    ]
+  },
+  {
+    room: "living_room",
+    devices: [
+      { device: "light", label: "灯光", on: "turn_on", off: "turn_off" },
+      { device: "air_conditioner", label: "空调", on: "turn_on", off: "turn_off" },
+      { device: "window", label: "窗户", on: "open", off: "close" }
+    ]
+  },
+  {
+    room: "kitchen",
+    devices: [
+      { device: "light", label: "灯光", on: "turn_on", off: "turn_off" },
+      { device: "window", label: "窗户", on: "open", off: "close" },
+      { device: "gas_valve", label: "燃气阀", on: "open", off: "close" }
+    ]
+  }
+];
 const STATUS_LABELS: Record<string, string> = {
   completed: "已完成",
   success: "已完成",
@@ -1067,6 +1109,44 @@ function metricValue(reading: AnyRecord, metric: string): string {
   if (value === undefined || value === null || value === "") return "--";
   const unit = reading.units?.[metric] ?? (metric === "temperature" ? "°C" : metric === "humidity" ? "%" : "");
   return `${value}${unit}`;
+}
+
+
+async function requestDashboardDeviceAction(room: string, device: string, action: string) {
+  const key = `${room}:${device}:${action}`;
+  if (deviceControlBusy.value) return;
+  deviceControlBusy.value = key;
+  deviceControlMessage.value = "";
+  try {
+    const response = await fetch(`${API_BASE}/api/v2/tools/request-home-action`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event_id: "dashboard_manual_control",
+        elder_id: state.elder_id ?? "elder_001",
+        requested_by: "web-dashboard",
+        priority: "P3",
+        reason: "Dashboard ??????",
+        commands: [
+          {
+            room,
+            device,
+            action,
+            reason: "Dashboard ??????"
+          }
+        ]
+      })
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    const status = String(result.status ?? result.executions?.[0]?.status ?? "accepted");
+    deviceControlMessage.value = `${ROOM_LABELS[room] ?? room} ${deviceLabel(device)} ${actionLabel(action)}?${statusLabel(status)}`;
+    await loadState();
+  } catch (error) {
+    deviceControlMessage.value = `???????${error instanceof Error ? error.message : "????"}`;
+  } finally {
+    deviceControlBusy.value = "";
+  }
 }
 
 function clearDashboardDisplay() {
@@ -1315,6 +1395,21 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
             <p>{{ clip(item.reason || item.error || "执行记录") }}</p>
           </li>
         </ul></div>
+      </article>
+
+      <article class="panel">
+        <h2>房间设备开关</h2>
+        <p v-if="deviceControlMessage" class="device-control-message">{{ deviceControlMessage }}</p>
+        <div class="device-control-grid">
+          <section v-for="room in DASHBOARD_DEVICE_CONTROLS" :key="room.room" class="device-control-room">
+            <h3>{{ ROOM_LABELS[room.room] ?? room.room }}</h3>
+            <div v-for="control in room.devices" :key="`${room.room}-${control.device}`" class="device-control-row">
+              <span>{{ control.label }}</span>
+              <button :disabled="deviceControlBusy === `${room.room}:${control.device}:${control.on}`" @click="requestDashboardDeviceAction(room.room, control.device, control.on)">打开</button>
+              <button :disabled="deviceControlBusy === `${room.room}:${control.device}:${control.off}`" @click="requestDashboardDeviceAction(room.room, control.device, control.off)">关闭</button>
+            </div>
+          </section>
+        </div>
       </article>
 
       <article class="panel">
