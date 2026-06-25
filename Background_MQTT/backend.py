@@ -1427,6 +1427,7 @@ async def bathroom_stay_demo(request: BathroomStayDemoRequest) -> dict[str, Any]
     exit_entry = home_presence_snapshot(request.elder_id, "living_room", exit_at, source="bathroom_stay_demo")
     exit_entry["bathroom_stay_completed_sec"] = request.duration_seconds
     update_bathroom_stay_monitor(exit_entry)
+    bathroom_stay_monitor["last_stay_seconds"] = request.duration_seconds
     publish_json(elder_sensor_env(request.elder_id), exit_entry)
     flow_preview.append({"room": "living_room", "observed_at": exit_entry["observed_at"], "elapsed_sec": request.duration_seconds})
     published += 1
