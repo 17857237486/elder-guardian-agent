@@ -443,6 +443,53 @@ class WorkflowRunner:
         segments: list[dict[str, Any]] | None = None,
         baselines: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        if risk_text(event.source_kind) == "VISION":
+            return {
+                "sensors": {
+                    "elder_id": event.elder_id,
+                    "observations": [
+                        {
+                            "observation_id": observation_id,
+                            "kind": "vision_trigger",
+                        }
+                        for observation_id in (saved_event.get("trigger_observation_ids") or event.trigger_observation_ids or [])
+                    ],
+                },
+                "devices": {},
+                "elder_location": {
+                    "current_room": event.room,
+                    "source": "event_room" if event.room else "unknown",
+                    "observed_at": saved_event.get("event_time") or saved_event.get("created_at"),
+                },
+                "vision_context": {
+                    "frame_set_id": event.frame_set_id,
+                    "event_type": event.event_type,
+                    "risk_level": risk_text(event.risk_level),
+                    "summary": event.summary,
+                    "local_frame_policy": "middle_three",
+                    "cloud_frame_policy": "five_original_frames",
+                },
+                "environment_context": {
+                    "target_samples": 0,
+                    "actual_samples": 0,
+                    "selection_policy": "vision_event_compact_context",
+                    "room_sequence": [event.room] if event.room else [],
+                    "samples": [],
+                },
+                "recent_vital_samples": {
+                    "target_samples": 0,
+                    "actual_samples": 0,
+                    "samples": [],
+                },
+                "behavior_context": {
+                    "recent_segments": [],
+                    "night_wake": None,
+                    "bathroom_stay": None,
+                    "room_sequence": [event.room] if event.room else [],
+                },
+                "baseline_context": {},
+            }
+
         observations = sensors.get("observations", []) if isinstance(sensors, dict) else []
         observations = [item for item in observations if isinstance(item, dict)]
         observations_desc = sorted(observations, key=cls._observation_time, reverse=True)
