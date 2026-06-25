@@ -1423,6 +1423,13 @@ async def bathroom_stay_demo(request: BathroomStayDemoRequest) -> dict[str, Any]
         if index in {0, steps} or index % max(1, steps // 4) == 0:
             flow_preview.append({"room": "bathroom", "observed_at": snapshot["observed_at"], "elapsed_sec": int(elapsed_sec)})
         published += 1
+    exit_at = start_at + timedelta(seconds=request.duration_seconds + request.logical_interval_sec)
+    exit_entry = home_presence_snapshot(request.elder_id, "living_room", exit_at, source="bathroom_stay_demo")
+    exit_entry["bathroom_stay_completed_sec"] = request.duration_seconds
+    update_bathroom_stay_monitor(exit_entry)
+    publish_json(elder_sensor_env(request.elder_id), exit_entry)
+    flow_preview.append({"room": "living_room", "observed_at": exit_entry["observed_at"], "elapsed_sec": request.duration_seconds})
+    published += 1
     if request.rebuild_delay_sec:
         await asyncio.sleep(request.rebuild_delay_sec)
     try:

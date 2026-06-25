@@ -580,14 +580,6 @@
         color: #b42318;
       }
 
-      .key-table td:nth-child(2),
-      .key-table td:nth-child(4),
-      .key-table td:nth-child(6) {
-        font-size: 17px;
-        font-weight: 800;
-        color: #152033;
-      }
-
       .section-row th {
         background: #edf7f5;
         color: #006b65;
@@ -1175,51 +1167,6 @@
       </article>
 
       <article class="panel">
-        <h2>每日健康摘要</h2>
-        <div class="baseline-panel">
-          <p class="muted">将今天的生命体征、行为片段、风险事件、老人反馈和设备动作压缩成本地统计摘要；可选调用云端大模型生成家属可读说明。</p>
-          <div class="form-actions">
-            <label><span>老人 ID</span><input id="daily-summary-elder" value="elder_001" /></label>
-            <label><span>日期</span><input id="daily-summary-date" type="date" /></label>
-            <button id="daily-summary-local" type="button">只生成本地统计</button>
-            <button id="daily-summary-cloud" class="primary" type="button">生成今日健康摘要</button>
-            <button id="daily-summary-load" type="button">读取最近摘要</button>
-            <span id="daily-summary-status" class="submit-status">等待生成</span>
-          </div>
-          <div class="baseline-grid">
-            <section class="baseline-card">
-              <h3>生命体征统计</h3>
-              <div id="daily-vitals">暂无摘要</div>
-            </section>
-            <section class="baseline-card">
-              <h3>行为片段统计</h3>
-              <div id="daily-behavior">暂无摘要</div>
-            </section>
-            <section class="baseline-card">
-              <h3>风险事件统计</h3>
-              <div id="daily-events">暂无摘要</div>
-            </section>
-            <section class="baseline-card">
-              <h3>老人反馈</h3>
-              <div id="daily-hmi">暂无摘要</div>
-            </section>
-            <section class="baseline-card">
-              <h3>设备动作</h3>
-              <div id="daily-actions">暂无摘要</div>
-            </section>
-            <section class="baseline-card">
-              <h3>数据质量</h3>
-              <div id="daily-quality">暂无摘要</div>
-            </section>
-            <section class="baseline-card">
-              <h3>云端家属摘要</h3>
-              <div id="daily-cloud">暂无云端摘要</div>
-            </section>
-          </div>
-        </div>
-      </article>
-
-      <article class="panel">
         <h2>手动输入数据</h2>
         <div class="template-grid" aria-label="事件模板">
           <button class="template-button" type="button" data-template="gas_leak">P0 燃气异常<br />紧急告警</button>
@@ -1354,63 +1301,6 @@
         </div>
       </article>
 
-      <article class="panel">
-        <h2>最新关键数据表</h2>
-        <div class="table-wrap">
-          <table class="key-table">
-            <tbody>
-              <tr class="section-row">
-                <th colspan="6">生命体征数据</th>
-              </tr>
-              <tr>
-                <th>老人 ID</th>
-                <td id="vital-elder">--</td>
-                <th>采样时间</th>
-                <td id="vital-time">--</td>
-                <th>心率</th>
-                <td><span id="heart-rate">--</span> <span class="unit">bpm</span></td>
-              </tr>
-              <tr>
-                <th>血氧</th>
-                <td><span id="spo2">--</span> <span class="unit">%</span></td>
-                <th>体温</th>
-                <td><span id="body-temperature">--</span> <span class="unit">°C</span></td>
-                <th>血压</th>
-                <td><span id="blood-pressure">--</span> <span class="unit">mmHg</span></td>
-              </tr>
-
-              <tr class="section-row env">
-                <th colspan="6">环境传感器数据</th>
-              </tr>
-              <tr>
-                <th>老人 ID</th>
-                <td id="env-elder">--</td>
-                <th>采样时间</th>
-                <td id="env-time">--</td>
-                <th>房间</th>
-                <td id="room">--</td>
-              </tr>
-              <tr>
-                <th>温度</th>
-                <td><span id="temperature">--</span> <span class="unit">°C</span></td>
-                <th>湿度</th>
-                <td><span id="humidity">--</span> <span class="unit">%</span></td>
-                <th>CO2</th>
-                <td><span id="co2">--</span> <span class="unit">ppm</span></td>
-              </tr>
-              <tr>
-                <th>燃气</th>
-                <td><span id="gas">--</span> <span class="unit">ppm</span></td>
-                <th>烟雾</th>
-                <td><span id="smoke">--</span> <span class="unit">ppm</span></td>
-                <th></th>
-                <td></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </article>
-
       <section class="records-grid">
         <article class="panel">
           <h2>生命体征记录</h2>
@@ -1463,6 +1353,51 @@
           </div>
         </article>
       </section>
+
+      <article class="panel">
+        <h2>每日健康摘要</h2>
+        <div class="baseline-panel">
+          <p class="muted">将今天的生命体征、行为片段、风险事件、老人反馈和设备动作压缩成本地统计摘要；可选调用云端大模型生成家属可读说明。</p>
+          <div class="form-actions">
+            <label><span>老人 ID</span><input id="daily-summary-elder" value="elder_001" /></label>
+            <label><span>日期</span><input id="daily-summary-date" type="date" /></label>
+            <button id="daily-summary-local" type="button">只生成本地统计</button>
+            <button id="daily-summary-cloud" class="primary" type="button">生成今日健康摘要</button>
+            <button id="daily-summary-load" type="button">读取最近摘要</button>
+            <span id="daily-summary-status" class="submit-status">等待生成</span>
+          </div>
+          <div class="baseline-grid">
+            <section class="baseline-card">
+              <h3>生命体征统计</h3>
+              <div id="daily-vitals">暂无摘要</div>
+            </section>
+            <section class="baseline-card">
+              <h3>行为片段统计</h3>
+              <div id="daily-behavior">暂无摘要</div>
+            </section>
+            <section class="baseline-card">
+              <h3>风险事件统计</h3>
+              <div id="daily-events">暂无摘要</div>
+            </section>
+            <section class="baseline-card">
+              <h3>老人反馈</h3>
+              <div id="daily-hmi">暂无摘要</div>
+            </section>
+            <section class="baseline-card">
+              <h3>设备动作</h3>
+              <div id="daily-actions">暂无摘要</div>
+            </section>
+            <section class="baseline-card">
+              <h3>数据质量</h3>
+              <div id="daily-quality">暂无摘要</div>
+            </section>
+            <section class="baseline-card">
+              <h3>云端家属摘要</h3>
+              <div id="daily-cloud">暂无云端摘要</div>
+            </section>
+          </div>
+        </div>
+      </article>
         </div>
       </section>
     </main>
@@ -2440,32 +2375,6 @@
         }
       }
 
-      function renderKeyTable() {
-        const latestVital = latestByKind("vital");
-        const latestEnv = latestByKind("env");
-        const vital = latestVital?.payload ?? {};
-        const env = latestEnv?.payload ?? {};
-        const newest = state.records[0];
-
-        setText("latest-received", formatTime(newest?.received_at));
-
-        setText("vital-elder", latestVital?.elder_id);
-        setText("vital-time", formatTime(latestVital?.sample_timestamp));
-        setText("heart-rate", vital.heart_rate);
-        setText("spo2", vital.spo2);
-        setText("body-temperature", vital.body_temperature);
-        setText("blood-pressure", `${valueOrDash(vital.systolic_bp)}/${valueOrDash(vital.diastolic_bp)}`);
-
-        setText("env-elder", latestEnv?.elder_id);
-        setText("env-time", formatTime(latestEnv?.sample_timestamp));
-        setText("room", env.room);
-        setText("temperature", env.temperature);
-        setText("humidity", env.humidity);
-        setText("co2", env.co2_ppm);
-        setText("gas", env.gas_ppm);
-        setText("smoke", env.smoke_ppm);
-      }
-
       function renderVitalRows(records) {
         $("vital-count").textContent = records.length;
         $("vital-empty").style.display = records.length === 0 ? "block" : "none";
@@ -2515,6 +2424,7 @@
       function buildBathroomStayElapsedMap(records) {
         const map = new Map();
         let bathroomEnteredAt = null;
+        let lastBathroomElapsed = 0;
         [...records]
           .filter((record) => (record.payload ?? {}).source === "bathroom_stay_demo")
           .sort((a, b) => (envRecordTimestamp(a)?.getTime() || 0) - (envRecordTimestamp(b)?.getTime() || 0))
@@ -2527,10 +2437,17 @@
             if (room === "bathroom") {
               if (!bathroomEnteredAt) bathroomEnteredAt = timestamp;
               const elapsed = Math.max(0, Math.round((timestamp.getTime() - bathroomEnteredAt.getTime()) / 1000));
+              lastBathroomElapsed = elapsed;
               map.set(sampleId, elapsed);
             } else {
+              const completed = Number(data.bathroom_stay_completed_sec);
+              if (Number.isFinite(completed) && completed > 0) {
+                lastBathroomElapsed = completed;
+                map.set(sampleId, completed);
+              } else {
+                map.set(sampleId, lastBathroomElapsed > 0 ? lastBathroomElapsed : 0);
+              }
               bathroomEnteredAt = null;
-              map.set(sampleId, 0);
             }
           });
         return map;
@@ -2580,7 +2497,7 @@
       }
 
       function renderAll() {
-        renderKeyTable();
+        setText("latest-received", formatTime(state.records[0]?.received_at));
         renderRecords();
         renderCurrentSceneStatus();
         renderBathroomStayMonitor();

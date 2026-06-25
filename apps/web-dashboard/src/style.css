@@ -49,6 +49,7 @@ header p { margin-top: 7px; color: #687284; }
 .local-semantics.pending { border-color: #c9d2dc; border-left-color: #758397; background: #f7f9fb; }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .panel { height: 390px; padding: 16px; overflow: hidden; }
+.daily-summary-panel { grid-column: 1 / -1; height: 300px; }
 .panel h2 { margin-bottom: 10px; font-size: 19px; }
 .panel-scroll { height: calc(100% - 34px); overflow-y: scroll; padding-right: 7px; scrollbar-gutter: stable; }
 .panel-scroll::-webkit-scrollbar { width: 10px; }

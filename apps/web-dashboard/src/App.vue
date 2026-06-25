@@ -48,7 +48,8 @@ const state = reactive<AnyRecord>({
   hmi_prompts: [],
   hmi_responses: [],
   device_readings_latest: [],
-  alerts: []
+  alerts: [],
+  daily_health_summaries: []
 });
 const loading = ref(false);
 const lastUpdated = ref("");
@@ -954,7 +955,11 @@ const STATUS_LABELS: Record<string, string> = {
   responded: "已反馈",
   failed: "失败",
   skipped: "已跳过",
-  running: "进行中"
+  running: "进行中",
+  local_completed: "本地统计已完成",
+  cloud_completed: "云端摘要已完成",
+  cloud_disabled: "云端未启用",
+  cloud_failed: "云端摘要失败"
 };
 
 function deviceLabel(value: unknown): string {
@@ -997,6 +1002,14 @@ const hmiPromptItems = computed<AnyRecord[]>(() => {
 });
 const familyAlertItems = computed<AnyRecord[]>(() => filteredAlerts.value.slice(0, DISPLAY_LIMIT));
 const realDevices = computed(() => filteredDeviceReadings.value.slice(0, DISPLAY_LIMIT));
+const latestDailyHealthSummary = computed<AnyRecord | null>(() => {
+  const summaries = ((state.daily_health_summaries ?? []) as AnyRecord[])
+    .filter(Boolean)
+    .sort((a, b) => new Date(b.updated_at ?? b.created_at ?? b.summary_date ?? "").getTime() - new Date(a.updated_at ?? a.created_at ?? a.summary_date ?? "").getTime());
+  return summaries[0] ?? null;
+});
+const dailySummaryStats = computed(() => latestDailyHealthSummary.value?.local_stats ?? {});
+const dailySummaryCloud = computed(() => latestDailyHealthSummary.value?.cloud_summary ?? {});
 const latestContextFusion = computed(() =>
   filteredWorkflowSteps.value.find(
     (step: AnyRecord) =>
@@ -1124,6 +1137,53 @@ function roomMetric(room: AnyRecord, metric: string, unit = ""): string {
 function roomTimeLabel(room: AnyRecord): string {
   if (room.is_default) return "默认值";
   return formatTime(room.observed_at ?? room.presence_at);
+}
+
+function dailyMetric(label: string, value: unknown, suffix = ""): string {
+  const text = value === undefined || value === null || value === "" ? "--" : `${value}${suffix}`;
+  return `${label}：${text}`;
+}
+
+function dailyVitalsText(): string {
+  const vitals = dailySummaryStats.value.vitals ?? {};
+  const heart = vitals.heart_rate ?? {};
+  const spo2 = vitals.spo2 ?? {};
+  return [
+    dailyMetric("心率样本", heart.count),
+    dailyMetric("心率平均", heart.avg, " bpm"),
+    dailyMetric("血氧样本", spo2.count),
+    dailyMetric("血氧平均", spo2.avg, "%")
+  ].join(" · ");
+}
+
+function dailyBehaviorText(): string {
+  const behavior = dailySummaryStats.value.behavior ?? {};
+  const rooms = (behavior.room_stay_top ?? [])
+    .map((item: AnyRecord) => `${item.room ?? "--"} ${item.duration_min ?? "--"}分钟`)
+    .join("，");
+  return [
+    dailyMetric("主要房间", rooms || "--"),
+    dailyMetric("卫生间次数", behavior.bathroom_visits),
+    dailyMetric("最长停留", behavior.bathroom_stay_max_sec, " 秒")
+  ].join(" · ");
+}
+
+function dailyEventsText(): string {
+  const events = dailySummaryStats.value.events ?? {};
+  const byLevel = events.by_level ?? {};
+  return [
+    dailyMetric("最高风险", events.highest_risk ?? latestDailyHealthSummary.value?.risk_level),
+    `P0/P1/P2/P3/P4：${byLevel.P0 ?? 0}/${byLevel.P1 ?? 0}/${byLevel.P2 ?? 0}/${byLevel.P3 ?? 0}/${byLevel.P4 ?? 0}`
+  ].join(" · ");
+}
+
+function dailyCloudText(): string {
+  const summary = latestDailyHealthSummary.value;
+  if (!summary) return "暂无每日健康摘要";
+  const cloud = dailySummaryCloud.value;
+  if (summary.status === "cloud_disabled") return "云端摘要未启用，本地统计摘要有效";
+  if (summary.status === "cloud_failed") return `云端摘要失败：${summary.cloud_error ?? "--"}`;
+  return cloud.family_message ?? cloud.overall_status ?? summary.status ?? "本地统计摘要已生成";
 }
 
 async function loadState() {
@@ -1297,6 +1357,26 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
             <small>燃气 {{ roomMetric(room, "gas_ppm", "ppm") }} · 烟雾 {{ roomMetric(room, "smoke_ppm", "ppm") }} · 光照 {{ roomMetric(room, "illuminance_lux", "lux") }}</small>
           </li>
         </ul></div>
+      </article>
+
+      <article class="panel daily-summary-panel">
+        <h2>每日健康摘要</h2>
+        <div class="panel-scroll">
+          <p v-if="!latestDailyHealthSummary" class="empty">暂无每日健康摘要</p>
+          <ul v-else>
+            <li>
+              <div class="row-head">
+                <strong>{{ latestDailyHealthSummary.risk_level ?? "--" }}</strong>
+                <time>{{ latestDailyHealthSummary.summary_date ?? formatTime(latestDailyHealthSummary.updated_at) }}</time>
+              </div>
+              <b>状态：{{ statusLabel(latestDailyHealthSummary.status) }}</b>
+              <p>{{ dailyVitalsText() }}</p>
+              <p>{{ dailyBehaviorText() }}</p>
+              <p>{{ dailyEventsText() }}</p>
+              <small>{{ clip(dailyCloudText(), 120) }}</small>
+            </li>
+          </ul>
+        </div>
       </article>
 
     </section>
