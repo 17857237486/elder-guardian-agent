@@ -643,12 +643,28 @@ def vital_metric_preview(sample_count: int) -> dict[str, Any]:
 
 
 def bathroom_stay_durations(count: int, avg_stay_sec: int, p90_stay_sec: int) -> list[int]:
-    normal_count = max(1, count - 3)
-    low = max(10, int(avg_stay_sec * 0.65))
-    high = max(low + 1, int(avg_stay_sec * 1.25))
-    durations = [low + (index * 37) % max(1, high - low) for index in range(normal_count)]
-    durations.extend([max(avg_stay_sec, p90_stay_sec - 45), p90_stay_sec, p90_stay_sec + 60])
-    return durations[:count]
+    count = max(1, count)
+    target_total = max(10 * count, int(round(avg_stay_sec * count / 5.0) * 5))
+    if count == 1:
+        return [target_total]
+    # Keep one long historical stay, while preserving the requested batch average.
+    feasible_peak = target_total - 10 * (count - 1)
+    peak = max(10, min(int(round(p90_stay_sec / 5.0) * 5), feasible_peak))
+    remaining_total = max(10 * (count - 1), target_total - peak)
+    base = max(10, int(round((remaining_total / (count - 1)) / 5.0) * 5))
+    durations = [base for _ in range(count - 1)] + [peak]
+    delta = target_total - sum(durations)
+    index = 0
+    while delta != 0 and durations:
+        step = 5 if delta > 0 else -5
+        if durations[index] + step >= 10 and durations[index] + step <= max(peak, base + 60):
+            durations[index] += step
+            delta -= step
+        index = (index + 1) % len(durations)
+        if index == 0 and abs(delta) < 5:
+            durations[-1] += delta
+            delta = 0
+    return durations
 
 
 def home_presence_snapshot(elder_id: str, present_room: str, observed_at: datetime, *, source: str) -> dict[str, Any]:
