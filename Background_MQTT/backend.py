@@ -1438,6 +1438,7 @@ async def bathroom_stay_demo(request: BathroomStayDemoRequest) -> dict[str, Any]
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail={"message": "edge baseline rebuild failed", "error": str(exc)})
     bathroom_stay_monitor["bathroom_reference_limit_sec"] = await bathroom_reference_limit_sec(request.elder_id)
+    bathroom_stay_monitor["last_stay_seconds"] = request.duration_seconds
     bathroom_stay_monitor["demo_final_bathroom_stay_sec"] = request.duration_seconds
     monitor = bathroom_stay_monitor_snapshot()
     await broadcast(
