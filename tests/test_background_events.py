@@ -158,6 +158,10 @@ class BackgroundEventTests(unittest.TestCase):
         self.assertIn("demo-bathroom-duration-result", html)
         self.assertIn("randomBathroomStayDuration", html)
         self.assertIn("setBathroomStayMonitor(message.bathroom_stay_monitor)", html)
+        self.assertIn("<h2>卫生间停留验证</h2>", html)
+        self.assertIn("bathroom-flow-rows", html)
+        self.assertIn("进入卫生间", html)
+        self.assertIn("离开卫生间", html)
 
     def test_bathroom_demo_sends_continuous_home_environment_snapshots(self) -> None:
         backend = (ROOT / "Background_MQTT" / "backend.py").read_text(encoding="utf-8")
