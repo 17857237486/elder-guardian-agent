@@ -13,7 +13,7 @@ from uuid import uuid4
 
 import paho.mqtt.client as mqtt
 import httpx
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -1732,26 +1732,17 @@ async def proxy_recent_vision_captures(elder_id: str = "elder_001", camera_id: s
 
 
 @app.post("/api/vision/captures/import")
-async def proxy_import_vision_captures(
-    images: list[UploadFile] | None = File(None),
-    files: list[UploadFile] | None = File(None),
-    elder_id: str = Form("elder_001"),
-    camera_id: str = Form("living_room"),
-    room: str = Form("living_room"),
-) -> dict[str, Any]:
-    upload_files = images or files or []
-    if len(upload_files) != 5:
-        raise HTTPException(status_code=400, detail="?????? 5 ???")
-    multipart: list[tuple[str, tuple[str, bytes, str]]] = []
-    for image in upload_files:
-        content = await image.read()
-        multipart.append(("images", (image.filename or "capture.jpg", content, image.content_type or "image/jpeg")))
+async def proxy_import_vision_captures(request: Request) -> dict[str, Any]:
+    content_type = request.headers.get("content-type")
+    if not content_type or "multipart/form-data" not in content_type.lower():
+        raise HTTPException(status_code=400, detail="??????? 5 ???")
+    body = await request.body()
     try:
         async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
             response = await client.post(
                 f"{VISION_SERVICE_URL}/api/v2/vision/captures/import",
-                data={"elder_id": elder_id, "camera_id": camera_id, "room": room},
-                files=multipart,
+                content=body,
+                headers={"content-type": content_type},
             )
             response.raise_for_status()
             return response.json()
