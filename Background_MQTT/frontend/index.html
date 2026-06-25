@@ -1161,47 +1161,16 @@
                 <label><span>平均停留目标（秒）</span><input id="auto-bathroom-avg" type="number" min="10" max="3600" step="1" value="180" /></label>
                 <label><span>最长停留目标（秒）</span><input id="auto-bathroom-p90" type="number" min="20" max="7200" step="1" value="480" /></label>
               </div>
-              <p class="muted">这里会生成 20 次历史卫生间停留记录，用于统计个人卫生间停留基线；这些历史记录不逐条展示，只展示统计结果。</p>
+              <p class="muted">这里会生成 20 次历史卫生间停留记录，用于统计个人卫生间停留基线；“生成一次卫生间停留时间”只随机生成一条样例流程，并在环境数据记录中展示。</p>
               <div class="form-actions">
                 <button id="auto-bathroom-baseline" class="primary" type="button">生成卫生间停留基线</button>
+                <button id="demo-bathroom-stay" type="button">生成一次卫生间停留时间</button>
               </div>
-            </section>
-            <section class="baseline-card">
-              <h3>卫生间停留验证</h3>
               <div class="baseline-fields">
-                <label><span>本次停留时间（秒）</span><input id="demo-bathroom-duration" type="number" min="10" max="7200" step="1" value="600" /></label>
-              </div>
-              <p class="muted">输入一次停留时长，系统会按逻辑 5 秒 1 组发送整屋环境数据；每组数据都包含四个房间红外 presence，用这一次流程证明“老人持续在卫生间”如何形成 open bathroom_stay。</p>
-              <div class="form-actions">
-                <button id="demo-bathroom-stay" class="primary" type="button">发送一次红外停留流程</button>
+                <label><span>本次随机停留时长</span><input id="demo-bathroom-duration-result" readonly value="--" /></label>
               </div>
             </section>
           </div>
-          <section class="presence-monitor" aria-label="卫生间停留时长推导">
-            <h3>卫生间停留时长推导</h3>
-            <p class="muted">每 5 秒输入一组整屋环境数据，其中包含四个房间红外 presence。系统根据 bathroom=true 的连续时间，计算本次卫生间停留时长。</p>
-            <div class="table-wrap presence-flow-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>序号</th>
-                    <th>采样时间</th>
-                    <th>老人所在房间</th>
-                    <th>当前房间停留时长</th>
-                    <th>卫生间状态</th>
-                    <th>卫生间累计停留时长</th>
-                  </tr>
-                </thead>
-                <tbody id="pir-flow-rows">
-                  <tr><td colspan="6">暂无卫生间停留推导流程。</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="presence-result">
-              <span>本次卫生间停留时长</span>
-              <strong id="pir-final-stay">--</strong>
-            </div>
-          </section>
         </div>
       </article>
 
@@ -1484,6 +1453,7 @@
                   <th>CO2</th>
                   <th>燃气</th>
                   <th>烟雾</th>
+                  <th>卫生间累计停留</th>
                   <th>采样时间</th>
                 </tr>
               </thead>
@@ -2439,20 +2409,32 @@
         }
       }
 
+      function randomBathroomStayDuration() {
+        const avg = Math.max(10, Number($("auto-bathroom-avg").value || 180));
+        const longestInput = Math.max(10, Number($("auto-bathroom-p90").value || avg));
+        const minValue = Math.max(10, avg * 0.65);
+        const maxValue = Math.max(avg, longestInput);
+        const raw = minValue + Math.random() * Math.max(0, maxValue - minValue);
+        return Math.max(10, Math.round(raw / 5) * 5);
+      }
+
       async function runBathroomStayDemo() {
         const button = $("demo-bathroom-stay");
         button.disabled = true;
-        setSubmitStatus("baseline-submit-status", "正在按 5 秒逻辑间隔发送整屋环境 presence 数据");
+        const durationSeconds = randomBathroomStayDuration();
+        setInputValue("demo-bathroom-duration-result", formatDuration(durationSeconds));
+        setSubmitStatus("baseline-submit-status", `正在生成一次随机卫生间停留时间：${formatDuration(durationSeconds)}`);
         try {
           const result = await postJson("/api/bathroom-stay/demo", {
             elder_id: $("baseline-elder").value.trim() || "elder_001",
-            duration_seconds: Number($("demo-bathroom-duration").value || 600),
+            duration_seconds: durationSeconds,
             logical_interval_sec: 5,
           });
           if (result.bathroom_stay_monitor) setBathroomStayMonitor(result.bathroom_stay_monitor);
-          setSubmitStatus("baseline-submit-status", `红外停留流程已发送：${result.published_snapshots ?? "--"} 组整屋环境数据；${summarizeBaselineRebuild(result)}`, "ok");
+          setInputValue("demo-bathroom-duration-result", formatDuration(result.duration_seconds ?? durationSeconds));
+          setSubmitStatus("baseline-submit-status", `一次卫生间停留时间已生成：${formatDuration(result.duration_seconds ?? durationSeconds)}；已发送 ${result.published_snapshots ?? "--"} 组整屋环境数据`, "ok");
         } catch (error) {
-          setSubmitStatus("baseline-submit-status", `停留验证失败：${error.message}`, "error");
+          setSubmitStatus("baseline-submit-status", `生成一次卫生间停留时间失败：${error.message}`, "error");
         } finally {
           button.disabled = false;
         }
@@ -2509,26 +2491,77 @@
           .join("");
       }
 
+      function envRecordTimestamp(record) {
+        const data = record?.payload ?? {};
+        const raw = data.timestamp || data.observed_at || record?.sample_timestamp || record?.received_at;
+        const date = raw ? new Date(raw) : null;
+        return date && !Number.isNaN(date.getTime()) ? date : null;
+      }
+
+      function roomFromHomeSnapshot(data) {
+        if (data?.schema === "home_environment_snapshot_v1" && data.rooms) {
+          return roomOrder.find((room) => Boolean(data.rooms?.[room]?.presence)) || data.occupant_room || data.room || "--";
+        }
+        return data?.room || "--";
+      }
+
+      function envPayloadForDisplay(data, room) {
+        if (data?.schema === "home_environment_snapshot_v1" && data.rooms) {
+          return data.rooms?.[room] || data.rooms?.[data.occupant_room] || data.rooms?.living_room || {};
+        }
+        return data || {};
+      }
+
+      function buildBathroomStayElapsedMap(records) {
+        const map = new Map();
+        let bathroomEnteredAt = null;
+        [...records]
+          .filter((record) => (record.payload ?? {}).source === "bathroom_stay_demo")
+          .sort((a, b) => (envRecordTimestamp(a)?.getTime() || 0) - (envRecordTimestamp(b)?.getTime() || 0))
+          .forEach((record) => {
+            const data = record.payload ?? {};
+            const timestamp = envRecordTimestamp(record);
+            const room = roomFromHomeSnapshot(data);
+            const sampleId = data.snapshot_id || record.sample_id || record.record_no;
+            if (!timestamp) return;
+            if (room === "bathroom") {
+              if (!bathroomEnteredAt) bathroomEnteredAt = timestamp;
+              const elapsed = Math.max(0, Math.round((timestamp.getTime() - bathroomEnteredAt.getTime()) / 1000));
+              map.set(sampleId, elapsed);
+            } else {
+              bathroomEnteredAt = null;
+              map.set(sampleId, 0);
+            }
+          });
+        return map;
+      }
+
       function renderEnvRows(records) {
         $("env-count").textContent = records.length;
         $("env-empty").style.display = records.length === 0 ? "block" : "none";
+        const bathroomElapsedBySample = buildBathroomStayElapsedMap(records);
         $("env-rows").innerHTML = records
           .slice(0, recordLimit)
           .map((record, index) => {
             const data = record.payload ?? {};
+            const room = roomFromHomeSnapshot(data);
+            const env = envPayloadForDisplay(data, room);
             const displayNo = records.length - index;
+            const sampleId = data.snapshot_id || record.sample_id || record.record_no;
+            const bathroomElapsed = data.source === "bathroom_stay_demo" ? bathroomElapsedBySample.get(sampleId) ?? 0 : null;
             return `
               <tr>
                 <td>${displayNo}</td>
                 <td>${formatTime(record.received_at)}</td>
                 <td>${valueOrDash(record.elder_id)}</td>
-                <td>${valueOrDash(data.room)}</td>
-                <td>${valueOrDash(data.temperature)}°C</td>
-                <td>${valueOrDash(data.humidity)}%</td>
-                <td>${valueOrDash(data.co2_ppm)} ppm</td>
-                <td>${valueOrDash(data.gas_ppm)} ppm</td>
-                <td>${valueOrDash(data.smoke_ppm)} ppm</td>
-                <td>${formatTime(data.timestamp)}</td>
+                <td>${valueOrDash(room)}</td>
+                <td>${valueOrDash(env.temperature)}°C</td>
+                <td>${valueOrDash(env.humidity)}%</td>
+                <td>${valueOrDash(env.co2_ppm)} ppm</td>
+                <td>${valueOrDash(env.gas_ppm)} ppm</td>
+                <td>${valueOrDash(env.smoke_ppm)} ppm</td>
+                <td>${bathroomElapsed === null ? "--" : formatDuration(bathroomElapsed)}</td>
+                <td>${formatTime(data.timestamp || data.observed_at)}</td>
               </tr>
             `;
           })
@@ -2537,26 +2570,8 @@
 
       function renderBathroomStayMonitor() {
         const monitor = state.bathroomStayMonitor ?? {};
-        const rows = monitor.demo_flow_rows ?? [];
-        $("pir-flow-rows").innerHTML = rows.length
-          ? rows
-              .map((row) => {
-                const room = row.current_room ? `${roomLabels[row.current_room] || row.current_room} (${row.current_room})` : "--";
-                return `
-                  <tr>
-                    <td>${valueOrDash(row.index)}</td>
-                    <td>${formatTime(row.timestamp)}</td>
-                    <td>${room}</td>
-                    <td>${formatDuration(row.current_room_elapsed_sec)}</td>
-                    <td>${presenceLabel(Boolean(row.bathroom_present))}</td>
-                    <td>${formatDuration(row.bathroom_elapsed_sec)}</td>
-                  </tr>
-                `;
-              })
-              .join("")
-          : `<tr><td colspan="6">暂无卫生间停留推导流程。</td></tr>`;
-        const finalStay = monitor.demo_final_bathroom_stay_sec ?? monitor.last_stay_seconds ?? (monitor.bathroom_present ? monitor.bathroom_elapsed_sec : null);
-        setText("pir-final-stay", formatDuration(finalStay));
+        const finalStay = monitor.demo_final_bathroom_stay_sec ?? monitor.last_stay_seconds ?? null;
+        setInputValue("demo-bathroom-duration-result", finalStay === null || finalStay === undefined ? "--" : formatDuration(finalStay));
       }
 
       function renderRecords() {

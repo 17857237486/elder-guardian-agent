@@ -150,10 +150,10 @@ class BackgroundEventTests(unittest.TestCase):
         self.assertIn("bathroom_stay_monitor_snapshot()", backend)
         self.assertIn("update_bathroom_stay_monitor(env_payload)", backend)
         self.assertIn('"bathroom_stay_monitor": bathroom_stay_monitor_snapshot()', backend)
-        self.assertIn("卫生间停留时长推导", html)
-        self.assertIn("demo_flow_rows", backend)
-        self.assertIn("pir-flow-rows", html)
-        self.assertIn("pir-final-stay", html)
+        self.assertNotIn("卫生间停留时长推导", html)
+        self.assertIn("卫生间累计停留", html)
+        self.assertIn("demo-bathroom-duration-result", html)
+        self.assertIn("randomBathroomStayDuration", html)
         self.assertIn("setBathroomStayMonitor(message.bathroom_stay_monitor)", html)
 
     def test_bathroom_demo_sends_continuous_home_environment_snapshots(self) -> None:
@@ -163,8 +163,8 @@ class BackgroundEventTests(unittest.TestCase):
         self.assertIn("for index in range(steps + 1):", backend)
         self.assertIn("home_presence_snapshot(request.elder_id, \"bathroom\", observed_at, source=\"bathroom_stay_demo\")", backend)
         self.assertIn("\"published_snapshots\": published", backend)
-        self.assertIn("每 5 秒输入一组整屋环境数据", html)
-        self.assertIn("本次卫生间停留时长", html)
+        self.assertIn("一次卫生间停留时间已生成", html)
+        self.assertIn("bathroomElapsedBySample", html)
         self.assertIn("logical_interval_sec: 5", html)
 
     def test_bathroom_baseline_generator_does_not_take_over_demo_monitor(self) -> None:
