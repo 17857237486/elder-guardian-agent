@@ -13,7 +13,7 @@ from uuid import uuid4
 
 import paho.mqtt.client as mqtt
 import httpx
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -644,30 +644,58 @@ def vital_metric_preview(sample_count: int) -> dict[str, Any]:
 
 def bathroom_stay_durations(count: int, avg_stay_sec: int, p90_stay_sec: int) -> list[int]:
     count = max(1, count)
-    target_total = max(10 * count, int(round(avg_stay_sec * count / 5.0) * 5))
+    avg = max(10, int(round(avg_stay_sec / 5.0) * 5))
+    longest = max(avg, int(round(p90_stay_sec / 5.0) * 5))
     if count == 1:
-        return [target_total]
-    # Keep one long historical stay, while preserving the requested batch average.
-    feasible_peak = target_total - 10 * (count - 1)
-    peak = max(10, min(int(round(p90_stay_sec / 5.0) * 5), feasible_peak))
-    remaining_total = max(10 * (count - 1), target_total - peak)
-    base = max(10, int(round((remaining_total / (count - 1)) / 5.0) * 5))
-    durations = [base for _ in range(count - 1)] + [peak]
-    delta = target_total - sum(durations)
+        return [avg]
+
+    low = max(10, int(round(avg * 0.82 / 5.0) * 5))
+    high = max(low, int(round(avg * 1.18 / 5.0) * 5))
+    pattern = [-2, -1, 0, 1, 2]
+    durations = [max(10, avg + pattern[index % len(pattern)] * 5) for index in range(count)]
+    durations[-1] = longest
+
+    # Nudge the regular samples back toward the requested average, but intentionally
+    # keep natural-looking variation instead of forcing an exact total.
+    target_total = avg * count
+    min_total = int(round(avg * 0.92 * count / 5.0) * 5)
+    max_total = int(round(avg * 1.08 * count / 5.0) * 5)
     index = 0
-    while delta != 0 and durations:
-        step = 5 if delta > 0 else -5
-        if durations[index] + step >= 10 and durations[index] + step <= max(peak, base + 60):
-            durations[index] += step
-            delta -= step
-        index = (index + 1) % len(durations)
-        if index == 0 and abs(delta) < 5:
-            durations[-1] += delta
-            delta = 0
+    while sum(durations) > max_total and index < count * 8:
+        pos = index % max(1, count - 1)
+        if durations[pos] > low:
+            durations[pos] -= 5
+        index += 1
+    index = 0
+    while sum(durations) < min_total and index < count * 8:
+        pos = index % max(1, count - 1)
+        if durations[pos] < high:
+            durations[pos] += 5
+        index += 1
+    # If the longest target is modest, keep the average near the requested center.
+    if longest <= avg * 1.8:
+        index = 0
+        while abs(sum(durations) - target_total) > count * 5 and index < count * 8:
+            pos = index % max(1, count - 1)
+            if sum(durations) > target_total and durations[pos] > low:
+                durations[pos] -= 5
+            elif sum(durations) < target_total and durations[pos] < high:
+                durations[pos] += 5
+            index += 1
     return durations
 
 
-def home_presence_snapshot(elder_id: str, present_room: str, observed_at: datetime, *, source: str) -> dict[str, Any]:
+def home_presence_snapshot(
+    elder_id: str,
+    present_room: str,
+    observed_at: datetime,
+    *,
+    source: str,
+    stay_sequence: int | None = None,
+    stay_phase: str | None = None,
+    bathroom_stay_elapsed_sec: int | None = None,
+    bathroom_stay_completed_sec: int | None = None,
+) -> dict[str, Any]:
     rooms: dict[str, dict[str, Any]] = {}
     for room in ROOM_KEYS:
         base = dict(DEFAULT_ROOM_ENV[room])
@@ -677,7 +705,7 @@ def home_presence_snapshot(elder_id: str, present_room: str, observed_at: dateti
             "smoke_ppm": 0,
             "presence": room == present_room,
         }
-    return {
+    payload = {
         "schema": "home_environment_snapshot_v1",
         "snapshot_id": f"baseline_{uuid4().hex[:10]}",
         "elder_id": elder_id,
@@ -686,6 +714,15 @@ def home_presence_snapshot(elder_id: str, present_room: str, observed_at: dateti
         "observed_at": observed_at.isoformat(),
         "timestamp": observed_at.isoformat(),
     }
+    if stay_sequence is not None:
+        payload["bathroom_stay_sequence"] = stay_sequence
+    if stay_phase:
+        payload["bathroom_stay_phase"] = stay_phase
+    if bathroom_stay_elapsed_sec is not None:
+        payload["bathroom_stay_elapsed_sec"] = bathroom_stay_elapsed_sec
+    if bathroom_stay_completed_sec is not None:
+        payload["bathroom_stay_completed_sec"] = bathroom_stay_completed_sec
+    return payload
 
 
 async def rebuild_edge_baselines(elder_id: str, baseline_types: list[str] | None = None) -> dict[str, Any]:
@@ -1401,12 +1438,43 @@ async def auto_bathroom_baseline(request: AutoBathroomBaselineRequest) -> dict[s
     durations = bathroom_stay_durations(request.stay_count, request.avg_stay_sec, request.p90_stay_sec)
     cursor = datetime.now(timezone.utc) - timedelta(seconds=sum(durations) + request.stay_count * 900)
     published = 0
-    for duration in durations:
-        publish_json(elder_sensor_env(request.elder_id), home_presence_snapshot(request.elder_id, "living_room", cursor, source="bathroom_baseline_generator"))
-        publish_json(elder_sensor_env(request.elder_id), home_presence_snapshot(request.elder_id, "bathroom", cursor + timedelta(seconds=5), source="bathroom_baseline_generator"))
+    for sequence, duration in enumerate(durations, start=1):
         publish_json(
             elder_sensor_env(request.elder_id),
-            home_presence_snapshot(request.elder_id, "living_room", cursor + timedelta(seconds=duration + 5), source="bathroom_baseline_generator"),
+            home_presence_snapshot(
+                request.elder_id,
+                "living_room",
+                cursor,
+                source="bathroom_baseline_generator",
+                stay_sequence=sequence,
+                stay_phase="before",
+                bathroom_stay_elapsed_sec=0,
+            ),
+        )
+        publish_json(
+            elder_sensor_env(request.elder_id),
+            home_presence_snapshot(
+                request.elder_id,
+                "bathroom",
+                cursor + timedelta(seconds=5),
+                source="bathroom_baseline_generator",
+                stay_sequence=sequence,
+                stay_phase="enter",
+                bathroom_stay_elapsed_sec=0,
+            ),
+        )
+        publish_json(
+            elder_sensor_env(request.elder_id),
+            home_presence_snapshot(
+                request.elder_id,
+                "living_room",
+                cursor + timedelta(seconds=duration + 5),
+                source="bathroom_baseline_generator",
+                stay_sequence=sequence,
+                stay_phase="exit",
+                bathroom_stay_elapsed_sec=duration,
+                bathroom_stay_completed_sec=duration,
+            ),
         )
         cursor += timedelta(seconds=duration + 900)
         published += 3
@@ -1640,6 +1708,25 @@ async def proxy_recent_vision_captures(elder_id: str = "elder_001", camera_id: s
         return await recent_vision_captures(elder_id, camera_id)
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"vision recent captures failed: {exc}") from exc
+
+
+@app.post("/api/vision/captures/import")
+async def proxy_import_vision_captures(request: Request) -> dict[str, Any]:
+    content_type = request.headers.get("content-type")
+    if not content_type or "multipart/form-data" not in content_type.lower():
+        raise HTTPException(status_code=400, detail="请使用表单上传 5 张图片")
+    body = await request.body()
+    try:
+        async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
+            response = await client.post(
+                f"{VISION_SERVICE_URL}/api/v2/vision/captures/import",
+                content=body,
+                headers={"content-type": content_type},
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"vision import captures failed: {exc}") from exc
 
 
 @app.post("/api/vision/captures/clear")

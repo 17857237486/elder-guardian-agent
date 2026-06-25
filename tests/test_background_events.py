@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import sys
 import types
@@ -70,14 +70,18 @@ class BackgroundEventTests(unittest.TestCase):
         positions = [html.index(item) for item in order]
         self.assertEqual(positions, sorted(positions))
 
-    def test_vision_capture_panel_is_chinese_and_not_question_marks(self) -> None:
+    def test_vision_capture_panel_imports_five_images(self) -> None:
         html = (ROOT / "Background_MQTT" / "frontend" / "index.html").read_text(encoding="utf-8")
-        start = html.index("真实摄像头拍照验证")
-        end = html.index("个人基线设置", start)
+        start = html.index('id="vision-capture-one"')
+        end = html.index('id="vision-capture-list"', start)
         section = html[start:end]
-        self.assertIn("拍一张照片", section)
-        self.assertIn("一键清除已拍摄图片", section)
-        self.assertIn("用最近五张触发疑似跌倒", section)
+        self.assertIn("vision-import-files", section)
+        self.assertIn("vision-import-captures", section)
+        self.assertIn("vision-clear-captures", section)
+        self.assertIn("第 2、3、4 张", section)
+        self.assertNotIn("vision-refresh-captures", section)
+        self.assertNotIn("vision-trigger-fall", section)
+        self.assertNotIn("vision-trigger-static", section)
         self.assertNotIn("????", section)
 
     def test_spo2_levels_are_distinct(self) -> None:
@@ -145,7 +149,7 @@ class BackgroundEventTests(unittest.TestCase):
         self.assertIn(".slice(0, recordLimit)", html)
         self.assertNotIn("最新关键数据表", html)
         self.assertNotIn("key-table", html)
-        self.assertLess(html.find("<h2>环境数据记录</h2>"), html.find("<h2>每日健康摘要</h2>"))
+        self.assertLess(html.find('id="env-rows"'), html.find('id="daily-summary-status"'))
 
     def test_bathroom_presence_monitor_is_exposed_on_8090(self) -> None:
         backend = (ROOT / "Background_MQTT" / "backend.py").read_text(encoding="utf-8")
@@ -168,13 +172,21 @@ class BackgroundEventTests(unittest.TestCase):
         html = (ROOT / "Background_MQTT" / "frontend" / "index.html").read_text(encoding="utf-8")
         self.assertIn("logical_interval_sec: int = Field(default=5", backend)
         self.assertIn("for index in range(steps + 1):", backend)
-        self.assertIn("home_presence_snapshot(request.elder_id, \"bathroom\", observed_at, source=\"bathroom_stay_demo\")", backend)
-        self.assertIn("home_presence_snapshot(request.elder_id, \"living_room\", exit_at, source=\"bathroom_stay_demo\")", backend)
+        self.assertIn('home_presence_snapshot(request.elder_id, "bathroom", observed_at, source="bathroom_stay_demo")', backend)
+        self.assertIn('home_presence_snapshot(request.elder_id, "living_room", exit_at, source="bathroom_stay_demo")', backend)
         self.assertIn('exit_entry["bathroom_stay_completed_sec"] = request.duration_seconds', backend)
-        self.assertIn("\"published_snapshots\": published", backend)
-        self.assertIn("一次卫生间停留时间已生成", html)
+        self.assertIn('"published_snapshots": published', backend)
+        self.assertIn("一次卫生间停留时间", html)
         self.assertIn("bathroomElapsedBySample", html)
         self.assertIn("logical_interval_sec: 5", html)
+
+    def test_bathroom_baseline_generator_is_visible_in_env_records(self) -> None:
+        backend = (ROOT / "Background_MQTT" / "backend.py").read_text(encoding="utf-8")
+        html = (ROOT / "Background_MQTT" / "frontend" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('source="bathroom_baseline_generator"', backend)
+        self.assertIn("bathroom_stay_sequence", backend)
+        self.assertIn("bathroom_stay_completed_sec", backend)
+        self.assertIn('"bathroom_baseline_generator"', html)
 
     def test_bathroom_baseline_generator_does_not_take_over_demo_monitor(self) -> None:
         backend = (ROOT / "Background_MQTT" / "backend.py").read_text(encoding="utf-8")
@@ -187,6 +199,17 @@ class BackgroundEventTests(unittest.TestCase):
         self.assertIn('"source": "background_mqtt_auto_bathroom_batch"', backend)
         self.assertIn("generated_baseline = await save_generated_bathroom_baseline(request.elder_id, durations)", backend)
         self.assertIn('rebuild["personal_baselines"] = [generated_baseline.get("personal_baseline", generated_baseline)]', backend)
+
+    def test_vision_import_proxy_and_ui_are_available(self) -> None:
+        backend = (ROOT / "Background_MQTT" / "backend.py").read_text(encoding="utf-8")
+        vision = (ROOT / "apps" / "vision-service" / "app" / "main.py").read_text(encoding="utf-8")
+        html = (ROOT / "Background_MQTT" / "frontend" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("/api/vision/captures/import", backend)
+        self.assertIn("/api/v2/vision/captures/import", vision)
+        self.assertIn("exactly five images are required", vision)
+        self.assertIn("vision-import-files", html)
+        self.assertIn("importVisionCaptures", html)
+        self.assertIn("第 2、3、4 张", html)
 
 
 if __name__ == "__main__":

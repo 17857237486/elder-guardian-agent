@@ -197,32 +197,60 @@ def public_capture(item: dict[str, Any]) -> dict[str, Any]:
         "sha256": item.get("sha256"),
         "width": item.get("width"),
         "height": item.get("height"),
+        "original_filename": item.get("original_filename"),
     }
 
 
 async def create_camera_capture(request: VisionCaptureRequest) -> dict[str, Any]:
     raw = await fetch_camera_snapshot(request.camera_id, request.room)
     jpeg, width, height = normalize_image(raw)
-    captured_at = utc_now()
+    return save_pending_capture(
+        jpeg,
+        width,
+        height,
+        elder_id=request.elder_id,
+        camera_id=request.camera_id,
+        room=request.room,
+        trigger_source=request.trigger_source,
+        reason=request.reason,
+    )
+
+
+def save_pending_capture(
+    jpeg: bytes,
+    width: int,
+    height: int,
+    *,
+    elder_id: str,
+    camera_id: str,
+    room: str,
+    trigger_source: str,
+    reason: str,
+    original_filename: str | None = None,
+    captured_at: datetime | None = None,
+) -> dict[str, Any]:
+    captured_at = captured_at or utc_now()
     capture_id = f"cap_{uuid4().hex[:16]}"
-    directory = pending_capture_dir(request.elder_id, request.camera_id)
+    directory = pending_capture_dir(elder_id, camera_id)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{captured_at.strftime('%Y%m%dT%H%M%S%fZ')}_{capture_id}.jpg"
     path.write_bytes(jpeg)
     metadata = {
         "capture_id": capture_id,
-        "elder_id": request.elder_id,
-        "camera_id": request.camera_id,
-        "room": request.room,
+        "elder_id": elder_id,
+        "camera_id": camera_id,
+        "room": room,
         "captured_at": captured_at.isoformat(),
-        "trigger_source": request.trigger_source,
-        "reason": request.reason,
+        "trigger_source": trigger_source,
+        "reason": reason,
         "sha256": hashlib.sha256(jpeg).hexdigest(),
         "width": width,
         "height": height,
     }
+    if original_filename:
+        metadata["original_filename"] = original_filename
     pending_capture_metadata_path(path).write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
-    trim_pending_captures(request.elder_id, request.camera_id)
+    trim_pending_captures(elder_id, camera_id)
     return public_capture({**metadata, "path": path})
 
 
@@ -483,6 +511,46 @@ async def upload_frame(
 async def capture_snapshot(request: VisionCaptureRequest) -> dict[str, Any]:
     capture = await create_camera_capture(request)
     return {"ok": True, "capture": capture, "recent": [public_capture(item) for item in recent_pending_captures(request.elder_id, request.camera_id)]}
+
+
+@app.post("/api/v2/vision/captures/import")
+async def import_captures(
+    images: list[UploadFile] = File(...),
+    elder_id: str = Form("elder_001"),
+    camera_id: str = Form("living_room"),
+    room: str = Form("living_room"),
+) -> dict[str, Any]:
+    if len(images) != 5:
+        raise HTTPException(status_code=422, detail="exactly five images are required")
+    imported: list[dict[str, Any]] = []
+    base_time = utc_now()
+    for index, image in enumerate(images, start=1):
+        raw = await image.read()
+        jpeg, width, height = normalize_image(raw)
+        imported.append(
+            save_pending_capture(
+                jpeg,
+                width,
+                height,
+                elder_id=elder_id,
+                camera_id=camera_id,
+                room=room,
+                trigger_source="background_mqtt_import",
+                reason=f"imported_five_image_{index}",
+                original_filename=image.filename,
+                captured_at=base_time + timedelta(milliseconds=index),
+            )
+        )
+        await image.close()
+    return {
+        "ok": True,
+        "elder_id": elder_id,
+        "camera_id": camera_id,
+        "room": room,
+        "imported": imported,
+        "recent": [public_capture(item) for item in recent_pending_captures(elder_id, camera_id)],
+        "count": len(imported),
+    }
 
 
 @app.get("/api/v2/vision/captures/recent")
