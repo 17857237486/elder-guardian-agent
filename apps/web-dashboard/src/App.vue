@@ -8,6 +8,7 @@ type DemoTarget = { kind: "event" | "candidate" | "normal_input" | "risk_input";
 type ObservationRiskHint = { event_type: string; risk_level: string; room?: string; observed_at?: string } | null;
 const DISPLAY_LIMIT = 10;
 const ROOM_ORDER = ["bedroom", "bathroom", "living_room", "kitchen"];
+const RISK_ORDER: Record<string, number> = { P4: 0, P3: 1, P2: 2, P1: 3, P0: 4 };
 const DEFAULT_HOME_ENV: Record<string, AnyRecord> = {
   bedroom: { room: "bedroom", temperature: 24.0, humidity: 50.0, co2_ppm: 820, gas_ppm: 0, smoke_ppm: 0, presence: false, is_default: true },
   bathroom: { room: "bathroom", temperature: 24.0, humidity: 58.0, co2_ppm: 780, gas_ppm: 0, smoke_ppm: 0, presence: false, is_default: true },
@@ -1008,6 +1009,12 @@ const latestDailyHealthSummary = computed<AnyRecord | null>(() => {
     .sort((a, b) => new Date(b.updated_at ?? b.created_at ?? b.summary_date ?? "").getTime() - new Date(a.updated_at ?? a.created_at ?? a.summary_date ?? "").getTime());
   return summaries[0] ?? null;
 });
+const monthlyHealthSummaryBase = computed<AnyRecord[]>(() =>
+  ((state.daily_health_summaries ?? []) as AnyRecord[])
+    .filter(Boolean)
+    .sort((a, b) => new Date(b.summary_date ?? b.updated_at ?? "").getTime() - new Date(a.summary_date ?? a.updated_at ?? "").getTime())
+    .slice(0, 30)
+);
 const dailySummaryStats = computed(() => latestDailyHealthSummary.value?.local_stats ?? {});
 const dailySummaryCloud = computed(() => latestDailyHealthSummary.value?.cloud_summary ?? {});
 const latestContextFusion = computed(() =>
@@ -1184,6 +1191,21 @@ function dailyCloudText(): string {
   if (summary.status === "cloud_disabled") return "云端摘要未启用，本地统计摘要有效";
   if (summary.status === "cloud_failed") return `云端摘要失败：${summary.cloud_error ?? "--"}`;
   return cloud.family_message ?? cloud.overall_status ?? summary.status ?? "本地统计摘要已生成";
+}
+
+function monthlyTrendBaseText(): string {
+  const summaries = monthlyHealthSummaryBase.value;
+  if (!summaries.length) return "近30天趋势基础：暂无每日摘要";
+  const riskCounts = summaries.reduce((acc: Record<string, number>, item: AnyRecord) => {
+    const level = String(item.risk_level ?? "P4");
+    acc[level] = (acc[level] ?? 0) + 1;
+    return acc;
+  }, {});
+  const highest = summaries.reduce((current: string, item: AnyRecord) => {
+    const level = String(item.risk_level ?? "P4");
+    return (RISK_ORDER[level] ?? 0) > (RISK_ORDER[current] ?? 0) ? level : current;
+  }, "P4");
+  return `近30天趋势基础：已有 ${summaries.length} 天摘要 · 最高风险 ${highest} · P0/P1/P2/P3/P4 ${riskCounts.P0 ?? 0}/${riskCounts.P1 ?? 0}/${riskCounts.P2 ?? 0}/${riskCounts.P3 ?? 0}/${riskCounts.P4 ?? 0}`;
 }
 
 async function loadState() {
@@ -1373,6 +1395,7 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
               <p>{{ dailyVitalsText() }}</p>
               <p>{{ dailyBehaviorText() }}</p>
               <p>{{ dailyEventsText() }}</p>
+              <p>{{ monthlyTrendBaseText() }}</p>
               <small>{{ clip(dailyCloudText(), 120) }}</small>
             </li>
           </ul>

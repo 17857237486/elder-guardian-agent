@@ -1005,6 +1005,84 @@ class LocalMultimodalClient:
 
 
 class CloudLLMClient:
+    async def monthly_health_trend(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if not settings.cloud_llm_enabled:
+            return {"status": "cloud_disabled", "error": "CLOUD_LLM_ENABLED=false"}
+        if not settings.cloud_llm_base_url or not settings.cloud_llm_model:
+            return {"status": "misconfigured", "error": "cloud llm base url or model is empty"}
+        local_trend = payload.get("local_trend") if isinstance(payload.get("local_trend"), dict) else {}
+        daily_summaries = payload.get("daily_summaries") if isinstance(payload.get("daily_summaries"), list) else []
+        instruction = (
+            "你是居家老人健康守护系统的云端月度趋势复核模型。"
+            "只根据给定的近30天本地统计摘要，生成家属可读中文趋势报告。"
+            "不要输出设备控制命令、MQTT、用药或诊断结论。"
+            "风险等级只能保持或高于本地月度趋势风险，不能降低。"
+            "只输出JSON，字段为trend_status,risk_level,trend_findings,body_condition_trend,"
+            "family_message,recommended_followup,data_quality_note。"
+            "family_message不超过100个中文字符；trend_findings最多5项；recommended_followup最多3项。"
+        )
+        local_risk = str(local_trend.get("highest_risk") or "P4")
+        body = {
+            "model": settings.cloud_llm_model,
+            "messages": [
+                {"role": "system", "content": instruction},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "elder_id": payload.get("elder_id"),
+                            "days": payload.get("days"),
+                            "local_risk_level": local_risk,
+                            "local_trend": local_trend,
+                            "daily_summaries": daily_summaries[:30],
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            "temperature": 0.1,
+            "max_tokens": max(settings.llm_max_tokens, 768),
+            "response_format": {"type": "json_object"},
+            "enable_thinking": False,
+        }
+        raw_content = ""
+        try:
+            async with httpx.AsyncClient(timeout=settings.cloud_llm_timeout_sec) as client:
+                response = await client.post(
+                    settings.cloud_llm_base_url.rstrip("/") + "/chat/completions",
+                    headers={"Authorization": f"Bearer {settings.cloud_llm_api_key}"},
+                    json=body,
+                )
+                response.raise_for_status()
+            raw_content = response.json()["choices"][0]["message"].get("content") or ""
+            parsed = _extract_json_object(raw_content)
+            forbidden = any(key in parsed for key in ["device_actions", "commands", "mqtt", "control"])
+            if forbidden:
+                raise ValueError("cloud monthly trend included forbidden device control fields")
+            risk = str(parsed.get("risk_level") or local_risk)
+            if risk not in RISK_ORDER:
+                risk = local_risk
+            if RISK_ORDER[risk] < RISK_ORDER.get(local_risk, 0):
+                risk = local_risk
+            findings = parsed.get("trend_findings") if isinstance(parsed.get("trend_findings"), list) else []
+            followup = parsed.get("recommended_followup") if isinstance(parsed.get("recommended_followup"), list) else []
+            return {
+                "status": "completed",
+                "trend_status": str(parsed.get("trend_status") or "已生成"),
+                "risk_level": risk,
+                "trend_findings": [str(item)[:50] for item in findings[:5]],
+                "body_condition_trend": str(parsed.get("body_condition_trend") or "")[:200],
+                "family_message": str(parsed.get("family_message") or "")[:140],
+                "recommended_followup": [str(item)[:50] for item in followup[:3]],
+                "data_quality_note": str(parsed.get("data_quality_note") or ""),
+                "model": settings.cloud_llm_model,
+            }
+        except Exception as exc:
+            result = {"status": "cloud_failed", "error": str(exc)}
+            if raw_content:
+                result["rejected_model_content"] = raw_content
+            return result
+
     async def daily_health_summary(self, summary: dict[str, Any]) -> dict[str, Any]:
         if not settings.cloud_llm_enabled:
             return {"status": "cloud_disabled", "error": "CLOUD_LLM_ENABLED=false"}

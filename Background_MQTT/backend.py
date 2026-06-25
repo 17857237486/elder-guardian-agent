@@ -151,6 +151,14 @@ class DailyHealthSummaryProxyRequest(BaseModel):
     generated_by: str = "background_mqtt"
 
 
+class MonthlyHealthTrendProxyRequest(BaseModel):
+    elder_id: str = "elder_001"
+    days: int = Field(default=30, ge=7, le=60)
+    timezone: str = "Asia/Shanghai"
+    use_cloud: bool = True
+    generated_by: str = "background_mqtt"
+
+
 class VisionCaptureProxyRequest(BaseModel):
     elder_id: str = "elder_001"
     camera_id: str = "living_room"
@@ -1392,6 +1400,19 @@ async def generate_daily_health_summary(request: DailyHealthSummaryProxyRequest)
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail={"message": "edge daily health summary generation failed", "error": str(exc)})
     await broadcast({"type": "daily_health_summary", "data": data})
+    return data
+
+
+@app.post("/api/monthly-health-trend/generate")
+async def generate_monthly_health_trend(request: MonthlyHealthTrendProxyRequest) -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(timeout=240, trust_env=False) as client:
+            response = await client.post(f"{EDGE_API_BASE}/api/v2/monthly-health-trends/generate", json=request.model_dump())
+            response.raise_for_status()
+            data = response.json()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail={"message": "edge monthly health trend generation failed", "error": str(exc)})
+    await broadcast({"type": "monthly_health_trend", "data": data})
     return data
 
 

@@ -1,9 +1,9 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>MQTT 浼犳劅鍣ㄦ暟鎹褰?/title>
+    <title>MQTT 传感器数据记录</title>
     <style>
       :root {
         color-scheme: light;
@@ -930,28 +930,28 @@
   <body>
     <main>
       <header>
-        <h1>MQTT 浼犳劅鍣ㄦ暟鎹褰?/h1>
-        <p class="muted">鐙珛鐩戝惉涓荤郴缁熸爣鍑嗘秷鎭紝涔熷彲浠ユ墜鍔ㄥ綍鍏ユ暟鎹苟鍙戦€佺粰 Mosquitto锛岀敱 RK3588 涓婄殑涓荤郴缁熺户缁鐞嗐€?/p>
+        <h1>MQTT 传感器数据记录</h1>
+        <p class="muted">用于演示传感器 MQTT 数据、个人基线、视觉图片导入和风险事件链路。</p>
       </header>
 
-      <section class="status-bar" aria-label="杩愯鐘舵€?>
-        <article class="status-item"><span>WebSocket</span><strong id="ws-status">杩炴帴涓?/strong></article>
+      <section class="status-bar" aria-label="ç³»ç»ç¶æ">
+        <article class="status-item"><span>WebSocket</span><strong id="ws-status">杩炴帴涓</strong></article>
         <article class="status-item"><span>褰曞叆鏂瑰紡</span><strong>鎵嬪姩 / 妯℃嫙鑴氭湰</strong></article>
         <article class="status-item"><span>鐢熷懡浣撳緛璁板綍</span><strong id="vital-count">0</strong></article>
         <article class="status-item"><span>鐜鏁版嵁璁板綍</span><strong id="env-count">0</strong></article>
-        <article class="status-item"><span>鏈€杩戞帴鏀舵椂闂?/span><strong id="latest-received">--</strong></article>
+        <article class="status-item"><span>鏈€杩戞帴鏀舵椂闂</span><strong id="latest-received">--</strong></article>
       </section>
 
       <section class="page-zone">
         <div class="zone-header">
           <div>
             <h2>鏅鸿兘瀹跺眳璁惧鎺у埗</h2>
-            <p>缁熶竴灞曠ず鎴块棿璁惧鐘舵€侊紝鎵嬪姩鎺у埗缁忎富绯荤粺 API锛岃嚜鍔ㄤ簨浠跺懡浠ょ粡 MQTT 鍥炴祦鍚屾銆?/p>
+            <p>缁熶竴灞曠ず鎴块棿璁惧鐘舵€侊紝鎵嬪姩鎺у埗缁忎富绯荤粺 API锛岃嚜鍔ㄤ簨浠跺懡浠ょ粡 MQTT 鍥炴祦鍚屾銆</p>
           </div>
         </div>
         <div class="zone-body">
       <article class="panel">
-        <h2>鏅鸿兘瀹跺眳璁惧鎺у埗涓庣姸鎬佸悓姝?/h2>
+        <h2>鏅鸿兘瀹跺眳璁惧鎺у埗涓庣姸鎬佸悓姝</h2>
         <div class="device-panel-body">
           <div id="current-scene-status" class="current-scene-status"></div>
           <div id="device-rooms" class="device-rooms"></div>
@@ -959,8 +959,8 @@
             <div class="device-log-toolbar">
               <h3>璁惧鍛戒护鏃ュ織</h3>
               <div class="device-log-actions">
-                <button id="refresh-devices" type="button">鍒锋柊璁惧鐘舵€?/button>
-                <span id="device-submit-status" class="submit-status">绛夊緟璁惧鐘舵€?/span>
+                <button id="refresh-devices" type="button">鍒锋柊璁惧鐘舵€</button>
+                <span id="device-submit-status" class="submit-status">绛夊緟璁惧鐘舵€</span>
               </div>
             </div>
             <div id="device-log" class="device-log"></div>
@@ -974,41 +974,41 @@
       <section class="page-zone">
         <div class="zone-header">
           <div>
-            <h2>鐢熷懡浣撳緛涓庣幆澧冩暟鎹?/h2>
-            <p>鎵嬪姩褰曞叆鎴栭闄╀簨浠舵椂闂磋酱鐢熸垚鐨勬暟鎹細鍙戝竷鍒?MQTT锛屽苟鍦ㄨ褰曞尯瀹炴椂鍥炴祦灞曠ず銆?/p>
+            <h2>鐢熷懡浣撳緛涓庣幆澧冩暟鎹</h2>
+            <p>鎵嬪姩褰曞叆鎴栭闄╀簨浠舵椂闂磋酱鐢熸垚鐨勬暟鎹細鍙戝竷鍒?MQTT锛屽苟鍦ㄨ褰曞尯瀹炴椂鍥炴祦灞曠ず銆</p>
           </div>
         </div>
         <div class="zone-body">
       <article class="panel">
-        <h2>椋庨櫓浜嬩欢鏃堕棿杞磋Е鍙?/h2>
+        <h2>椋庨櫓浜嬩欢鏃堕棿杞磋Е鍙</h2>
         <div class="timeline-panel">
           <div class="timeline-grid">
             <div class="timeline-field">
               <label for="scenario-event">椋庨櫓浜嬩欢</label>
               <select id="scenario-event">
-                <option value="gas_leak" selected>P0 鐕冩皵寮傚父</option>
-                <option value="spo2_critical">P0 涓ラ噸浣庤姘?/option>
-                <option value="spo2_low">P1 浣庤姘?/option>
-                <option value="heart_rate_abnormal">P1 蹇冪巼寮傚父</option>
-                <option value="suspected_fall">P1 鐤戜技璺屽€?/option>
-                <option value="long_static">P2 闀挎椂闂撮潤姝?/option>
-                <option value="heart_rate_baseline_anomaly">P2 蹇冪巼鍩虹嚎寮傚父锛圕andidate澶嶆牳锛?/option>
-                <option value="spo2_baseline_anomaly">P2 琛€姘у熀绾垮紓甯革紙Candidate澶嶆牳锛?/option>
-                <option value="bathroom_stay_anomaly_demo">P2 鍗敓闂村仠鐣欒繃闀匡紙Candidate澶嶆牳锛?/option>
-                <option value="co2_high">P3 CO2 鍋忛珮</option>
-                <option value="temperature_high">P3 瀹ゆ俯杩囬珮</option>
-                <option value="temperature_low">P3 瀹ゆ俯杩囦綆</option>
-                <option value="humidity_abnormal">P3 婀垮害寮傚父</option>
-                <option value="normal">P4 姝ｅ父鐘舵€?/option>
+                <option value="gas_leak" selected>P0 燃气异常</option>
+                <option value="spo2_critical">P0 严重低血氧</option>
+                <option value="spo2_low">P1 低血氧</option>
+                <option value="heart_rate_abnormal">P1 心率异常</option>
+                <option value="suspected_fall">P1 疑似跌倒</option>
+                <option value="long_static">P2 长时间静止</option>
+                <option value="heart_rate_baseline_anomaly">P2 心率基线异常（Candidate复核）</option>
+                <option value="spo2_baseline_anomaly">P2 血氧基线异常（Candidate复核）</option>
+                <option value="bathroom_stay_anomaly_demo">P2 卫生间停留过长（Candidate复核）</option>
+                <option value="co2_high">P3 CO2 偏高</option>
+                <option value="temperature_high">P3 室温过高</option>
+                <option value="temperature_low">P3 室温过低</option>
+                <option value="humidity_abnormal">P3 湿度异常</option>
+                <option value="normal">P4 正常状态</option>
               </select>
             </div>
             <div class="timeline-field">
               <label for="scenario-event-room">椋庨櫓鍙戠敓鎴块棿</label>
               <select id="scenario-event-room">
-                <option value="bedroom">bedroom</option>
-                <option value="kitchen">kitchen</option>
-                <option value="living_room" selected>living_room</option>
-                <option value="bathroom">bathroom</option>
+                <option value="bedroom">卧室</option>
+                <option value="kitchen">厨房</option>
+                <option value="living_room" selected>客厅</option>
+                <option value="bathroom">卫生间</option>
               </select>
             </div>
             <div class="timeline-field">
@@ -1025,7 +1025,7 @@
           <div class="scenario-summary">
             <div class="scenario-summary-row">
               <b>鐢熸垚鏂瑰紡</b>
-              <span id="scenario-method">鐢熸垚鍩虹 MQTT 鏁版嵁锛岄€昏緫閲囨牱姣?5 绉?1 缁勶紱鐪熷疄婕旂ず妯″紡姣?2 绉掑彂閫?1 缁勩€?/span>
+              <span id="scenario-method">鐢熸垚鍩虹 MQTT 鏁版嵁锛岄€昏緫閲囨牱姣?5 绉?1 缁勶紱鐪熷疄婕旂ず妯″紡姣?2 绉掑彂閫?1 缁勩€</span>
             </div>
             <div class="scenario-summary-row">
               <b>椋庨櫓鍙戠敓鎴块棿</b>
@@ -1033,18 +1033,18 @@
             </div>
             <div class="scenario-summary-row">
               <b>褰撳墠绛夌骇</b>
-              <span id="scenario-risk-level">P0 绱ф€ラ闄?/span>
+              <span id="scenario-risk-level">P0 绱ф€ラ闄</span>
             </div>
             <div class="scenario-summary-row">
               <b>棰勬湡瑙﹀彂</b>
-              <span id="scenario-expected">鐕冩皵鍦ㄨЕ鍙戠偣鍓嶅悗骞虫粦鍗囬珮锛岃秴杩?100 ppm 鍚庤Е鍙?gas_leak P0銆?/span>
+              <span id="scenario-expected">鐕冩皵鍦ㄨЕ鍙戠偣鍓嶅悗骞虫粦鍗囬珮锛岃秴杩?100 ppm 鍚庤Е鍙?gas_leak P0銆</span>
             </div>
             <div class="scenario-actions">
               <label class="realtime-toggle">
                 <input id="scenario-realtime" type="checkbox" />
-                <span>鎸夌湡瀹炴椂闂村彂閫?/span>
+                <span>鎸夌湡瀹炴椂闂村彂閫</span>
               </label>
-              <span class="muted">鏈嬀閫夋椂浣跨敤蹇€熸紨绀烘ā寮忥紝姣忕粍绾﹂棿闅?100ms锛涘嬀閫夊悗姣?2 绉掑彂閫?1 缁勶紝浣嗘暟鎹椂闂磋酱浠嶆寜 5 绉掗噰鏍枫€?/span>
+              <span class="muted">鏈嬀閫夋椂浣跨敤蹇€熸紨绀烘ā寮忥紝姣忕粍绾﹂棿闅?100ms锛涘嬀閫夊悗姣?2 绉掑彂閫?1 缁勶紝浣嗘暟鎹椂闂磋酱浠嶆寜 5 绉掗噰鏍枫€</span>
               <div class="scenario-action-right">
                 <button id="submit-scenario" class="primary" type="button">鐢熸垚骞跺彂閫侀闄╀簨浠舵椂闂磋酱</button>
                 <span id="scenario-submit-status" class="submit-status">绛夊緟閫夋嫨椋庨櫓浜嬩欢</span>
@@ -1070,10 +1070,10 @@
             <div class="timeline-field">
               <label for="vision-room">拍摄房间</label>
               <select id="vision-room">
-                <option value="bedroom">bedroom</option>
-                <option value="kitchen">kitchen</option>
-                <option value="living_room" selected>living_room</option>
-                <option value="bathroom">bathroom</option>
+                <option value="bedroom">卧室</option>
+                <option value="kitchen">厨房</option>
+                <option value="living_room" selected>客厅</option>
+                <option value="bathroom">卫生间</option>
               </select>
             </div>
           </div>
@@ -1097,12 +1097,12 @@
       <article class="panel">
         <h2>涓汉鍩虹嚎璁剧疆</h2>
         <div class="baseline-panel">
-          <p class="muted">涓汉鍩虹嚎鍙墜鍔ㄨ缃紝涔熷彲鐢辨ā鎷熸暟鎹€氳繃 Edge 琛屼负鐗囨鑷姩缁熻锛涜交搴﹀績鐜囥€佽交搴﹁姘у拰鍗敓闂村仠鐣?Candidate 浼氳鍙栨渶鏂板熀绾裤€?/p>
+          <p class="muted">涓汉鍩虹嚎鍙墜鍔ㄨ缃紝涔熷彲鐢辨ā鎷熸暟鎹€氳繃 Edge 琛屼负鐗囨鑷姩缁熻锛涜交搴﹀績鐜囥€佽交搴﹁姘у拰鍗敓闂村仠鐣?Candidate 浼氳鍙栨渶鏂板熀绾裤€</p>
           <div class="form-actions">
             <button id="baseline-manual-mode" class="primary" type="button">鎵嬪姩璁剧疆鍩虹嚎</button>
             <button id="baseline-auto-mode" type="button">鑷姩鐢熸垚鍩虹嚎</button>
             <button id="load-baselines" type="button">璇诲彇褰撳墠鍩虹嚎</button>
-            <button id="fill-baseline-defaults" type="button">濉啓寤鸿榛樿鍊?/button>
+            <button id="fill-baseline-defaults" type="button">濉啓寤鸿榛樿鍊</button>
             <span id="baseline-submit-status" class="submit-status">绛夊緟璁剧疆</span>
           </div>
           <div id="manual-baseline-panel" class="baseline-grid">
@@ -1111,9 +1111,9 @@
               <div class="baseline-fields">
                 <label><span>鑰佷汉 ID</span><input id="baseline-elder" value="elder_001" /></label>
                 <label><span>鏍锋湰鏁伴噺</span><input id="baseline-sample-count" type="number" min="1" step="1" value="1" /></label>
-                <label><span>鍋忎綆鍙傝€冨績鐜?/span><input id="hr-p10" type="number" step="1" value="60" /></label>
-                <label><span>姝ｅ父鍙傝€冨績鐜?/span><input id="hr-p50" type="number" step="1" value="76" /></label>
-                <label><span>鍋忛珮鍙傝€冨績鐜?/span><input id="hr-p90" type="number" step="1" value="100" /></label>
+                <label><span>鍋忎綆鍙傝€冨績鐜</span><input id="hr-p10" type="number" step="1" value="60" /></label>
+                <label><span>姝ｅ父鍙傝€冨績鐜</span><input id="hr-p50" type="number" step="1" value="76" /></label>
+                <label><span>鍋忛珮鍙傝€冨績鐜</span><input id="hr-p90" type="number" step="1" value="100" /></label>
                 <label><span>澶滈棿骞冲潎蹇冪巼</span><input id="hr-night-avg" type="number" step="1" value="68" /></label>
                 <label><span>鏃ュ父骞冲潎蹇冪巼</span><input id="hr-daily-avg" type="number" step="1" value="78" /></label>
               </div>
@@ -1123,57 +1123,57 @@
             </section>
 
             <section class="baseline-card">
-              <h3>琛€姘т釜浜哄熀绾?/h3>
+              <h3>琛€姘т釜浜哄熀绾</h3>
               <div class="baseline-fields">
-                <label><span>鍋忎綆鍙傝€冭姘?/span><input id="spo2-p10" type="number" min="0" max="100" step="0.1" value="95" /></label>
-                <label><span>姝ｅ父鍙傝€冭姘?/span><input id="spo2-p50" type="number" min="0" max="100" step="0.1" value="96" /></label>
-                <label><span>鍋忛珮鍙傝€冭姘?/span><input id="spo2-p90" type="number" min="0" max="100" step="0.1" value="98" /></label>
-                <label><span>澶滈棿骞冲潎琛€姘?/span><input id="spo2-night-avg" type="number" min="0" max="100" step="0.1" value="95" /></label>
-                <label><span>鏃ュ父骞冲潎琛€姘?/span><input id="spo2-avg" type="number" min="0" max="100" step="0.1" value="96" /></label>
+                <label><span>鍋忎綆鍙傝€冭姘</span><input id="spo2-p10" type="number" min="0" max="100" step="0.1" value="95" /></label>
+                <label><span>姝ｅ父鍙傝€冭姘</span><input id="spo2-p50" type="number" min="0" max="100" step="0.1" value="96" /></label>
+                <label><span>鍋忛珮鍙傝€冭姘</span><input id="spo2-p90" type="number" min="0" max="100" step="0.1" value="98" /></label>
+                <label><span>澶滈棿骞冲潎琛€姘</span><input id="spo2-night-avg" type="number" min="0" max="100" step="0.1" value="95" /></label>
+                <label><span>鏃ュ父骞冲潎琛€姘</span><input id="spo2-avg" type="number" min="0" max="100" step="0.1" value="96" /></label>
               </div>
               <div class="form-actions">
-                <button id="save-spo2-baseline" class="primary" type="button">淇濆瓨琛€姘у熀绾?/button>
+                <button id="save-spo2-baseline" class="primary" type="button">淇濆瓨琛€姘у熀绾</button>
               </div>
             </section>
 
             <section class="baseline-card">
-              <h3>鍗敓闂村仠鐣欏熀绾?/h3>
+              <h3>鍗敓闂村仠鐣欏熀绾</h3>
               <div class="baseline-fields">
-                <label><span>骞冲潎鍋滅暀鏃堕棿锛堢锛?/span><input id="bathroom-stay-avg" type="number" min="0" step="1" value="180" /></label>
+                <label><span>骞冲潎鍋滅暀鏃堕棿锛堢锛</span><input id="bathroom-stay-avg" type="number" min="0" step="1" value="180" /></label>
                 <label><span>鍋滅暀鍙傝€冧笂闄愶紙绉掞級</span><input id="bathroom-stay-p90" type="number" min="0" step="1" value="60" /></label>
                 <label><span>鏍锋湰鏁伴噺</span><input id="bathroom-sample-count" type="number" min="1" step="1" value="1" /></label>
               </div>
               <div class="form-actions">
-                <button id="save-bathroom-baseline" class="primary" type="button">淇濆瓨鍗敓闂村熀绾?/button>
+                <button id="save-bathroom-baseline" class="primary" type="button">淇濆瓨鍗敓闂村熀绾</button>
               </div>
             </section>
           </div>
           <div id="auto-baseline-panel" class="baseline-grid" hidden>
             <section class="baseline-card">
-              <h3>鑷姩缁熻蹇冪巼/琛€姘у熀绾?/h3>
+              <h3>鑷姩缁熻蹇冪巼/琛€姘у熀绾</h3>
               <div class="baseline-fields">
                 <label><span>鐢熸垚缁勬暟</span><input id="auto-vital-count" type="number" min="24" max="5000" step="1" value="3000" /></label>
-                <label><span>閫昏緫閲囨牱闂撮殧锛堢锛?/span><input id="auto-vital-interval" type="number" min="1" max="60" step="1" value="5" /></label>
+                <label><span>閫昏緫閲囨牱闂撮殧锛堢锛</span><input id="auto-vital-interval" type="number" min="1" max="60" step="1" value="5" /></label>
               </div>
-              <p class="muted">鐢熸垚姝ｅ父蹇冪巼/琛€姘?MQTT 鏁版嵁锛孍dge 鏁寸悊涓鸿涓虹墖娈靛悗鎸夆€滄渶浣?骞冲潎/鏈€楂樿竟鐣屽鎵┾€濋噸绠椾釜浜哄熀绾裤€?/p>
+              <p class="muted">鐢熸垚姝ｅ父蹇冪巼/琛€姘?MQTT 鏁版嵁锛孍dge 鏁寸悊涓鸿涓虹墖娈靛悗鎸夆€滄渶浣?骞冲潎/鏈€楂樿竟鐣屽鎵┾€濋噸绠椾釜浜哄熀绾裤€</p>
               <div class="form-actions">
                 <button id="auto-vitals-baseline" class="primary" type="button">鐢熸垚 3000 缁勫苟缁熻鍩虹嚎</button>
               </div>
             </section>
             <section class="baseline-card">
-              <h3>鑷姩缁熻鍗敓闂村仠鐣欏熀绾?/h3>
+              <h3>鑷姩缁熻鍗敓闂村仠鐣欏熀绾</h3>
               <div class="baseline-fields">
-                <label><span>鍋滅暀璁板綍娆℃暟</span><input id="auto-bathroom-count" type="number" min="3" max="80" step="1" value="20" /></label>
-                <label><span>骞冲潎鍋滅暀鐩爣锛堢锛?/span><input id="auto-bathroom-avg" type="number" min="10" max="3600" step="1" value="180" /></label>
-                <label><span>鏈€闀垮仠鐣欑洰鏍囷紙绉掞級</span><input id="auto-bathroom-p90" type="number" min="20" max="7200" step="1" value="480" /></label>
+                <label><span>停留记录次数</span><input id="auto-bathroom-count" type="number" min="3" max="80" step="1" value="20" /></label>
+                <label><span>平均停留目标（秒）</span><input id="auto-bathroom-avg" type="number" min="10" max="3600" step="1" value="180" /></label>
+                <label><span>最长停留目标（秒）</span><input id="auto-bathroom-p90" type="number" min="20" max="7200" step="1" value="480" /></label>
               </div>
-              <p class="muted">杩欓噷浼氱敓鎴?20 娆″巻鍙插崼鐢熼棿鍋滅暀璁板綍锛岀敤浜庣粺璁′釜浜哄崼鐢熼棿鍋滅暀鍩虹嚎锛涒€滅敓鎴愪竴娆″崼鐢熼棿鍋滅暀鏃堕棿鈥濆彧闅忔満鐢熸垚涓€鏉℃牱渚嬫祦绋嬶紝骞跺湪鐜鏁版嵁璁板綍涓睍绀恒€?/p>
+              <p class="muted">杩欓噷浼氱敓鎴?20 娆″巻鍙插崼鐢熼棿鍋滅暀璁板綍锛岀敤浜庣粺璁′釜浜哄崼鐢熼棿鍋滅暀鍩虹嚎锛涒€滅敓鎴愪竴娆″崼鐢熼棿鍋滅暀鏃堕棿鈥濆彧闅忔満鐢熸垚涓€鏉℃牱渚嬫祦绋嬶紝骞跺湪鐜鏁版嵁璁板綍涓睍绀恒€</p>
               <div class="form-actions">
-                <button id="auto-bathroom-baseline" class="primary" type="button">鐢熸垚鍗敓闂村仠鐣欏熀绾?/button>
-                <button id="demo-bathroom-stay" type="button">鐢熸垚涓€娆″崼鐢熼棿鍋滅暀鏃堕棿</button>
+                <button id="auto-bathroom-baseline" class="primary" type="button">生成卫生间停留基线</button>
+                <button id="demo-bathroom-stay" type="button">生成一次卫生间停留时间</button>
               </div>
               <div class="baseline-fields">
-                <label><span>鏈闅忔満鍋滅暀鏃堕暱</span><input id="demo-bathroom-duration-result" readonly value="--" /></label>
+                <label><span>本次随机停留时长</span><input id="demo-bathroom-duration-result" readonly value="--" /></label>
               </div>
             </section>
           </div>
@@ -1208,9 +1208,9 @@
       <article class="panel">
         <h2>鎵嬪姩杈撳叆鏁版嵁</h2>
         <div class="template-grid" aria-label="浜嬩欢妯℃澘">
-          <button class="template-button" type="button" data-template="gas_leak">P0 鐕冩皵寮傚父<br />绱ф€ュ憡璀?/button>
-          <button class="template-button" type="button" data-template="spo2_critical">P0 涓ラ噸浣庤姘?br />绱ф€ラ闄?/button>
-          <button class="template-button" type="button" data-template="spo2_low">P1 浣庤姘?br />楂橀闄╃‘璁?/button>
+          <button class="template-button" type="button" data-template="gas_leak">P0 鐕冩皵寮傚父<br />绱ф€ュ憡璀</button>
+          <button class="template-button" type="button" data-template="spo2_critical">P0 涓ラ噸浣庤姘?br />绱ф€ラ闄</button>
+          <button class="template-button" type="button" data-template="spo2_low">P1 浣庤姘?br />楂橀闄╃‘璁</button>
           <button class="template-button" type="button" data-template="heart_rate_abnormal">P1 蹇冪巼寮傚父<br />鏈湴璇㈤棶</button>
           <button class="template-button" type="button" data-template="suspected_fall">P1 鐤戜技璺屽€?br />瑙嗚浜嬩欢</button>
           <button class="template-button" type="button" data-template="long_static">P2 闀挎椂闂撮潤姝?br />瑙嗚浜嬩欢</button>
@@ -1228,7 +1228,7 @@
             <tbody>
               <tr>
                 <th>褰撳墠妯℃澘</th>
-                <td id="template-name">姝ｅ父鐘舵€?/td>
+                <td id="template-name">姝ｅ父鐘舵€</td>
                 <th>棰勬湡浜嬩欢</th>
                 <td id="template-event">normal</td>
                 <th>棰勬湡绛夌骇</th>
@@ -1236,7 +1236,7 @@
               </tr>
               <tr>
                 <th>瑙﹀彂璇存槑</th>
-                <td id="template-reason" colspan="5">鎵€鏈夋寚鏍囧浜庢甯歌寖鍥达紝涓荤郴缁熷彧璁板綍鍜屽埛鏂扮湅鏉裤€?/td>
+                <td id="template-reason" colspan="5">鎵€鏈夋寚鏍囧浜庢甯歌寖鍥达紝涓荤郴缁熷彧璁板綍鍜屽埛鏂扮湅鏉裤€</td>
               </tr>
               <tr>
                 <th>澶勭悊閾捐矾</th>
@@ -1245,7 +1245,7 @@
               <tr>
                 <th>蹇嵎鎿嶄綔</th>
                 <td colspan="5">
-                  <button id="submit-template" class="primary" type="button">涓€閿彂閫佸綋鍓嶆ā鏉?/button>
+                  <button id="submit-template" class="primary" type="button">涓€閿彂閫佸綋鍓嶆ā鏉</button>
                   <span id="template-submit-status" class="submit-status">绛夊緟閫夋嫨妯℃澘</span>
                 </td>
               </tr>
@@ -1263,13 +1263,13 @@
                     <td><input id="manual-vital-elder" name="elder_id" value="elder_001" required /></td>
                     <th>蹇冪巼</th>
                     <td><input id="manual-heart-rate" name="heart_rate" type="number" min="0" step="1" value="78" required /></td>
-                    <th>琛€姘?/th>
+                    <th>琛€姘</th>
                     <td><input id="manual-spo2" name="spo2" type="number" min="0" max="100" step="1" value="96" required /></td>
                   </tr>
                   <tr>
-                    <th>鏀剁缉鍘?/th>
+                    <th>鏀剁缉鍘</th>
                     <td><input id="manual-systolic-bp" name="systolic_bp" type="number" min="0" step="1" value="128" /></td>
-                    <th>鑸掑紶鍘?/th>
+                    <th>鑸掑紶鍘</th>
                     <td><input id="manual-diastolic-bp" name="diastolic_bp" type="number" min="0" step="1" value="80" /></td>
                     <th>浣撴俯</th>
                     <td><input id="manual-body-temperature" name="body_temperature" type="number" min="30" max="45" step="0.1" value="36.6" /></td>
@@ -1284,10 +1284,10 @@
             <div class="rule-hints">
               <h4>瑙勫垯鎻愮ず</h4>
               <div class="hint-grid">
-                <div class="hint-item"><strong>蹇冪巼 heart_rate</strong><span>&lt;45 鎴?&gt;130锛歅1锛涜交搴︽尝鍔ㄥ彧璁板綍锛屽悗缁彲杩涘叆涓汉鍩虹嚎鍊欓€夊垎鏋愩€?/span></div>
-                <div class="hint-item"><strong>琛€姘?spo2</strong><span>&ge;92%锛氭甯革紱&lt;92%锛歅1锛?lt;88%锛歅0 绱ф€ラ闄┿€?/span></div>
-                <div class="hint-item"><strong>琛€鍘?/strong><span>褰撳墠涓荤郴缁熷彧璁板綍灞曠ず锛屾殏涓嶅弬涓庤鍒欏垎绾с€?/span></div>
-                <div class="hint-item"><strong>浣撴俯</strong><span>褰撳墠涓荤郴缁熷彧璁板綍灞曠ず锛屾殏涓嶅弬涓庤鍒欏垎绾с€?/span></div>
+                <div class="hint-item"><strong>蹇冪巼 heart_rate</strong><span>&lt;45 鎴?&gt;130锛歅1锛涜交搴︽尝鍔ㄥ彧璁板綍锛屽悗缁彲杩涘叆涓汉鍩虹嚎鍊欓€夊垎鏋愩€</span></div>
+                <div class="hint-item"><strong>琛€姘?spo2</strong><span>&ge;92%锛氭甯革紱&lt;92%锛歅1锛?lt;88%锛歅0 绱ф€ラ闄┿€</span></div>
+                <div class="hint-item"><strong>琛€鍘</strong><span>褰撳墠涓荤郴缁熷彧璁板綍灞曠ず锛屾殏涓嶅弬涓庤鍒欏垎绾с€</span></div>
+                <div class="hint-item"><strong>浣撴俯</strong><span>褰撳墠涓荤郴缁熷彧璁板綍灞曠ず锛屾殏涓嶅弬涓庤鍒欏垎绾с€</span></div>
               </div>
             </div>
           </form>
@@ -1303,10 +1303,10 @@
                     <th>鎴块棿</th>
                     <td>
                       <select id="manual-room" name="room">
-                        <option value="living_room">living_room</option>
-                        <option value="bedroom">bedroom</option>
-                        <option value="kitchen">kitchen</option>
-                        <option value="bathroom">bathroom</option>
+                        <option value="living_room">客厅</option>
+                        <option value="bedroom">卧室</option>
+                        <option value="kitchen">厨房</option>
+                        <option value="bathroom">卫生间</option>
                       </select>
                     </td>
                     <th>娓╁害</th>
@@ -1330,10 +1330,10 @@
             <div class="rule-hints">
               <h4>瑙勫垯鎻愮ず</h4>
               <div class="hint-grid">
-                <div class="hint-item"><strong>娓╁害 temperature</strong><span>16-30掳C锛氭甯革紱&le;16掳C 鎴?&ge;30掳C锛歅3銆?/span></div>
-                <div class="hint-item"><strong>CO2 co2_ppm</strong><span>&lt;1500 ppm锛氭甯革紱&ge;1500 ppm锛歅3锛屽缓璁€氶銆?/span></div>
-                <div class="hint-item"><strong>鐕冩皵 gas_ppm</strong><span>&lt;100 ppm锛氭甯革紱&ge;100 ppm锛歅0 绱ф€ュ憡璀︺€?/span></div>
-                <div class="hint-item"><strong>婀垮害 humidity</strong><span>褰撳墠涓荤郴缁熷彧璁板綍灞曠ず锛屾殏涓嶅弬涓庤鍒欏垎绾с€?/span></div>
+                <div class="hint-item"><strong>娓╁害 temperature</strong><span>16-30掳C锛氭甯革紱&le;16掳C 鎴?&ge;30掳C锛歅3銆</span></div>
+                <div class="hint-item"><strong>CO2 co2_ppm</strong><span>&lt;1500 ppm锛氭甯革紱&ge;1500 ppm锛歅3锛屽缓璁€氶銆</span></div>
+                <div class="hint-item"><strong>鐕冩皵 gas_ppm</strong><span>&lt;100 ppm锛氭甯革紱&ge;100 ppm锛歅0 绱ф€ュ憡璀︺€</span></div>
+                <div class="hint-item"><strong>婀垮害 humidity</strong><span>褰撳墠涓荤郴缁熷彧璁板綍灞曠ず锛屾殏涓嶅弬涓庤鍒欏垎绾с€</span></div>
               </div>
             </div>
           </form>
@@ -1354,16 +1354,16 @@
                   <th>鎺ユ敹鏃堕棿</th>
                   <th>鑰佷汉 ID</th>
                   <th>蹇冪巼</th>
-                  <th>琛€姘?/th>
-                  <th>鏀剁缉鍘?/th>
-                  <th>鑸掑紶鍘?/th>
+                  <th>琛€姘</th>
+                  <th>鏀剁缉鍘</th>
+                  <th>鑸掑紶鍘</th>
                   <th>浣撴俯</th>
                   <th>閲囨牱鏃堕棿</th>
                 </tr>
               </thead>
               <tbody id="vital-rows"></tbody>
             </table>
-            <div id="vital-empty" class="empty">鏆傛棤鐢熷懡浣撳緛鏁版嵁銆?/div>
+            <div id="vital-empty" class="empty">鏆傛棤鐢熷懡浣撳緛鏁版嵁銆</div>
           </div>
         </article>
 
@@ -1382,13 +1382,13 @@
                   <th>CO2</th>
                   <th>鐕冩皵</th>
                   <th>鐑熼浘</th>
-                  <th>鍗敓闂寸疮璁″仠鐣?/th>
+                  <th>鍗敓闂寸疮璁″仠鐣</th>
                   <th>閲囨牱鏃堕棿</th>
                 </tr>
               </thead>
               <tbody id="env-rows"></tbody>
             </table>
-            <div id="env-empty" class="empty">鏆傛棤鐜鏁版嵁銆?/div>
+            <div id="env-empty" class="empty">鏆傛棤鐜鏁版嵁銆</div>
           </div>
         </article>
       </section>
@@ -1396,13 +1396,14 @@
       <article class="panel">
         <h2>姣忔棩鍋ュ悍鎽樿</h2>
         <div class="baseline-panel">
-          <p class="muted">灏嗕粖澶╃殑鐢熷懡浣撳緛銆佽涓虹墖娈点€侀闄╀簨浠躲€佽€佷汉鍙嶉鍜岃澶囧姩浣滃帇缂╂垚鏈湴缁熻鎽樿锛涘彲閫夎皟鐢ㄤ簯绔ぇ妯″瀷鐢熸垚瀹跺睘鍙璇存槑銆?/p>
+          <p class="muted">灏嗕粖澶╃殑鐢熷懡浣撳緛銆佽涓虹墖娈点€侀闄╀簨浠躲€佽€佷汉鍙嶉鍜岃澶囧姩浣滃帇缂╂垚鏈湴缁熻鎽樿锛涘彲閫夎皟鐢ㄤ簯绔ぇ妯″瀷鐢熸垚瀹跺睘鍙璇存槑銆</p>
           <div class="form-actions">
             <label><span>鑰佷汉 ID</span><input id="daily-summary-elder" value="elder_001" /></label>
             <label><span>鏃ユ湡</span><input id="daily-summary-date" type="date" /></label>
-            <button id="daily-summary-local" type="button">鍙敓鎴愭湰鍦扮粺璁?/button>
+            <button id="daily-summary-local" type="button">鍙敓鎴愭湰鍦扮粺璁</button>
             <button id="daily-summary-cloud" class="primary" type="button">鐢熸垚浠婃棩鍋ュ悍鎽樿</button>
-            <button id="daily-summary-load" type="button">璇诲彇鏈€杩戞憳瑕?/button>
+            <button id="monthly-trend-cloud" type="button">生成 30 天身体趋势</button>
+            <button id="daily-summary-load" type="button">璇诲彇鏈€杩戞憳瑕</button>
             <span id="daily-summary-status" class="submit-status">绛夊緟鐢熸垚</span>
           </div>
           <div class="baseline-grid">
@@ -1434,6 +1435,10 @@
               <h3>浜戠瀹跺睘鎽樿</h3>
               <div id="daily-cloud">鏆傛棤浜戠鎽樿</div>
             </section>
+            <section class="baseline-card">
+              <h3>?? 30 ?????</h3>
+              <div id="monthly-trend">???????</div>
+            </section>
           </div>
         </div>
       </article>
@@ -1451,6 +1456,7 @@
         visionCaptures: [],
         visionImportFiles: [],
         dailyHealthSummaries: [],
+        monthlyHealthTrend: null,
         activeTemplate: "normal",
         scenarioRunning: false,
         scenarioJob: null,
@@ -2346,6 +2352,44 @@
         return result;
       }
 
+
+      function renderMonthlyHealthTrend(trend) {
+        state.monthlyHealthTrend = trend;
+        const local = trend?.local_trend ?? {};
+        const cloud = trend?.cloud_trend ?? {};
+        const vitals = local.vitals ?? {};
+        const behavior = local.behavior ?? {};
+        const cloudFindings = (cloud.trend_findings ?? []).map((item) => `<li>${item}</li>`).join("");
+        const followup = (cloud.recommended_followup ?? []).map((item) => `<li>${item}</li>`).join("");
+        $("monthly-trend").innerHTML = `
+          <p><strong>?????</strong>${valueOrDash(local.days_available)} / ${valueOrDash(local.days_requested)} ?</p>
+          <p><strong>?????</strong>${valueOrDash(cloud.risk_level ?? local.highest_risk)}</p>
+          <p><strong>?????</strong>?? ${valueOrDash(vitals.heart_rate_avg)} bpm??? ${valueOrDash(vitals.heart_rate_min)}-${valueOrDash(vitals.heart_rate_max)} bpm</p>
+          <p><strong>?????</strong>?? ${valueOrDash(vitals.spo2_avg)}%??? ${valueOrDash(vitals.spo2_min)}-${valueOrDash(vitals.spo2_max)}%</p>
+          <p><strong>??????</strong>?? ${formatDuration(behavior.bathroom_stay_avg_sec)}??? ${formatDuration(behavior.bathroom_stay_max_sec)}</p>
+          <p><strong>?????</strong>${valueOrDash(cloud.body_condition_trend || cloud.family_message || trend?.cloud_error || "??????")}</p>
+          <p><strong>?????</strong></p><ul>${cloudFindings || "<li>--</li>"}</ul>
+          <p><strong>?????</strong></p><ul>${followup || "<li>--</li>"}</ul>
+        `;
+      }
+
+      async function generateMonthlyHealthTrend() {
+        setSubmitStatus("daily-summary-status", "???????? 30 ?????");
+        const result = await postJson("/api/monthly-health-trend/generate", {
+          elder_id: $("daily-summary-elder").value.trim() || $("baseline-elder").value.trim() || "elder_001",
+          days: 30,
+          timezone: "Asia/Shanghai",
+          use_cloud: true,
+          generated_by: "background_mqtt",
+        });
+        const trend = result.monthly_health_trend;
+        if (trend) {
+          renderMonthlyHealthTrend(trend);
+          setSubmitStatus("daily-summary-status", `30 ?????????${trend.status} ? ${trend.local_trend?.highest_risk ?? "--"}`, "ok");
+        }
+        return result;
+      }
+
       async function runAutoVitalsBaseline() {
         const button = $("auto-vitals-baseline");
         button.disabled = true;
@@ -2727,6 +2771,9 @@
           if (message.type === "daily_health_summary" && message.data?.daily_health_summary) {
             renderDailyHealthSummary(message.data.daily_health_summary);
           }
+          if (message.type === "monthly_health_trend" && message.data?.monthly_health_trend) {
+            renderMonthlyHealthTrend(message.data.monthly_health_trend);
+          }
           if (message.type === "device_state") {
             upsertDevice(message.data);
           }
@@ -2857,6 +2904,17 @@
           await generateDailyHealthSummary(true);
         } catch (error) {
           setSubmitStatus("daily-summary-status", `每日摘要失败：${error.message}`, "error");
+        } finally {
+          button.disabled = false;
+        }
+      });
+      $("monthly-trend-cloud").addEventListener("click", async () => {
+        const button = $("monthly-trend-cloud");
+        button.disabled = true;
+        try {
+          await generateMonthlyHealthTrend();
+        } catch (error) {
+          setSubmitStatus("daily-summary-status", `???????${error.message}`, "error");
         } finally {
           button.disabled = false;
         }

@@ -113,3 +113,9 @@ async def handle_daily_health_summary(payload: dict[str, Any]) -> dict[str, Any]
     result = await runner.cloud_llm.daily_health_summary(summary)
     return {"ok": True, "cloud_summary_result": result}
 
+
+@app.post("/api/v2/orchestrator/monthly-health-trend")
+async def handle_monthly_health_trend(payload: dict[str, Any]) -> dict[str, Any]:
+    result = await runner.cloud_llm.monthly_health_trend(payload)
+    return {"ok": True, "cloud_trend_result": result}
+

@@ -804,5 +804,5 @@ def dashboard_state(db: Session, elder_id: str) -> dict[str, Any]:
         "hmi_responses": list_hmi_responses(db, elder_id=elder_id, limit=10),
         "current_hmi_prompt": latest_waiting_hmi_prompt(db, elder_id=elder_id),
         "alerts": list_alerts(db, elder_id=elder_id),
-        "daily_health_summaries": list_daily_health_summaries(db, elder_id=elder_id, limit=7),
+        "daily_health_summaries": list_daily_health_summaries(db, elder_id=elder_id, limit=30),
     }

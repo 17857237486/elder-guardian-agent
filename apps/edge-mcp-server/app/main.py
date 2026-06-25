@@ -65,6 +65,14 @@ class DailyHealthSummaryRequest(BaseModel):
     generated_by: str = "manual"
 
 
+class MonthlyHealthTrendRequest(BaseModel):
+    elder_id: str = Field(default_factory=lambda: settings.elder_id)
+    days: int = Field(default=30, ge=7, le=60)
+    timezone: str = "Asia/Shanghai"
+    use_cloud: bool = True
+    generated_by: str = "manual"
+
+
 @app.on_event("startup")
 async def startup() -> None:
     init_db()
@@ -328,6 +336,67 @@ def build_daily_local_stats(db: Any, elder_id: str, summary_date: str | None, tz
     return date_text, stats, stats["events"]["highest_risk"]
 
 
+def _average(values: list[float]) -> float | None:
+    return round(sum(values) / len(values), 1) if values else None
+
+
+def _daily_metric(summary: dict[str, Any], section: str, key: str) -> float | None:
+    value = ((summary.get("local_stats") or {}).get(section) or {}).get(key)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_monthly_local_trend(summaries: list[dict[str, Any]], days: int) -> dict[str, Any]:
+    ordered = sorted(summaries, key=lambda item: str(item.get("summary_date") or ""))
+    risks = [str(item.get("risk_level") or "P4") for item in ordered]
+    highest_risk = "P4"
+    for level in risks:
+        if RISK_ORDER.get(level, 0) > RISK_ORDER.get(highest_risk, 0):
+            highest_risk = level
+    heart_rates = [value for item in ordered if (value := _daily_metric(item, "vitals", "heart_rate_avg")) is not None]
+    spo2_values = [value for item in ordered if (value := _daily_metric(item, "vitals", "spo2_avg")) is not None]
+    bathroom_values = [
+        value for item in ordered if (value := _daily_metric(item, "behavior", "bathroom_stay_avg_sec")) is not None
+    ]
+    event_counts: dict[str, int] = {level: 0 for level in RISK_ORDER}
+    for item in ordered:
+        by_level = (((item.get("local_stats") or {}).get("events") or {}).get("by_level") or {})
+        for level in event_counts:
+            try:
+                event_counts[level] += int(by_level.get(level) or 0)
+            except (TypeError, ValueError):
+                pass
+    return {
+        "days_requested": days,
+        "days_available": len(ordered),
+        "date_range": {
+            "start": ordered[0].get("summary_date") if ordered else None,
+            "end": ordered[-1].get("summary_date") if ordered else None,
+        },
+        "highest_risk": highest_risk,
+        "risk_days": {level: risks.count(level) for level in RISK_ORDER},
+        "event_counts": event_counts,
+        "vitals": {
+            "heart_rate_avg": _average(heart_rates),
+            "heart_rate_min": min(heart_rates) if heart_rates else None,
+            "heart_rate_max": max(heart_rates) if heart_rates else None,
+            "spo2_avg": _average(spo2_values),
+            "spo2_min": min(spo2_values) if spo2_values else None,
+            "spo2_max": max(spo2_values) if spo2_values else None,
+        },
+        "behavior": {
+            "bathroom_stay_avg_sec": _average(bathroom_values),
+            "bathroom_stay_max_sec": max(bathroom_values) if bathroom_values else None,
+        },
+        "data_quality": {
+            "status": "sufficient" if len(ordered) >= 7 else "insufficient_data",
+            "note": "近30天趋势基于每日健康摘要汇总" if ordered else "暂无每日健康摘要，无法形成月度趋势",
+        },
+    }
+
+
 @app.get("/api/v2/behavior-segments")
 async def list_behavior_segments(elder_id: str | None = None, limit: int = 100) -> dict[str, Any]:
     with SessionLocal() as db:
@@ -422,6 +491,60 @@ async def generate_daily_health_summary(request: DailyHealthSummaryRequest) -> d
     with SessionLocal() as db:
         record = repository.update_daily_health_summary(db, record["summary_id"], payload) or record
     return {"ok": True, "daily_health_summary": record}
+
+
+@app.post("/api/v2/monthly-health-trends/generate")
+async def generate_monthly_health_trend(request: MonthlyHealthTrendRequest) -> dict[str, Any]:
+    with SessionLocal() as db:
+        summaries = repository.list_daily_health_summaries(db, request.elder_id, request.days)
+    local_trend = build_monthly_local_trend(summaries, request.days)
+    payload = {
+        "elder_id": request.elder_id,
+        "days": request.days,
+        "timezone": request.timezone,
+        "generated_by": request.generated_by,
+        "local_trend": local_trend,
+        "daily_summaries": summaries,
+    }
+    if not request.use_cloud:
+        return {"ok": True, "monthly_health_trend": {**payload, "status": "local_ready", "cloud_trend": {}}}
+    if not settings.orchestrator_url:
+        return {
+            "ok": True,
+            "monthly_health_trend": {
+                **payload,
+                "status": "cloud_disabled",
+                "cloud_error": "orchestrator_url is not configured",
+                "cloud_trend": {},
+            },
+        }
+    try:
+        async with httpx.AsyncClient(timeout=180) as client:
+            response = await client.post(
+                f"{settings.orchestrator_url.rstrip('/')}/api/v2/orchestrator/monthly-health-trend",
+                json=payload,
+            )
+            response.raise_for_status()
+            cloud = response.json().get("cloud_trend_result", {})
+    except Exception as exc:
+        return {
+            "ok": True,
+            "monthly_health_trend": {
+                **payload,
+                "status": "cloud_failed",
+                "cloud_error": str(exc),
+                "cloud_trend": {},
+            },
+        }
+    return {
+        "ok": True,
+        "monthly_health_trend": {
+            **payload,
+            "status": "cloud_completed" if cloud.get("status") == "completed" else str(cloud.get("status") or "cloud_failed"),
+            "cloud_error": cloud.get("error"),
+            "cloud_trend": cloud if cloud.get("status") == "completed" else {},
+        },
+    }
 
 
 @app.post("/api/v2/baselines/rebuild")
