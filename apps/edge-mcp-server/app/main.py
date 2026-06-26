@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -71,6 +71,14 @@ class MonthlyHealthTrendRequest(BaseModel):
     timezone: str = "Asia/Shanghai"
     use_cloud: bool = True
     generated_by: str = "manual"
+
+
+class DemoMonthlySeedRequest(BaseModel):
+    elder_id: str = Field(default_factory=lambda: settings.elder_id)
+    days: int = Field(default=30, ge=7, le=60)
+    end_date: str | None = None
+    timezone: str = "Asia/Shanghai"
+    scenario: str = "stable_with_mild_variation"
 
 
 @app.on_event("startup")
@@ -341,11 +349,89 @@ def _average(values: list[float]) -> float | None:
 
 
 def _daily_metric(summary: dict[str, Any], section: str, key: str) -> float | None:
-    value = ((summary.get("local_stats") or {}).get(section) or {}).get(key)
+    local_stats = summary.get("local_stats") or {}
+    section_value = (local_stats.get(section) or {}) if isinstance(local_stats, dict) else {}
+    value = section_value.get(key) if isinstance(section_value, dict) else None
+    if value is None and section == "vitals":
+        if key == "heart_rate_avg":
+            value = ((section_value.get("heart_rate") or {}) if isinstance(section_value, dict) else {}).get("avg")
+        elif key == "spo2_avg":
+            value = ((section_value.get("spo2") or {}) if isinstance(section_value, dict) else {}).get("avg")
     try:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _demo_daily_stats(summary_date: date, index: int, days: int, elder_id: str, tz_name: str) -> tuple[dict[str, Any], str]:
+    wave = ((index % 10) - 5) / 5
+    heart_avg = round(76 + wave * 2 + (1 if index > days - 8 else 0))
+    spo2_avg = round(96.2 - (0.3 if index in {days - 9, days - 8, days - 7} else 0) + ((index % 4) - 1) * 0.1, 1)
+    bathroom_avg = round(175 + (index % 6) * 7 + (35 if index in {days - 12, days - 4} else 0), 1)
+    risk = "P4"
+    by_level = {level: 0 for level in RISK_ORDER}
+    by_type: dict[str, int] = {}
+    if index in {days - 12, days - 4}:
+        risk = "P2"
+        by_level["P2"] = 1
+        by_type["bathroom_stay_anomaly"] = 1
+    elif index in {days - 18, days - 3}:
+        risk = "P3"
+        by_level["P3"] = 1
+        by_type["humidity_abnormal"] = 1
+    else:
+        by_level["P4"] = 1
+    stats = {
+        "date": summary_date.isoformat(),
+        "elder_id": elder_id,
+        "timezone": tz_name,
+        "vitals": {
+            "heart_rate_avg": heart_avg,
+            "spo2_avg": spo2_avg,
+            "heart_rate": {
+                "count": 288,
+                "avg": heart_avg,
+                "min": max(58, heart_avg - 9),
+                "max": min(110, heart_avg + 10),
+                "baseline_low": 60,
+                "baseline_normal": 76,
+                "baseline_high": 98,
+                "abnormal_window_count": 0,
+            },
+            "spo2": {
+                "count": 288,
+                "avg": spo2_avg,
+                "min": round(max(93.5, spo2_avg - 1.1), 1),
+                "max": round(min(99.0, spo2_avg + 1.0), 1),
+                "baseline_low": 93.5,
+                "baseline_normal": 96.0,
+                "baseline_high": 98.5,
+                "abnormal_window_count": 0,
+            },
+        },
+        "behavior": {
+            "room_stay_seconds": {"bedroom": 36000, "living_room": 24000, "bathroom": int(bathroom_avg * 2)},
+            "room_stay_top": [
+                {"room": "bedroom", "duration_min": 600},
+                {"room": "living_room", "duration_min": 400},
+            ],
+            "bathroom_visits": 2,
+            "bathroom_stay_avg_sec": bathroom_avg,
+            "bathroom_stay_max_sec": round(bathroom_avg + 90),
+            "bathroom_reference_limit_sec": 490,
+        },
+        "events": {"highest_risk": risk, "by_level": by_level, "by_type": by_type, "total": sum(by_level.values())},
+        "hmi": {"safe": 1 if risk in {"P2", "P3"} else 0, "need_help": 0, "contact_family": 0, "other": 0, "unanswered": 0},
+        "actions": {"total": 1 if risk == "P3" else 0, "by_device": {"air_conditioner": 1} if risk == "P3" else {}, "by_action": {"set_temperature": 1} if risk == "P3" else {}},
+        "data_quality": {
+            "vital_samples": 288,
+            "environment_samples": 288,
+            "behavior_segments": 6,
+            "status": "sufficient",
+            "note": "演示数据：用于生成近30天身体趋势。",
+        },
+    }
+    return stats, risk
 
 
 def build_monthly_local_trend(summaries: list[dict[str, Any]], days: int) -> dict[str, Any]:
@@ -491,6 +577,37 @@ async def generate_daily_health_summary(request: DailyHealthSummaryRequest) -> d
     with SessionLocal() as db:
         record = repository.update_daily_health_summary(db, record["summary_id"], payload) or record
     return {"ok": True, "daily_health_summary": record}
+
+
+@app.post("/api/v2/daily-health-summaries/seed-demo-month")
+async def seed_demo_monthly_daily_health_summaries(request: DemoMonthlySeedRequest) -> dict[str, Any]:
+    tz = ZoneInfo(request.timezone or "Asia/Shanghai")
+    end_day = date.fromisoformat(request.end_date) if request.end_date else datetime.now(tz).date()
+    records: list[dict[str, Any]] = []
+    with SessionLocal() as db:
+        for index in range(request.days):
+            summary_day = end_day - timedelta(days=request.days - index - 1)
+            local_stats, risk_level = _demo_daily_stats(summary_day, index, request.days, request.elder_id, request.timezone)
+            record = repository.upsert_daily_health_summary(
+                db,
+                DailyHealthSummaryV2(
+                    elder_id=request.elder_id,
+                    summary_date=summary_day.isoformat(),
+                    timezone=request.timezone,
+                    status="local_ready",
+                    local_stats=local_stats,
+                    risk_level=risk_level,
+                    generated_by="background_mqtt_demo_month",
+                ),
+            )
+            records.append(record)
+    return {
+        "ok": True,
+        "elder_id": request.elder_id,
+        "days": request.days,
+        "date_range": {"start": records[0]["summary_date"] if records else None, "end": records[-1]["summary_date"] if records else None},
+        "daily_health_summaries": records,
+    }
 
 
 @app.post("/api/v2/monthly-health-trends/generate")

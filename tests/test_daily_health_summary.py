@@ -107,13 +107,65 @@ class DailyHealthSummaryTests(unittest.TestCase):
         result = run_edge_script(script)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_edge_seeds_demo_month_and_builds_trend(self) -> None:
+        script = textwrap.dedent(
+            """
+            from fastapi.testclient import TestClient
+
+            from app.database import Base, engine
+            from app.main import app
+
+            Base.metadata.create_all(bind=engine)
+            client = TestClient(app)
+
+            elder_id = "elder_001"
+            response = client.post(
+                "/api/v2/daily-health-summaries/seed-demo-month",
+                json={
+                    "elder_id": elder_id,
+                    "days": 30,
+                    "end_date": "2026-06-26",
+                    "timezone": "Asia/Shanghai",
+                },
+            )
+            assert response.status_code == 200, response.text
+            seeded = response.json()
+            assert seeded["days"] == 30, seeded
+            assert len(seeded["daily_health_summaries"]) == 30, seeded
+            first = seeded["daily_health_summaries"][0]["local_stats"]
+            assert "heart_rate_avg" in first["vitals"], first
+            assert "heart_rate" in first["vitals"], first
+
+            response = client.post(
+                "/api/v2/monthly-health-trends/generate",
+                json={
+                    "elder_id": elder_id,
+                    "days": 30,
+                    "timezone": "Asia/Shanghai",
+                    "use_cloud": False,
+                    "generated_by": "unit_test",
+                },
+            )
+            assert response.status_code == 200, response.text
+            trend = response.json()["monthly_health_trend"]["local_trend"]
+            assert trend["days_available"] == 30, trend
+            assert trend["vitals"]["heart_rate_avg"] is not None, trend
+            assert trend["vitals"]["spo2_avg"] is not None, trend
+            assert trend["behavior"]["bathroom_stay_avg_sec"] is not None, trend
+            """
+        )
+        result = run_edge_script(script)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_background_mqtt_exposes_daily_summary_controls(self) -> None:
         backend = (ROOT / "Background_MQTT" / "backend.py").read_text(encoding="utf-8")
         html = (ROOT / "Background_MQTT" / "frontend" / "index.html").read_text(encoding="utf-8")
 
         self.assertIn("/api/daily-health-summary", backend)
         self.assertIn("/api/v2/daily-health-summaries/generate", backend)
+        self.assertIn("/api/v2/daily-health-summaries/seed-demo-month", backend)
         self.assertIn('{"type": "daily_health_summary"', backend)
+        self.assertIn("seed-month-summary", html)
         self.assertIn("daily-summary-local", html)
         self.assertIn("daily-summary-cloud", html)
         self.assertIn("daily-vitals", html)

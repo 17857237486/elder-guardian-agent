@@ -274,6 +274,12 @@ def _minimum_allowed_risk(payload: dict[str, Any]) -> str:
     return event_floor if RISK_ORDER[event_floor] > RISK_ORDER.get(rule_risk, 0) else rule_risk
 
 
+def _allows_local_long_static_downgrade(payload: dict[str, Any], reviewed: str) -> bool:
+    if _is_candidate_payload(payload):
+        return False
+    return _event_type(payload) == "long_static" and reviewed == "P4"
+
+
 def _contains_forbidden_action_key(value: Any) -> bool:
     if isinstance(value, dict):
         for key, item in value.items():
@@ -674,7 +680,7 @@ def _normalize_local_multimodal_output(payload: dict[str, Any], output: dict[str
     reviewed = str(output.get("risk_level", original)).split(".")[-1].upper()
     if reviewed not in RISK_ORDER:
         raise LLMOutputError(f"invalid risk level: {reviewed}")
-    if RISK_ORDER[reviewed] < RISK_ORDER[original]:
+    if RISK_ORDER[reviewed] < RISK_ORDER[original] and not _allows_local_long_static_downgrade(payload, reviewed):
         raise LLMOutputError(f"model attempted to downgrade risk from {original} to {reviewed}")
     reviewed, risk_adjustment = _spo2_candidate_adjusted_risk(payload, reviewed)
     evidence = output.get("supporting_evidence")
@@ -719,6 +725,8 @@ def _normalize_local_multimodal_output(payload: dict[str, Any], output: dict[str
         "recommended_followup": [],
         "family_summary": output["family_summary"],
     }
+    if _allows_local_long_static_downgrade(payload, reviewed):
+        normalized["risk_guardrail_adjustment"] = "long_static_local_downgrade_to_p4"
     if risk_adjustment:
         normalized["risk_guardrail_adjustment"] = risk_adjustment
         repaired_fields.append("risk_level")
@@ -905,10 +913,16 @@ def build_local_multimodal_content(
     has_image = bool(contact_sheet and contact_sheet.is_file())
     minimum_risk = _minimum_allowed_risk({"event": event})
     analysis_instruction = LOCAL_VISUAL_INSTRUCTION if has_image else LOCAL_TEXT_INSTRUCTION
+    downgrade_note = (
+        "例外：仅当event_type=long_static且图像和传感器都支持正常休息/短暂静止、无危险证据时，可输出P4；其他事件不得降级。"
+        if str(event.get("event_type") or "") == "long_static"
+        else ""
+    )
     prompt = (
         "分析老人安全事件，先分析证据再生成结论。"
         + LOCAL_RISK_POLICY_PROMPT
         + f"minimum_risk_level={minimum_risk}。"
+        + downgrade_note
         + analysis_instruction
         + LOCAL_OUTPUT_CONTRACT
         + "\n输入："

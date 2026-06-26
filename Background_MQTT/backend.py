@@ -159,6 +159,14 @@ class MonthlyHealthTrendProxyRequest(BaseModel):
     generated_by: str = "background_mqtt"
 
 
+class DemoMonthlySeedProxyRequest(BaseModel):
+    elder_id: str = "elder_001"
+    days: int = Field(default=30, ge=7, le=60)
+    end_date: str | None = None
+    timezone: str = "Asia/Shanghai"
+    scenario: str = "stable_with_mild_variation"
+
+
 class VisionCaptureProxyRequest(BaseModel):
     elder_id: str = "elder_001"
     camera_id: str = "living_room"
@@ -1413,6 +1421,22 @@ async def generate_monthly_health_trend(request: MonthlyHealthTrendProxyRequest)
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail={"message": "edge monthly health trend generation failed", "error": str(exc)})
     await broadcast({"type": "monthly_health_trend", "data": data})
+    return data
+
+
+@app.post("/api/daily-health-summary/seed-demo-month")
+async def seed_demo_monthly_daily_health_summaries(request: DemoMonthlySeedProxyRequest) -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(timeout=60, trust_env=False) as client:
+            response = await client.post(
+                f"{EDGE_API_BASE}/api/v2/daily-health-summaries/seed-demo-month",
+                json=request.model_dump(),
+            )
+            response.raise_for_status()
+            data = response.json()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail={"message": "edge demo monthly seed failed", "error": str(exc)})
+    await broadcast({"type": "daily_health_summary_seed", "data": data})
     return data
 
 

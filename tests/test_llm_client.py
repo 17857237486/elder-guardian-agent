@@ -671,6 +671,36 @@ class LLMClientParserTests(unittest.TestCase):
             )
             self.assertEqual(normalized["risk_level"], accepted)
 
+    def test_long_static_local_model_may_downgrade_to_p4(self) -> None:
+        output = {
+            "event_semantics": "正常休息",
+            "risk_level": "P4",
+            "confidence": 0.82,
+            "supporting_evidence": ["姿态稳定且无跌倒证据"],
+            "family_summary": "老人可能在正常休息",
+        }
+
+        normalized = _normalize_local_multimodal_output(
+            {"event": {"event_type": "long_static", "risk_level": "P2"}}, output
+        )
+
+        self.assertEqual(normalized["risk_level"], "P4")
+        self.assertEqual(normalized["risk_guardrail_adjustment"], "long_static_local_downgrade_to_p4")
+
+    def test_suspected_fall_local_model_still_cannot_downgrade(self) -> None:
+        output = {
+            "event_semantics": "疑似跌倒",
+            "risk_level": "P4",
+            "confidence": 0.82,
+            "supporting_evidence": ["画面不清"],
+            "family_summary": "需要确认",
+        }
+
+        with self.assertRaises(LLMOutputError):
+            _normalize_local_multimodal_output(
+                {"event": {"event_type": "suspected_fall", "risk_level": "P1"}}, output
+            )
+
     def test_night_abnormal_activity_is_not_a_model_minimum_risk_policy(self) -> None:
         self.assertNotIn("night_abnormal_activity", EVENT_MINIMUM_RISK)
         self.assertNotIn("卧室持续无人5分钟", RISK_POLICY_PROMPT)
@@ -1118,6 +1148,50 @@ class LLMClientParserTests(unittest.TestCase):
         self.assertEqual(compact["environment_context"]["actual_samples"], 20)
         self.assertEqual(len(compact["environment_context"]["samples"]), 20)
         self.assertEqual(compact["sensor_evidence"][0]["payload"]["heart_rate"], 138)
+
+    def test_vision_local_context_includes_recent_vitals_and_environment(self) -> None:
+        observations = [
+            {
+                "observation_id": "env_1",
+                "kind": "environment",
+                "payload": {
+                    "room": "living_room",
+                    "temperature": 24.5,
+                    "humidity": 52,
+                    "co2_ppm": 820,
+                    "gas_ppm": 0,
+                    "presence": True,
+                },
+                "observed_at": "2026-06-24T10:00:00+08:00",
+            },
+            {
+                "observation_id": "vital_1",
+                "kind": "vital",
+                "payload": {"heart_rate": 76, "spo2": 96, "room": "living_room"},
+                "observed_at": "2026-06-24T10:00:05+08:00",
+            },
+        ]
+        event = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type=EventType.LONG_STATIC,
+            risk_level=RiskLevel.P2,
+            summary="长时间静止",
+            source_kind="VISION",
+            room="living_room",
+            frame_set_id="frames_test",
+        )
+
+        context = WorkflowRunner._build_local_context(
+            event,
+            {"trigger_observation_ids": ["vision_trigger"]},
+            {"elder_id": "elder_001", "observations": observations},
+            {"devices": []},
+        )
+
+        self.assertEqual(context["vision_context"]["local_frame_policy"], "middle_three")
+        self.assertEqual(context["environment_context"]["actual_samples"], 1)
+        self.assertEqual(context["recent_vital_samples"]["actual_samples"], 1)
+        self.assertEqual(context["recent_vital_samples"]["samples"][0]["heart_rate"], 76)
 
     def test_candidate_context_and_prompt_are_lightweight(self) -> None:
         observations = [

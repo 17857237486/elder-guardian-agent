@@ -1402,6 +1402,7 @@
             <label><span>日期</span><input id="daily-summary-date" type="date" /></label>
             <button id="daily-summary-local" type="button">只生成本地统计</button>
             <button id="daily-summary-cloud" class="primary" type="button">生成今日健康摘要</button>
+            <button id="seed-month-summary" type="button">生成30日演示摘要并统计趋势</button>
             <button id="monthly-trend-cloud" type="button">生成 30 天身体趋势</button>
             <button id="daily-summary-load" type="button">读取每日健康摘要</button>
             <span id="daily-summary-status" class="submit-status">等待生成</span>
@@ -1740,6 +1741,7 @@
 
         setText("#daily-summary-local", "生成本地摘要");
         setText("#daily-summary-cloud", "生成今日健康摘要");
+        setText("#seed-month-summary", "生成30日演示摘要并统计趋势");
         setText("#monthly-trend-cloud", "生成 30 天身体趋势");
         setText("#daily-summary-load", "读取最近摘要");
         setText("#daily-summary-status", "等待生成");
@@ -2487,6 +2489,28 @@
         return result;
       }
 
+      async function seedDemoMonthlyHealthTrend() {
+        setSubmitStatus("daily-summary-status", "正在写入30日演示摘要");
+        const elderId = $("daily-summary-elder").value.trim() || $("baseline-elder").value.trim() || "elder_001";
+        const seed = await postJson("/api/daily-health-summary/seed-demo-month", {
+          elder_id: elderId,
+          days: 30,
+          end_date: $("daily-summary-date").value || todayDateValue(),
+          timezone: "Asia/Shanghai",
+          scenario: "stable_with_mild_variation",
+        });
+        state.dailyHealthSummaries = seed.daily_health_summaries ?? [];
+        if (state.dailyHealthSummaries[0]) renderDailyHealthSummary(state.dailyHealthSummaries[0]);
+        setSubmitStatus("daily-summary-status", "30日演示摘要已写入，正在生成身体趋势");
+        const trend = await generateMonthlyHealthTrend();
+        setSubmitStatus(
+          "daily-summary-status",
+          `30日演示摘要与身体趋势已生成：${seed.date_range?.start ?? "--"} 至 ${seed.date_range?.end ?? "--"}`,
+          "ok",
+        );
+        return { seed, trend };
+      }
+
       async function runAutoVitalsBaseline() {
         const button = $("auto-vitals-baseline");
         button.disabled = true;
@@ -3012,6 +3036,17 @@
           await generateMonthlyHealthTrend();
         } catch (error) {
           setSubmitStatus("daily-summary-status", `生成失败：${error.message}`, "error");
+        } finally {
+          button.disabled = false;
+        }
+      });
+      $("seed-month-summary").addEventListener("click", async () => {
+        const button = $("seed-month-summary");
+        button.disabled = true;
+        try {
+          await seedDemoMonthlyHealthTrend();
+        } catch (error) {
+          setSubmitStatus("daily-summary-status", `生成30日演示摘要失败：${error.message}`, "error");
         } finally {
           button.disabled = false;
         }

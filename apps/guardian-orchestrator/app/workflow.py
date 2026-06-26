@@ -69,7 +69,9 @@ class WorkflowRunner:
         await self.edge.create_workflow(workflow)
         await self._record_step(workflow, event, "rule_gate", {"event": saved_event}, {"accepted": True})
 
-        if risk_text(event.risk_level) == "P0":
+        if self._defer_rule_policy_until_local_review(event):
+            baseline = {"status": "deferred_until_local_review", "reason": "long_static_local_review_can_downgrade"}
+        elif risk_text(event.risk_level) == "P0":
             baseline = await self._execute_p0(workflow, event)
         else:
             baseline = await self._execute_policy(workflow, event, {"source": "rule_first_baseline"})
@@ -157,9 +159,23 @@ class WorkflowRunner:
         )
 
         rule_risk = risk_text(event.risk_level)
-        local_risk = self._higher_risk(rule_risk, risk_text(local.get("risk_level", rule_risk)))
+        local_risk = self._resolve_local_risk(event, rule_risk, risk_text(local.get("risk_level", rule_risk)), local)
         local_execution: dict[str, Any] = {"status": "baseline_retained", "baseline": baseline}
-        if RISK_ORDER[local_risk] > RISK_ORDER[rule_risk]:
+        if baseline.get("status") == "deferred_until_local_review":
+            if local.get("fallback"):
+                local_execution = await self._execute_policy(workflow, event, local)
+            elif local_risk == "P4":
+                local_execution = {
+                    "status": "downgraded_record_only",
+                    "reason": "long_static_local_model_low_risk",
+                    "baseline": baseline,
+                }
+            else:
+                reviewed_event = event.model_copy(
+                    update={"risk_level": local_risk, "summary": local.get("event_semantics", event.summary)}
+                )
+                local_execution = await self._execute_policy(workflow, reviewed_event, local)
+        elif RISK_ORDER[local_risk] > RISK_ORDER[rule_risk]:
             escalated = event.model_copy(
                 update={"risk_level": local_risk, "summary": local.get("event_semantics", event.summary)}
             )
@@ -377,6 +393,21 @@ class WorkflowRunner:
         return second if RISK_ORDER[second] > RISK_ORDER[first] else first
 
     @staticmethod
+    def _defer_rule_policy_until_local_review(event: NormalizedEventV2) -> bool:
+        return str(event.event_type) == EventType.LONG_STATIC.value and risk_text(event.risk_level) == "P2"
+
+    @staticmethod
+    def _resolve_local_risk(event: NormalizedEventV2, rule_risk: str, reviewed_risk: str, local: dict[str, Any]) -> str:
+        if (
+            str(event.event_type) == EventType.LONG_STATIC.value
+            and rule_risk == "P2"
+            and reviewed_risk == "P4"
+            and not local.get("fallback")
+        ):
+            return "P4"
+        return WorkflowRunner._higher_risk(rule_risk, reviewed_risk)
+
+    @staticmethod
     def _is_deterministic_p3(event: NormalizedEventV2) -> bool:
         return risk_text(event.risk_level) == "P3" and str(event.event_type) in DETERMINISTIC_P3_EVENTS
 
@@ -443,53 +474,6 @@ class WorkflowRunner:
         segments: list[dict[str, Any]] | None = None,
         baselines: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        if risk_text(event.source_kind) == "VISION":
-            return {
-                "sensors": {
-                    "elder_id": event.elder_id,
-                    "observations": [
-                        {
-                            "observation_id": observation_id,
-                            "kind": "vision_trigger",
-                        }
-                        for observation_id in (saved_event.get("trigger_observation_ids") or event.trigger_observation_ids or [])
-                    ],
-                },
-                "devices": {},
-                "elder_location": {
-                    "current_room": event.room,
-                    "source": "event_room" if event.room else "unknown",
-                    "observed_at": saved_event.get("event_time") or saved_event.get("created_at"),
-                },
-                "vision_context": {
-                    "frame_set_id": event.frame_set_id,
-                    "event_type": event.event_type,
-                    "risk_level": risk_text(event.risk_level),
-                    "summary": event.summary,
-                    "local_frame_policy": "middle_three",
-                    "cloud_frame_policy": "five_original_frames",
-                },
-                "environment_context": {
-                    "target_samples": 0,
-                    "actual_samples": 0,
-                    "selection_policy": "vision_event_compact_context",
-                    "room_sequence": [event.room] if event.room else [],
-                    "samples": [],
-                },
-                "recent_vital_samples": {
-                    "target_samples": 0,
-                    "actual_samples": 0,
-                    "samples": [],
-                },
-                "behavior_context": {
-                    "recent_segments": [],
-                    "night_wake": None,
-                    "bathroom_stay": None,
-                    "room_sequence": [event.room] if event.room else [],
-                },
-                "baseline_context": {},
-            }
-
         observations = sensors.get("observations", []) if isinstance(sensors, dict) else []
         observations = [item for item in observations if isinstance(item, dict)]
         observations_desc = sorted(observations, key=cls._observation_time, reverse=True)
@@ -587,7 +571,7 @@ class WorkflowRunner:
             if isinstance(item, dict) and item.get("baseline_type")
         }
 
-        return {
+        result = {
             "sensors": {
                 "elder_id": sensors.get("elder_id") if isinstance(sensors, dict) else event.elder_id,
                 "observations": local_observations,
@@ -619,6 +603,18 @@ class WorkflowRunner:
             },
             "baseline_context": baseline_context,
         }
+        if risk_text(event.source_kind) == "VISION":
+            result["vision_context"] = {
+                "frame_set_id": event.frame_set_id,
+                "event_type": event.event_type,
+                "risk_level": risk_text(event.risk_level),
+                "summary": event.summary,
+                "local_frame_policy": "middle_three",
+                "cloud_frame_policy": "five_original_frames",
+                "environment_samples": len(environment_samples),
+                "vital_samples": len(recent_vital_samples),
+            }
+        return result
 
     @classmethod
     def _build_candidate_context(
