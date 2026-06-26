@@ -748,6 +748,35 @@ class LLMClientParserTests(unittest.TestCase):
 
         self.assertEqual(normalized["risk_level"], "P4")
 
+    def test_cloud_long_static_can_downgrade_when_chinese_text_is_mojibake_but_vitals_are_stable(self) -> None:
+        output = {
+            "event_semantics": "èäººèªç¶èººå§ä¼æ¯",
+            "risk_level": "P4",
+            "confidence": 0.95,
+            "temporal_changes": ["T-2è³T+2å§¿æç¨³å®"],
+            "supporting_evidence": ["çå½ä½å¾æç»­ç¨³å®å¨åºçº¿å"],
+            "contradictions": [],
+            "missing_information": [],
+            "recommended_followup": [],
+            "family_summary": "ç¡®è®¤ä¸ºæ­£å¸¸ä¼æ¯ç¶æ",
+        }
+        payload = {
+            "event": {"event_type": "long_static", "risk_level": "P2"},
+            "context": {
+                "recent_vital_samples": {"samples": [{"heart_rate": 76, "spo2": 96}]},
+                "baseline_context": {
+                    "baselines": [
+                        {"baseline_type": "heart_rate_daily", "metrics": {"p10": 64, "p90": 97}},
+                        {"baseline_type": "spo2_daily", "metrics": {"p10": 93.5}},
+                    ]
+                },
+            },
+        }
+
+        normalized = _normalize_multimodal_output(payload, output)
+
+        self.assertEqual(normalized["risk_level"], "P4")
+
     def test_suspected_fall_local_model_still_cannot_downgrade(self) -> None:
         output = {
             "event_semantics": "possible fall",

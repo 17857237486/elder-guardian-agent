@@ -463,6 +463,12 @@ def _long_static_rest_downgrade_supported(payload: dict[str, Any], output: dict[
     }
     visual_support = _text_contains_any(text, visual_normal_terms) and _text_contains_any(text, rest_terms)
     vital_support = _text_contains_any(text, vital_normal_terms) or _context_vitals_support_rest(payload)
+    confidence = _number(output.get("confidence")) or 0.0
+    if not visual_support and confidence >= 0.8 and _context_vitals_support_rest(payload):
+        # Some cloud providers return UTF-8 text through an incorrectly decoded path.
+        # For long_static only, a high-confidence P4 plus baseline-stable vitals is enough
+        # to accept the cloud's rest/sleep downgrade when no explicit danger term is detected.
+        return True
     return visual_support and vital_support
 
 
