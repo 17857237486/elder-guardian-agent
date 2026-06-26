@@ -681,11 +681,11 @@ class LLMClientParserTests(unittest.TestCase):
 
     def test_long_static_local_model_may_downgrade_to_p4(self) -> None:
         output = {
-            "event_semantics": "正常休息",
+            "event_semantics": "resting, vitals normal, normal expression",
             "risk_level": "P4",
             "confidence": 0.82,
-            "supporting_evidence": ["姿态稳定且无跌倒证据"],
-            "family_summary": "老人可能在正常休息",
+            "supporting_evidence": ["stable posture, no fall evidence"],
+            "family_summary": "elder appears resting with vital signs normal",
         }
 
         normalized = _normalize_local_multimodal_output(
@@ -695,13 +695,27 @@ class LLMClientParserTests(unittest.TestCase):
         self.assertEqual(normalized["risk_level"], "P4")
         self.assertEqual(normalized["risk_guardrail_adjustment"], "long_static_local_downgrade_to_p4")
 
-    def test_suspected_fall_local_model_still_cannot_downgrade(self) -> None:
+    def test_long_static_p4_requires_vitals_and_normal_expression_evidence(self) -> None:
         output = {
-            "event_semantics": "疑似跌倒",
+            "event_semantics": "normal rest",
             "risk_level": "P4",
             "confidence": 0.82,
-            "supporting_evidence": ["画面不清"],
-            "family_summary": "需要确认",
+            "supporting_evidence": ["stable posture"],
+            "family_summary": "elder may be resting",
+        }
+
+        with self.assertRaises(LLMOutputError):
+            _normalize_local_multimodal_output(
+                {"event": {"event_type": "long_static", "risk_level": "P2"}}, output
+            )
+
+    def test_suspected_fall_local_model_still_cannot_downgrade(self) -> None:
+        output = {
+            "event_semantics": "possible fall",
+            "risk_level": "P4",
+            "confidence": 0.82,
+            "supporting_evidence": ["image is unclear"],
+            "family_summary": "needs confirmation",
         }
 
         with self.assertRaises(LLMOutputError):
@@ -1197,6 +1211,16 @@ class LLMClientParserTests(unittest.TestCase):
                     "metrics": {"p10": 93.5, "p50": 96, "p90": 98.5},
                 },
             },
+        }
+
+        summary = _cloud_sensor_context_summary(context)
+
+        self.assertEqual(len(summary["environment"]["samples"]), 30)
+        self.assertEqual(len(summary["vital"]["samples"]), 30)
+        self.assertEqual(summary["environment"]["samples"][-1]["observation_id"], "env_29")
+        self.assertEqual(summary["vital"]["samples"][-1]["observation_id"], "vital_29")
+        self.assertEqual(summary["vital"]["summary"]["heart_rate"]["status"], "above_personal_high_ref")
+        self.assertEqual(summary["baseline"]["heart_rate_daily"]["metrics"]["p90"], 95)
 
     def test_vision_local_context_includes_recent_vitals_and_environment(self) -> None:
         observations = [

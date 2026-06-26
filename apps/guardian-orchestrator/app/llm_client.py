@@ -274,10 +274,38 @@ def _minimum_allowed_risk(payload: dict[str, Any]) -> str:
     return event_floor if RISK_ORDER[event_floor] > RISK_ORDER.get(rule_risk, 0) else rule_risk
 
 
-def _allows_local_long_static_downgrade(payload: dict[str, Any], reviewed: str) -> bool:
+def _text_contains_any(text: str, terms: set[str]) -> bool:
+    lowered = text.lower()
+    return any(term.lower() in lowered for term in terms)
+
+
+def _long_static_rest_downgrade_supported(output: dict[str, Any] | None) -> bool:
+    if not isinstance(output, dict):
+        return False
+    evidence = output.get("supporting_evidence")
+    evidence_text = " ".join(str(item) for item in evidence) if isinstance(evidence, list) else str(evidence or "")
+    text = " ".join(
+        str(output.get(field) or "")
+        for field in ("event_semantics", "family_summary")
+    )
+    text = f"{text} {evidence_text}"
+    danger_terms = {"跌倒", "摔倒", "倒地", "疼痛", "痛苦", "呼吸困难", "无法移动", "呼救", "求助", "危险"}
+    if _text_contains_any(text, danger_terms):
+        return False
+    vital_normal_terms = {"生命体征正常", "生命体征平稳", "心率正常", "血氧正常", "vitals normal", "vital signs normal"}
+    visual_normal_terms = {"视觉无异常", "姿态正常", "姿态稳定", "无跌倒", "表情正常", "表情平静", "无痛苦表情", "无疼痛表情", "stable posture", "normal expression"}
+    rest_terms = {"正常休息", "休息状态", "短暂静止", "安静坐卧", "正常坐卧", "resting"}
+    return (
+        _text_contains_any(text, vital_normal_terms)
+        and _text_contains_any(text, visual_normal_terms)
+        and _text_contains_any(text, rest_terms)
+    )
+
+
+def _allows_local_long_static_downgrade(payload: dict[str, Any], reviewed: str, output: dict[str, Any] | None = None) -> bool:
     if _is_candidate_payload(payload):
         return False
-    return _event_type(payload) == "long_static" and reviewed == "P4"
+    return _event_type(payload) == "long_static" and reviewed == "P4" and _long_static_rest_downgrade_supported(output)
 
 
 def _contains_forbidden_action_key(value: Any) -> bool:
@@ -439,6 +467,26 @@ def _cloud_vital_summary(samples: list[Any], baseline_context: dict[str, Any]) -
             ),
         },
     }
+
+
+def _cloud_sensor_context_summary(context: dict[str, Any]) -> dict[str, Any]:
+    environment_context = context.get("environment_context") if isinstance(context.get("environment_context"), dict) else {}
+    recent_vital = context.get("recent_vital_samples") if isinstance(context.get("recent_vital_samples"), dict) else {}
+    elder_location = context.get("elder_location") if isinstance(context.get("elder_location"), dict) else {}
+    baseline_context = context.get("baseline_context") if isinstance(context.get("baseline_context"), dict) else {}
+    vital_samples = _compact_samples(recent_vital.get("samples", []), 30)
+    compact_baseline = _compact_baseline_context(baseline_context)
+    return {
+        "elder_location": _compact_value(elder_location),
+        "environment": {
+            "actual_samples": environment_context.get("actual_samples"),
+            "room_sequence": environment_context.get("room_sequence", []),
+            "samples": _compact_samples(environment_context.get("samples", []), 30),
+        },
+        "vital": {
+            "actual_samples": recent_vital.get("actual_samples"),
+            "samples": vital_samples,
+            "summary": _cloud_vital_summary(vital_samples, compact_baseline),
         },
         "baseline": compact_baseline,
     }
@@ -754,7 +802,7 @@ def _normalize_local_multimodal_output(payload: dict[str, Any], output: dict[str
     reviewed = str(output.get("risk_level", original)).split(".")[-1].upper()
     if reviewed not in RISK_ORDER:
         raise LLMOutputError(f"invalid risk level: {reviewed}")
-    if RISK_ORDER[reviewed] < RISK_ORDER[original] and not _allows_local_long_static_downgrade(payload, reviewed):
+    if RISK_ORDER[reviewed] < RISK_ORDER[original] and not _allows_local_long_static_downgrade(payload, reviewed, output):
         raise LLMOutputError(f"model attempted to downgrade risk from {original} to {reviewed}")
     reviewed, risk_adjustment = _spo2_candidate_adjusted_risk(payload, reviewed)
     evidence = output.get("supporting_evidence")
@@ -799,7 +847,7 @@ def _normalize_local_multimodal_output(payload: dict[str, Any], output: dict[str
         "recommended_followup": [],
         "family_summary": output["family_summary"],
     }
-    if _allows_local_long_static_downgrade(payload, reviewed):
+    if _allows_local_long_static_downgrade(payload, reviewed, output):
         normalized["risk_guardrail_adjustment"] = "long_static_local_downgrade_to_p4"
     if risk_adjustment:
         normalized["risk_guardrail_adjustment"] = risk_adjustment
@@ -885,9 +933,14 @@ def _compact_local_case(event: dict[str, Any], context: dict[str, Any]) -> dict[
     candidate = _compact_candidate(context.get("candidate"))
     is_vision_event = str(event.get("source_kind") or "").lower() == "vision"
     if is_vision_event:
+        vital_samples = _compact_vital_samples(recent_vital.get("samples", []))
+        environment_samples = _compact_environment_samples(environment_context.get("samples", []))
         return {
             "event": compact_event,
             "vision_context": _compact_value(context.get("vision_context", {})),
+            "latest_vital_sample": vital_samples[-1] if vital_samples else None,
+            "latest_environment_sample": environment_samples[-1] if environment_samples else None,
+            "elder_location": _compact_value(elder_location),
         }
     return {
         "event": compact_event,
@@ -994,7 +1047,7 @@ def build_local_multimodal_content(
     minimum_risk = _minimum_allowed_risk({"event": event})
     analysis_instruction = LOCAL_VISUAL_INSTRUCTION if has_image else LOCAL_TEXT_INSTRUCTION
     downgrade_note = (
-        "例外：仅当event_type=long_static且图像和传感器都支持正常休息/短暂静止、无危险证据时，可输出P4；其他事件不得降级。"
+        "例外：仅当event_type=long_static且生命体征正常、视觉姿态无异常、表情正常/无痛苦，并明确支持正常休息状态时，才可输出P4；其他事件不得降级。"
         if str(event.get("event_type") or "") == "long_static"
         else ""
     )

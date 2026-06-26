@@ -1167,13 +1167,21 @@
                 <label><span>平均停留目标（秒）</span><input id="auto-bathroom-avg" type="number" min="10" max="3600" step="1" value="180" /></label>
                 <label><span>最长停留目标（秒）</span><input id="auto-bathroom-p90" type="number" min="20" max="7200" step="1" value="480" /></label>
               </div>
-              <p class="muted">这里会生成多次历史卫生间停留记录，用于统计个人卫生间停留基线；“生成一次卫生间停留时间”只随机生成一条样例流程，并在环境数据记录中展示。</p>
+              <p class="muted">这里会生成多次历史卫生间停留记录，用于统计个人卫生间停留基线；右侧验证功能会按你设置的停留秒数发送一条完整流程。</p>
               <div class="form-actions">
                 <button id="auto-bathroom-baseline" class="primary" type="button">生成卫生间停留基线</button>
-                <button id="demo-bathroom-stay" type="button">生成一次卫生间停留时间</button>
               </div>
+            </section>
+            <section class="baseline-card">
+              <h3>验证卫生间停留时间</h3>
+              <p class="muted">设置一次卫生间停留秒数，系统会发送“客厅 → 卫生间 → 客厅”的整屋环境数据；环境数据记录中可看到进入、停留、离开的完整过程。若高于当前卫生间停留参考上限，将生成 Candidate 候选事件。</p>
               <div class="baseline-fields">
-                <label><span>本次随机停留时长</span><input id="demo-bathroom-duration-result" readonly value="--" /></label>
+                <label><span>验证停留时间（秒）</span><input id="demo-bathroom-duration" type="number" min="10" max="7200" step="5" value="600" /></label>
+                <label><span>本次验证停留时长</span><input id="demo-bathroom-duration-result" readonly value="--" /></label>
+                <label><span>候选事件结果</span><input id="demo-bathroom-candidate-result" readonly value="--" /></label>
+              </div>
+              <div class="form-actions">
+                <button id="demo-bathroom-stay" class="primary" type="button">验证卫生间停留时间</button>
               </div>
             </section>
           </div>
@@ -1652,7 +1660,7 @@
         setText("#save-bathroom-baseline", "保存卫生间基线");
         setText("#auto-vitals-baseline", "生成 3000 组并统计基线");
         setText("#auto-bathroom-baseline", "生成卫生间停留基线");
-        setText("#demo-bathroom-stay", "生成一次卫生间停留时间");
+        setText("#demo-bathroom-stay", "验证卫生间停留时间");
         setText("#submit-template", "一键发送当前模板");
         setText("#daily-summary-local", "只生成本地统计");
         setText("#daily-summary-cloud", "生成今日健康摘要");
@@ -1711,7 +1719,7 @@
         setText("#baseline-submit-status", "等待设置");
         setText("#auto-vitals-baseline", "生成 3000 组并统计基线");
         setText("#auto-bathroom-baseline", "生成卫生间停留基线");
-        setText("#demo-bathroom-stay", "生成一次卫生间停留时间");
+        setText("#demo-bathroom-stay", "验证卫生间停留时间");
         setText("#clear-local", "清空本页记录");
 
         setText("#daily-summary-local", "生成本地摘要");
@@ -2526,21 +2534,21 @@
         }
       }
 
-      function randomBathroomStayDuration() {
-        const avg = Math.max(10, Number($("auto-bathroom-avg").value || 180));
-        const longestInput = Math.max(10, Number($("auto-bathroom-p90").value || avg));
-        const minValue = Math.max(10, avg * 0.65);
-        const maxValue = Math.max(avg, longestInput);
-        const raw = minValue + Math.random() * Math.max(0, maxValue - minValue);
-        return Math.max(10, Math.round(raw / 5) * 5);
+      function selectedBathroomStayDuration() {
+        const raw = Number($("demo-bathroom-duration")?.value || 600);
+        const clamped = Math.max(10, Math.min(7200, Number.isFinite(raw) ? raw : 600));
+        const rounded = Math.max(10, Math.round(clamped / 5) * 5);
+        setInputValue("demo-bathroom-duration", rounded);
+        return rounded;
       }
 
       async function runBathroomStayDemo() {
         const button = $("demo-bathroom-stay");
         button.disabled = true;
-        const durationSeconds = randomBathroomStayDuration();
+        const durationSeconds = selectedBathroomStayDuration();
         setInputValue("demo-bathroom-duration-result", formatDuration(durationSeconds));
-        setSubmitStatus("baseline-submit-status", `正在生成一次随机卫生间停留时间：${formatDuration(durationSeconds)}`);
+        setInputValue("demo-bathroom-candidate-result", "验证中");
+        setSubmitStatus("baseline-submit-status", `正在验证卫生间停留时间：${formatDuration(durationSeconds)}`);
         try {
           const result = await postJson("/api/bathroom-stay/demo", {
             elder_id: $("baseline-elder").value.trim() || "elder_001",
@@ -2549,9 +2557,16 @@
           });
           if (result.bathroom_stay_monitor) setBathroomStayMonitor(result.bathroom_stay_monitor);
           setInputValue("demo-bathroom-duration-result", formatDuration(result.duration_seconds ?? durationSeconds));
-          setSubmitStatus("baseline-submit-status", `一次卫生间停留时间已生成：${formatDuration(result.duration_seconds ?? durationSeconds)}；已发送 ${result.published_snapshots ?? "--"} 组整屋环境数据`, "ok");
+          const candidateCreated = Boolean(result.candidate);
+          setInputValue("demo-bathroom-candidate-result", candidateCreated ? "已生成候选事件" : "未超过参考上限");
+          setSubmitStatus(
+            "baseline-submit-status",
+            `卫生间停留验证完成：${formatDuration(result.duration_seconds ?? durationSeconds)}；已发送 ${result.published_snapshots ?? "--"} 组整屋环境数据；${candidateCreated ? "已生成 Candidate 候选事件" : "未超过参考上限，仅记录流程"}`,
+            "ok",
+          );
         } catch (error) {
-          setSubmitStatus("baseline-submit-status", `生成一次卫生间停留时间失败：${error.message}`, "error");
+          setInputValue("demo-bathroom-candidate-result", "验证失败");
+          setSubmitStatus("baseline-submit-status", `卫生间停留验证失败：${error.message}`, "error");
         } finally {
           button.disabled = false;
         }

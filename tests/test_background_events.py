@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import sys
 import types
@@ -159,13 +159,14 @@ class BackgroundEventTests(unittest.TestCase):
         self.assertIn('"bathroom_stay_monitor": bathroom_stay_monitor_snapshot()', backend)
         self.assertNotIn("卫生间停留时长推导", html)
         self.assertIn("卫生间累计停留", html)
+        self.assertIn("验证卫生间停留时间", html)
+        self.assertIn("demo-bathroom-duration", html)
+        self.assertIn("demo-bathroom-candidate-result", html)
         self.assertIn("demo-bathroom-duration-result", html)
-        self.assertIn("randomBathroomStayDuration", html)
+        self.assertIn("selectedBathroomStayDuration", html)
         self.assertIn("setBathroomStayMonitor(message.bathroom_stay_monitor)", html)
-        self.assertIn("<h2>卫生间停留验证</h2>", html)
-        self.assertIn("bathroom-flow-rows", html)
-        self.assertIn("进入卫生间", html)
-        self.assertIn("离开卫生间", html)
+        self.assertNotIn("bathroom-flow-rows", html)
+        self.assertIn("客厅 → 卫生间 → 客厅", html)
 
     def test_bathroom_demo_sends_continuous_home_environment_snapshots(self) -> None:
         backend = (ROOT / "Background_MQTT" / "backend.py").read_text(encoding="utf-8")
@@ -176,7 +177,9 @@ class BackgroundEventTests(unittest.TestCase):
         self.assertIn('home_presence_snapshot(request.elder_id, "living_room", exit_at, source="bathroom_stay_demo")', backend)
         self.assertIn('exit_entry["bathroom_stay_completed_sec"] = request.duration_seconds', backend)
         self.assertIn('"published_snapshots": published', backend)
-        self.assertIn("一次卫生间停留时间", html)
+        self.assertIn("验证卫生间停留时间", html)
+        self.assertIn("create_bathroom_stay_candidate(request.elder_id, duration_seconds=request.duration_seconds)", backend)
+        self.assertIn("request.duration_seconds > reference_limit_sec", backend)
         self.assertIn("bathroomElapsedBySample", html)
         self.assertIn("logical_interval_sec: 5", html)
 

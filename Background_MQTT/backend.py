@@ -1561,6 +1561,7 @@ async def auto_bathroom_baseline(request: AutoBathroomBaselineRequest) -> dict[s
 async def bathroom_stay_demo(request: BathroomStayDemoRequest) -> dict[str, Any]:
     ensure_mqtt_connected()
     bathroom_stay_monitor["bathroom_reference_limit_sec"] = await bathroom_reference_limit_sec(request.elder_id)
+    reference_limit_sec = float(bathroom_stay_monitor.get("bathroom_reference_limit_sec") or 60)
     bathroom_stay_monitor.update(
         {
             "current_room": None,
@@ -1607,6 +1608,12 @@ async def bathroom_stay_demo(request: BathroomStayDemoRequest) -> dict[str, Any]
     published += 1
     if request.rebuild_delay_sec:
         await asyncio.sleep(request.rebuild_delay_sec)
+    candidate: dict[str, Any] | None = None
+    if request.duration_seconds > reference_limit_sec:
+        try:
+            candidate = await create_bathroom_stay_candidate(request.elder_id, duration_seconds=request.duration_seconds)
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail={"message": "edge bathroom stay candidate failed", "error": str(exc)})
     try:
         rebuild = await rebuild_edge_baselines(request.elder_id, ["bathroom_routine"])
     except httpx.HTTPError as exc:
@@ -1622,6 +1629,8 @@ async def bathroom_stay_demo(request: BathroomStayDemoRequest) -> dict[str, Any]
                 "duration_seconds": request.duration_seconds,
                 "logical_interval_sec": request.logical_interval_sec,
                 "published_snapshots": published,
+                "reference_limit_sec": reference_limit_sec,
+                "candidate": candidate,
                 "flow_preview": flow_preview,
                 "rebuild": rebuild,
             },
@@ -1634,6 +1643,8 @@ async def bathroom_stay_demo(request: BathroomStayDemoRequest) -> dict[str, Any]
         "duration_seconds": request.duration_seconds,
         "logical_interval_sec": request.logical_interval_sec,
         "published_snapshots": published,
+        "reference_limit_sec": reference_limit_sec,
+        "candidate": candidate,
         "flow_preview": flow_preview,
         "bathroom_stay_monitor": monitor,
         "rebuild": rebuild,

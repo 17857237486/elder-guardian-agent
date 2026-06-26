@@ -160,6 +160,18 @@ function observationGroupRiskHint(observations: AnyRecord[]): ObservationRiskHin
     })[0] ?? null;
 }
 
+function latestRiskInputTarget(): DemoTarget {
+  const match = filteredObservations.value
+    .map((observation: AnyRecord) => ({ observation, hint: observationRiskHint(observation) }))
+    .filter((item): item is { observation: AnyRecord; hint: NonNullable<ObservationRiskHint> } => Boolean(item.hint))
+    .sort((a, b) => {
+      const timeDelta = new Date(eventTime(b.observation)).getTime() - new Date(eventTime(a.observation)).getTime();
+      if (timeDelta !== 0 && !Number.isNaN(timeDelta)) return timeDelta;
+      return riskPriority(a.hint.risk_level) - riskPriority(b.hint.risk_level);
+    })[0];
+  return match ? riskInputTarget(match.observation, match.hint) : null;
+}
+
 function eventMatchesObservationRisk(event: AnyRecord | null, hint: ObservationRiskHint): boolean {
   if (!event || !hint) return false;
   const eventType = String(event.event_type ?? "");
@@ -209,6 +221,13 @@ const activeDemoTarget = computed<DemoTarget>(() => {
   const promotedCandidateFallbackTime = promotedCandidateFallback ? new Date(eventTime(promotedCandidateFallback)).getTime() : 0;
   const latestObservationGroup = latestInputObservationGroup(latestObservation);
   const latestObservationRisk = observationGroupRiskHint(latestObservationGroup);
+  const latestRiskTarget = latestRiskInputTarget();
+  const latestRiskHint = latestRiskTarget?.kind === "risk_input" ? {
+    event_type: String(latestRiskTarget.item.event_type ?? ""),
+    risk_level: String(latestRiskTarget.item.risk_level ?? ""),
+    room: String(latestRiskTarget.item.room ?? ""),
+    observed_at: eventTime(latestRiskTarget.item)
+  } : null;
   const latestEventRisk = latestEvent.value ? riskOf(latestEvent.value) : "";
 
   const activeStates = new Set(["event_detected", "rule_classified", "action_planned", "ask_elder", "wait_response", "family_alert", "emergency_alert", "escalated"]);
@@ -229,6 +248,16 @@ const activeDemoTarget = computed<DemoTarget>(() => {
       return { kind: "event", id: String(activeEvent.event_id), item: activeEvent };
     }
     return riskInputTarget(latestObservation, latestObservationRisk);
+  }
+
+  if (latestRiskTarget && latestRiskHint) {
+    if (latestEvent.value && eventMatchesObservationRisk(latestEvent.value, latestRiskHint)) {
+      return { kind: "event", id: String(latestEvent.value.event_id), item: latestEvent.value };
+    }
+    if (activeEvent && eventMatchesObservationRisk(activeEvent, latestRiskHint)) {
+      return { kind: "event", id: String(activeEvent.event_id), item: activeEvent };
+    }
+    return latestRiskTarget;
   }
 
   if (
