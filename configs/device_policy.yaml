@@ -1,13 +1,31 @@
 devices:
+  bedroom/window:
+    allowed_actions: ["open", "close"]
   living_room/window:
     allowed_actions: ["open", "close"]
   living_room/air_conditioner:
     allowed_actions: ["turn_on", "turn_off", "set_temperature"]
   bedroom/air_conditioner:
     allowed_actions: ["turn_on", "turn_off", "set_temperature"]
+  bedroom/fan:
+    allowed_actions: ["turn_on", "turn_off"]
   living_room/fan:
     allowed_actions: ["turn_on", "turn_off"]
   bedroom/light:
+    allowed_actions: ["turn_on", "turn_off"]
+  living_room/light:
+    allowed_actions: ["turn_on", "turn_off"]
+  kitchen/window:
+    allowed_actions: ["open", "close"]
+  kitchen/light:
+    allowed_actions: ["turn_on", "turn_off"]
+  kitchen/fan:
+    allowed_actions: ["turn_on", "turn_off"]
+  bathroom/window:
+    allowed_actions: ["open", "close"]
+  bathroom/light:
+    allowed_actions: ["turn_on", "turn_off"]
+  bathroom/heater:
     allowed_actions: ["turn_on", "turn_off"]
   kitchen/gas_valve:
     allowed_actions: ["open", "close"]

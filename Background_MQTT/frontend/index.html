@@ -1474,18 +1474,18 @@
       };
 
       const deviceLabels = {
-        bedroom: "Bedroom",
-        kitchen: "Kitchen",
-        living_room: "Living room",
-        bathroom: "Bathroom",
-        local: "Local",
-        air_conditioner: "Air conditioner",
-        fan: "Fan",
-        window: "Window",
-        light: "Light",
-        gas_valve: "Gas valve",
-        heater: "Heater",
-        local_alarm: "Local alarm",
+        bedroom: "卧室",
+        kitchen: "厨房",
+        living_room: "客厅",
+        bathroom: "卫生间",
+        local: "本地",
+        air_conditioner: "空调",
+        fan: "风扇",
+        window: "窗户",
+        light: "灯光",
+        gas_valve: "燃气阀",
+        heater: "取暖器",
+        local_alarm: "本地报警器",
       };
 
       const scenarioTemplates = {
@@ -1930,10 +1930,16 @@
       }
 
       function deviceActionButtons(device) {
-        if (device.device === "window" || device.device === "gas_valve") {
+        if (device.device === "window") {
           return `
-            <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'open')">设置</button>
-            <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'close')">设置</button>
+            <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'open')">打开</button>
+            <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'close')">关闭</button>
+          `;
+        }
+        if (device.device === "gas_valve") {
+          return `
+            <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'open')">打开阀门</button>
+            <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'close')">关闭阀门</button>
           `;
         }
         if (device.device === "local_alarm") {
@@ -1946,17 +1952,17 @@
           const key = deviceKey(device);
           const temp = device.value ?? 26;
           return `
-            <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'turn_on')">设置</button>
-            <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'turn_off')">设置</button>
+            <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'turn_on')">打开</button>
+            <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'turn_off')">关闭</button>
             <div class="device-temp">
               <input id="temp-${key}" type="number" min="16" max="30" value="${temp}" />
-              <button class="primary" type="button" title="设置温度" onclick="commandDevice('${device.room}', '${device.device}', 'set_temperature', Number($('temp-${key}').value || 26))">设置</button>
+              <button class="primary" type="button" title="设置温度" onclick="commandDevice('${device.room}', '${device.device}', 'set_temperature', Number($('temp-${key}').value || 26))">设置温度</button>
             </div>
           `;
         }
         return `
-          <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'turn_on')">设置</button>
-          <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'turn_off')">设置</button>
+          <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'turn_on')">打开</button>
+          <button type="button" onclick="commandDevice('${device.room}', '${device.device}', 'turn_off')">关闭</button>
         `;
       }
 
@@ -1998,22 +2004,22 @@
           ? actionLogs
           .map((item) => `<div class="device-log-item ${item.type}">${formatTime(item.timestamp)} ${describeDeviceLog(item)}</div>`)
           .join("")
-          : `<div class="empty">No device actions yet.</div>`;
+          : `<div class="empty">暂无设备动作。</div>`;
       }
 
       async function commandDevice(room, device, action, value = null) {
-        setSubmitStatus("device-submit-status", `Sending ${room}/${device} ${action}`);
+        setSubmitStatus("device-submit-status", `正在发送：${deviceLabel(room)} ${deviceLabel(device)} ${actionLabel(action, value)}`);
         try {
           await postJson("/api/device/command", {
             room,
             device,
             action,
             value,
-            reason: "Background MQTT unified dashboard control",
+            reason: "MQTT 页面手动控制",
           });
-          setSubmitStatus("device-submit-status", "Command sent through main system", "ok");
+          setSubmitStatus("device-submit-status", "设备动作已通过主系统发送", "ok");
         } catch (error) {
-          setSubmitStatus("device-submit-status", `Command failed: ${error.message}`, "error");
+          setSubmitStatus("device-submit-status", `设备动作发送失败：${error.message}`, "error");
         }
       }
 
@@ -3064,9 +3070,9 @@
       $("refresh-devices").addEventListener("click", async () => {
         try {
           await loadDevices();
-          setSubmitStatus("device-submit-status", "Devices refreshed from main system", "ok");
+          setSubmitStatus("device-submit-status", "已从主系统刷新设备状态", "ok");
         } catch (error) {
-          setSubmitStatus("device-submit-status", `Refresh failed: ${error.message}`, "error");
+          setSubmitStatus("device-submit-status", `刷新设备状态失败：${error.message}`, "error");
         }
       });
 
@@ -3079,7 +3085,7 @@
       updateScenarioPreview();
       loadSnapshot();
       loadDevices().catch((error) => {
-        setSubmitStatus("device-submit-status", `Device load failed: ${error.message}`, "error");
+        setSubmitStatus("device-submit-status", `设备状态加载失败：${error.message}`, "error");
       });
       loadPersonalBaselines().catch((error) => {
         setSubmitStatus("baseline-submit-status", `基线读取失败：${error.message}`, "error");

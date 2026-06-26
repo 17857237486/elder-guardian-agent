@@ -305,8 +305,8 @@ const localSemanticStatus = computed(() => {
   }
   const target = activeDemoTarget.value;
   const output = analysis?.output ?? {};
-  if (analysis && ["running", "pending", "reviewing"].includes(String(analysis.status ?? "").toLowerCase())) {
-    return { state: "pending", text: "等待 RK3588 本地模型分析" };
+  if (analysis && isStepRunning(analysis)) {
+    return { state: "pending", text: runningModelText(analysis, eventTime(target?.item ?? {})) };
   }
   if (output.event_semantics || output.family_summary || output.risk_level) {
     const latency = output.latency_ms !== undefined ? ` · 模型耗时 ${durationText(output.latency_ms)}` : "";
@@ -320,6 +320,10 @@ const localSemanticStatus = computed(() => {
     return { state: "completed", text: target.item.local_semantics };
   }
   if (target?.kind === "candidate") {
+    const candidateStatus = String(target.item.status ?? "").toLowerCase();
+    if (["pending", "reviewing"].includes(candidateStatus)) {
+      return { state: "pending", text: runningModelText(analysis, eventTime(target.item)) };
+    }
     const result = candidateLocalResult(target.item);
     if (result.event_semantics || result.family_summary || result.risk_level) {
       const latency = result.latency_ms !== undefined ? ` · 模型耗时 ${durationText(result.latency_ms)}` : "";
@@ -497,6 +501,10 @@ function stepState(step?: AnyRecord | null): DemoNodeState {
   return "completed";
 }
 
+function isStepRunning(step?: AnyRecord | null): boolean {
+  return ["running", "pending", "reviewing"].includes(String(step?.status ?? "").toLowerCase());
+}
+
 function durationText(ms?: unknown): string {
   const value = Number(ms);
   if (!Number.isFinite(value)) return "";
@@ -510,6 +518,11 @@ function elapsedSince(value?: string): string {
   if (Number.isNaN(timestamp)) return "";
   const elapsed = Math.max(0, Date.now() - timestamp);
   return durationText(elapsed);
+}
+
+function runningModelText(step?: AnyRecord | null, fallbackTime?: string): string {
+  const elapsed = elapsedSince(step?.started_at ?? step?.created_at ?? fallbackTime);
+  return elapsed ? `等待 RK3588 本地模型分析 · 已等待 ${elapsed}` : "等待 RK3588 本地模型分析";
 }
 
 function isDeterministicVitalRuleEvent(item: AnyRecord, risk: string): boolean {
@@ -579,6 +592,7 @@ function workflowSummary(step: AnyRecord): string {
   if (step.step_name === "local_multiframe_analysis") {
     if (output.reason === "deterministic_p3_rule") return "确定性规则处置，无需本地模型";
     if (output.reason === "deterministic_vital_rule") return "确定性生命体征规则，无需本地模型";
+    if (isStepRunning(step)) return runningModelText(step);
     const fallbackLabel: Record<string, string> = {
       service_unavailable: "模型服务暂不可用",
       timeout: "模型分析超时",
@@ -688,8 +702,9 @@ const demoNodes = computed(() => {
   const risk = riskOf(item);
   const dataTime = eventTime(item) || (filteredObservations.value?.[0] ? eventTime(filteredObservations.value[0]) : "");
   const localOutput = localStep?.output ?? {};
-  const localLatency = localOutput.latency_ms !== undefined ? ` · 模型耗时 ${durationText(localOutput.latency_ms)}` : "";
-  const queueWait = localOutput.queue_wait_ms ? ` · 排队等待 ${durationText(localOutput.queue_wait_ms)}` : "";
+  const localRunning = isStepRunning(localStep);
+  const localLatency = !localRunning && localOutput.latency_ms !== undefined ? ` · 模型耗时 ${durationText(localOutput.latency_ms)}` : "";
+  const queueWait = !localRunning && localOutput.queue_wait_ms ? ` · 排队等待 ${durationText(localOutput.queue_wait_ms)}` : "";
   const cloudOutput = cloudStep?.output ?? {};
   const waitingPrompt = prompts.find((prompt) => String(prompt.status ?? "").toLowerCase() === "waiting");
   const hasHmiResponse = Boolean(responses.length);
@@ -702,6 +717,8 @@ const demoNodes = computed(() => {
     ? "P3 确定性规则，无需本地模型"
     : localOutput.reason === "deterministic_vital_rule" || deterministicVitalRule
       ? "确定性生命体征规则，无需本地模型"
+      : localRunning
+        ? runningModelText(localStep, eventTime(item))
       : `${localOutput.event_semantics ?? localOutput.status ?? localWait}${localOutput.risk_level ? ` · ${localOutput.risk_level}` : ""}${localLatency}${queueWait}`;
   const localState = deterministicRuleOnly || localOutput.reason === "deterministic_vital_rule"
     ? "skipped" as DemoNodeState
@@ -943,7 +960,8 @@ const DEVICE_LABELS: Record<string, string> = {
   local_alarm: "本地报警器",
   alarm: "本地报警器",
   light: "灯光",
-  fan: "风扇"
+  fan: "风扇",
+  heater: "取暖器"
 };
 const ACTION_LABELS: Record<string, string> = {
   turn_on: "打开",
@@ -960,6 +978,7 @@ const DASHBOARD_DEVICE_CONTROLS = [
     devices: [
       { device: "light", label: "灯光", on: "turn_on", off: "turn_off" },
       { device: "air_conditioner", label: "空调", on: "turn_on", off: "turn_off" },
+      { device: "fan", label: "风扇", on: "turn_on", off: "turn_off" },
       { device: "window", label: "窗户", on: "open", off: "close" }
     ]
   },
@@ -967,7 +986,7 @@ const DASHBOARD_DEVICE_CONTROLS = [
     room: "bathroom",
     devices: [
       { device: "light", label: "灯光", on: "turn_on", off: "turn_off" },
-      { device: "air_conditioner", label: "暖风/空调", on: "turn_on", off: "turn_off" },
+      { device: "heater", label: "取暖器", on: "turn_on", off: "turn_off" },
       { device: "window", label: "窗户", on: "open", off: "close" }
     ]
   },
@@ -983,6 +1002,7 @@ const DASHBOARD_DEVICE_CONTROLS = [
     room: "kitchen",
     devices: [
       { device: "light", label: "灯光", on: "turn_on", off: "turn_off" },
+      { device: "fan", label: "风扇", on: "turn_on", off: "turn_off" },
       { device: "window", label: "窗户", on: "open", off: "close" },
       { device: "gas_valve", label: "燃气阀", on: "open", off: "close" }
     ]
@@ -1045,6 +1065,33 @@ const hmiPromptItems = computed<AnyRecord[]>(() => {
 });
 const familyAlertItems = computed<AnyRecord[]>(() => filteredAlerts.value.slice(0, DISPLAY_LIMIT));
 const realDevices = computed(() => filteredDeviceReadings.value.slice(0, DISPLAY_LIMIT));
+const finalDecisionCard = computed(() => {
+  const target = activeDemoTarget.value;
+  const finalStep = findTargetStep(target, "final_advisory");
+  const output = finalStep?.output ?? {};
+  const item = target?.item ?? latestEvent.value ?? {};
+  const risk = output.final_risk_level ?? output.risk_level ?? riskOf(item);
+  const source = output.decision_source ?? item.decision_source ?? summaryDecisionSource.value;
+  const summary = output.family_summary
+    ?? output.summary
+    ?? output.message
+    ?? item.family_summary
+    ?? item.local_semantics
+    ?? item.summary
+    ?? "暂无最终决策建议";
+  const followups = Array.isArray(output.recommended_followup)
+    ? output.recommended_followup
+    : Array.isArray(output.actions)
+      ? output.actions
+      : [];
+  return {
+    risk,
+    source,
+    summary,
+    followups,
+    time: eventTime(finalStep ?? item)
+  };
+});
 const latestDailyHealthSummary = computed<AnyRecord | null>(() => {
   const summaries = ((state.daily_health_summaries ?? []) as AnyRecord[])
     .filter(Boolean)
@@ -1126,13 +1173,13 @@ async function requestDashboardDeviceAction(room: string, device: string, action
         elder_id: state.elder_id ?? "elder_001",
         requested_by: "web-dashboard",
         priority: "P3",
-        reason: "Dashboard ??????",
+        reason: "Dashboard 手动控制",
         commands: [
           {
             room,
             device,
             action,
-            reason: "Dashboard ??????"
+            reason: "Dashboard 手动控制"
           }
         ]
       })
@@ -1140,10 +1187,10 @@ async function requestDashboardDeviceAction(room: string, device: string, action
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const result = await response.json();
     const status = String(result.status ?? result.executions?.[0]?.status ?? "accepted");
-    deviceControlMessage.value = `${ROOM_LABELS[room] ?? room} ${deviceLabel(device)} ${actionLabel(action)}?${statusLabel(status)}`;
+    deviceControlMessage.value = `${ROOM_LABELS[room] ?? room} ${deviceLabel(device)} ${actionLabel(action)}：${statusLabel(status)}`;
     await loadState();
   } catch (error) {
-    deviceControlMessage.value = `???????${error instanceof Error ? error.message : "????"}`;
+    deviceControlMessage.value = `设备控制失败：${error instanceof Error ? error.message : "请求失败"}`;
   } finally {
     deviceControlBusy.value = "";
   }
@@ -1373,31 +1420,8 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
       <p>{{ localSemanticEventType }} · 本地风险 {{ summaryLocalRisk }} · AI房间 {{ localAiRoom }}</p>
     </section>
 
-    <section class="grid">
-      <article class="panel">
-        <h2>三级风险事件</h2>
-        <div class="panel-scroll"><p v-if="!riskEvents.length" class="empty">暂无风险事件</p><ul>
-          <li v-for="event in riskEvents" :key="event.event_id">
-            <div class="row-head"><strong>{{ event.final_risk_level ?? event.risk_level }}</strong><time>{{ formatTime(eventTime(event)) }}</time></div>
-            <b>{{ event.event_type }} · {{ event.state }}</b>
-            <p>{{ clip(event.local_semantics || event.summary) }}</p>
-            <small>规则 {{ event.rule_risk_level ?? event.risk_level }} → 本地 {{ event.local_risk_level ?? "--" }} → 云端 {{ event.cloud_risk_level ?? "--" }} · {{ event.decision_source ?? "rule" }}</small>
-          </li>
-        </ul></div>
-      </article>
-
-      <article class="panel">
-        <h2>策略与设备执行</h2>
-        <div class="panel-scroll"><p v-if="!policyExecutions.length" class="empty">暂无设备执行</p><ul>
-          <li v-for="item in policyExecutions" :key="item.execution_id ?? item.call_id">
-            <div class="row-head"><strong>{{ statusLabel(item.status) }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
-            <b>{{ policyTitle(item) }}</b>
-            <p>{{ clip(item.reason || item.error || "执行记录") }}</p>
-          </li>
-        </ul></div>
-      </article>
-
-      <article class="panel">
+    <section class="device-dashboard-grid">
+      <article class="panel compact-panel">
         <h2>房间设备开关</h2>
         <p v-if="deviceControlMessage" class="device-control-message">{{ deviceControlMessage }}</p>
         <div class="device-control-grid">
@@ -1412,19 +1436,21 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
         </div>
       </article>
 
-      <article class="panel">
-        <h2>分析工作流</h2>
-        <div class="panel-scroll"><p v-if="!workflowSteps.length" class="empty">{{ workflowEmptyText }}</p><ul>
-          <li v-for="step in workflowSteps" :key="step.step_id">
-            <div class="row-head"><strong>{{ step.status }}</strong><time>{{ formatTime(eventTime(step)) }}</time></div>
-            <b>{{ step.step_name }} · {{ step.model ?? "rules" }}</b>
-            <p>{{ workflowSummary(step) }}</p>
+      <article class="panel compact-panel">
+        <h2>策略与设备执行</h2>
+        <div class="panel-scroll"><p v-if="!policyExecutions.length" class="empty">暂无设备执行</p><ul>
+          <li v-for="item in policyExecutions" :key="item.execution_id ?? item.call_id">
+            <div class="row-head"><strong>{{ statusLabel(item.status) }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
+            <b>{{ policyTitle(item) }}</b>
+            <p>{{ clip(item.reason || item.error || "执行记录") }}</p>
           </li>
         </ul></div>
       </article>
+    </section>
 
+    <section class="grid user-grid">
       <article class="panel">
-        <h2>老人 HMI 反馈</h2>
+        <h2>老人反馈</h2>
         <div class="panel-scroll"><p v-if="!hmiPromptItems.length" class="empty">暂无老人提示或反馈</p><ul>
           <li v-for="item in hmiPromptItems" :key="item.prompt_id ? `prompt-${item.prompt_id}` : `response-${item.created_at}`">
             <div class="row-head"><strong>{{ statusLabel(item.status ?? item.response_type) }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
@@ -1436,7 +1462,7 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
       </article>
 
       <article class="panel">
-        <h2>家属告警</h2>
+        <h2>家属告警内容</h2>
         <div class="panel-scroll"><p v-if="!familyAlertItems.length" class="empty">暂无家属告警</p><ul>
           <li v-for="item in familyAlertItems" :key="item.alert_id">
             <div class="row-head"><strong>{{ statusLabel(item.status) }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
@@ -1446,19 +1472,18 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
         </ul></div>
       </article>
 
-      <article class="panel">
-        <h2>真实设备数据</h2>
-        <div class="panel-scroll"><p v-if="!realDevices.length" class="empty">暂无真实设备读数</p><ul>
-          <li v-for="reading in realDevices" :key="reading.device_id">
-            <div class="row-head">
-              <strong :class="deviceOnline(reading) ? 'online' : 'offline'">{{ deviceOnline(reading) ? "在线" : "离线" }}</strong>
-              <time>{{ formatTime(reading.observed_at ?? reading.created_at) }}</time>
-            </div>
-            <b>{{ reading.room }} / {{ reading.device_id }}</b>
-            <p>温度 {{ metricValue(reading, "temperature") }} · 湿度 {{ metricValue(reading, "humidity") }}</p>
-            <small>{{ reading.device_type ?? "unknown" }} · {{ reading.source ?? "real_device" }} · 仅展示，不进入 AI</small>
-          </li>
-        </ul></div>
+      <article class="panel decision-panel">
+        <h2>最终决策建议</h2>
+        <div class="decision-card">
+          <div class="row-head">
+            <strong>{{ finalDecisionCard.risk }}</strong>
+            <time>{{ formatTime(finalDecisionCard.time) }}</time>
+          </div>
+          <b>决策来源：{{ finalDecisionCard.source }}</b>
+          <p>{{ clip(finalDecisionCard.summary, 160) }}</p>
+          <small v-if="finalDecisionCard.followups.length">后续建议：{{ finalDecisionCard.followups.map((item: unknown) => clip(item, 24)).join("；") }}</small>
+          <small v-else>暂无额外后续建议</small>
+        </div>
       </article>
 
       <article class="panel">
@@ -1469,7 +1494,7 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
               <strong :class="room.presence ? 'online' : 'offline'">{{ room.presence ? "有人" : "无人" }}</strong>
               <time>{{ roomTimeLabel(room) }}</time>
             </div>
-            <b>{{ room.room }}</b>
+            <b>{{ ROOM_LABELS[room.room] ?? room.room }}</b>
             <p>温度 {{ roomMetric(room, "temperature", "°C") }} · 湿度 {{ roomMetric(room, "humidity", "%") }} · CO2 {{ roomMetric(room, "co2_ppm", "ppm") }}</p>
             <small>燃气 {{ roomMetric(room, "gas_ppm", "ppm") }} · 烟雾 {{ roomMetric(room, "smoke_ppm", "ppm") }} · 光照 {{ roomMetric(room, "illuminance_lux", "lux") }}</small>
           </li>
@@ -1490,8 +1515,25 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
               <p>{{ dailyVitalsText() }}</p>
               <p>{{ dailyBehaviorText() }}</p>
               <p>{{ dailyEventsText() }}</p>
-              <p>{{ monthlyTrendBaseText() }}</p>
               <small>{{ clip(dailyCloudText(), 120) }}</small>
+            </li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="panel monthly-trend-panel">
+        <h2>近30天身体健康趋势</h2>
+        <div class="panel-scroll">
+          <p v-if="!monthlyHealthSummaryBase.length" class="empty">暂无 30 天趋势数据</p>
+          <ul v-else>
+            <li>
+              <div class="row-head">
+                <strong>{{ monthlyHealthSummaryBase.length }} 天</strong>
+                <time>{{ formatTime(monthlyHealthSummaryBase[0]?.updated_at ?? monthlyHealthSummaryBase[0]?.summary_date) }}</time>
+              </div>
+              <b>趋势基础</b>
+              <p>{{ monthlyTrendBaseText() }}</p>
+              <small>基于每日健康摘要汇总，用于观察心率、血氧、事件和行为趋势。</small>
             </li>
           </ul>
         </div>
