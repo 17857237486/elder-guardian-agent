@@ -26,6 +26,29 @@ STEP_TIMEOUT_BUDGETS = {
     "advisory_conversation": 45,
 }
 RISK_ORDER = {"P4": 0, "P3": 1, "P2": 2, "P1": 3, "P0": 4}
+MOJIBAKE_MARKERS = set(
+    "ÃÂÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõøùúûüýþÿ�"
+)
+COMMON_CHINESE_HEALTH_TERMS = {
+    "老人",
+    "自然",
+    "躺卧",
+    "休息",
+    "睡眠",
+    "睡觉",
+    "正常",
+    "平稳",
+    "生命体征",
+    "心率",
+    "血氧",
+    "环境",
+    "姿态",
+    "表情",
+    "疼痛",
+    "跌倒",
+    "静止",
+    "卫生间",
+}
 EVENT_MINIMUM_RISK = {
     "gas_leak": "P0",
     "spo2_low": "P1",
@@ -157,6 +180,55 @@ def _extract_named_json_object(content: str, field: str) -> dict[str, Any] | Non
     return None
 
 
+def _chinese_char_count(value: str) -> int:
+    return sum(1 for char in value if "\u4e00" <= char <= "\u9fff")
+
+
+def _common_chinese_term_count(value: str) -> int:
+    return sum(1 for term in COMMON_CHINESE_HEALTH_TERMS if term in value)
+
+
+def _mojibake_marker_count(value: str) -> int:
+    return sum(1 for char in value if char in MOJIBAKE_MARKERS or "\x80" <= char <= "\x9f")
+
+
+def _repair_text_encoding(value: str) -> str:
+    """Repair UTF-8 Chinese strings decoded through the wrong charset."""
+    if not value:
+        return value
+    original_score = (
+        _common_chinese_term_count(value) * 4
+        + _chinese_char_count(value)
+        - _mojibake_marker_count(value) * 3
+    )
+    best = value
+    best_score = original_score
+    for encoding in ("latin-1", "cp1252", "gb18030", "gbk"):
+        try:
+            repaired = value.encode(encoding).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+        score = (
+            _common_chinese_term_count(repaired) * 4
+            + _chinese_char_count(repaired)
+            - _mojibake_marker_count(repaired) * 3
+        )
+        if score > best_score:
+            best = repaired
+            best_score = score
+    return best
+
+
+def _repair_text_encoding_in_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _repair_text_encoding(value)
+    if isinstance(value, list):
+        return [_repair_text_encoding_in_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _repair_text_encoding_in_value(item) for key, item in value.items()}
+    return value
+
+
 def _extract_completed_multimodal_prefix(content: str) -> dict[str, Any] | None:
     """Recover a complete result followed by a truncated echo of the input."""
     for match in re.finditer(r',\s*"(?:event|sensor_evidence|device_states)"\s*:', content):
@@ -213,13 +285,13 @@ def _extract_json_object(content: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         nested = _extract_named_json_object(content, "output_template")
         if nested is not None:
-            return {"output_template": nested}
+            return _repair_text_encoding_in_value({"output_template": nested})
         completed_prefix = _extract_completed_multimodal_prefix(content)
         if completed_prefix is not None:
-            return completed_prefix
+            return _repair_text_encoding_in_value(completed_prefix)
         repaired_top_level = _repair_truncated_top_level_object(content)
         if repaired_top_level is not None:
-            return repaired_top_level
+            return _repair_text_encoding_in_value(repaired_top_level)
         start = content.find("{")
         end = content.rfind("}")
         if start < 0 or end <= start:
@@ -230,7 +302,7 @@ def _extract_json_object(content: str) -> dict[str, Any]:
             raise LLMOutputError(f"LLM returned invalid JSON: {exc}") from exc
     if not isinstance(parsed, dict):
         raise LLMOutputError("LLM JSON output must be an object")
-    return parsed
+    return _repair_text_encoding_in_value(parsed)
 
 
 def _risk_value(value: Any) -> int | None:

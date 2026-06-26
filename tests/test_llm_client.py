@@ -32,6 +32,7 @@ from app.llm_client import (
     _normalize_multimodal_response,
     _normalize_local_multimodal_output,
     _normalize_output,
+    _repair_text_encoding,
     build_cloud_multimodal_content,
     build_local_multimodal_content,
 )
@@ -52,6 +53,24 @@ VALID_OUTPUT = {
 class LLMClientParserTests(unittest.TestCase):
     def test_extracts_json_from_wrapped_text(self) -> None:
         self.assertEqual(_extract_json_object("prefix {\"summary\":\"ok\"} suffix"), {"summary": "ok"})
+
+    def test_repairs_latin1_mojibake_model_text(self) -> None:
+        original = "\u8001\u4eba\u81ea\u7136\u8eba\u5367\u4f11\u606f\uff0c\u751f\u547d\u4f53\u5f81\u5e73\u7a33"
+        mojibake = original.encode("utf-8").decode("latin-1")
+        self.assertEqual(_repair_text_encoding(mojibake), original)
+
+    def test_repairs_gbk_mojibake_model_text(self) -> None:
+        original = "\u8001\u4eba"
+        mojibake = original.encode("utf-8").decode("gbk")
+        self.assertEqual(_repair_text_encoding(mojibake), original)
+
+    def test_extract_json_repairs_nested_model_text(self) -> None:
+        original = "\u8001\u4eba\u81ea\u7136\u8eba\u5367\u4f11\u606f"
+        mojibake = original.encode("utf-8").decode("latin-1")
+        payload = json.dumps({"event_semantics": mojibake, "supporting_evidence": [mojibake]})
+        parsed = _extract_json_object(payload)
+        self.assertEqual(parsed["event_semantics"], original)
+        self.assertEqual(parsed["supporting_evidence"], [original])
 
     def test_extracts_complete_template_from_truncated_outer_object(self) -> None:
         content = '{"output_template":{"risk_level":"P1","family_summary":"ok"},"event":{"summary":"truncated'
