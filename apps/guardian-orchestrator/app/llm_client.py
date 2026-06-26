@@ -1052,11 +1052,9 @@ def build_cloud_multimodal_content(
     temporal_limit = available_frame_count or 2
     modality_instruction = (
         "这是视觉事件。独立复核各张原始关键帧；每张图片前的文字是相对触发时刻的真实标签，缺失时间点不会补图。"
-        "必须先描述图像主证据，再结合sensor_context_summary里的最近生命体征、环境和所在房间摘要。"
-        "比较姿态、身体高度、位置和动作变化，区分突然倒地与正常坐下、主动躺卧、弯腰；"
-        "同时关注痛苦表情、捂腹、蜷缩、保护下腹、扶墙支撑、异常弯腰等疼痛或不适线索。"
-        "如果图像显示疑似腹痛或身体不适，event_semantics、supporting_evidence和family_summary必须保留该视觉线索；"
-        "生命体征平稳只能说明暂未见生命体征恶化，不能覆盖或删除图像中的疼痛/不适证据。"
+        "先概括图像主证据，再结合sensor_context_summary里的生命体征、环境和所在房间摘要。"
+        "重点识别老人异常状态：跌倒/失衡、长时间静止、疼痛或不适、呼吸或行动困难、异常支撑、姿态异常、环境危险。"
+        "生命体征正常只能说明暂未见生命体征恶化，不能覆盖图像中的异常状态证据。"
         if has_images
         else "这是非视觉事件，没有图片。仅复核结构化传感器证据、规则结果和本地模型摘要。"
     )
@@ -1073,7 +1071,6 @@ def build_cloud_multimodal_content(
                 "event": event,
                 "local_result": local_result,
                 "sensor_context_summary": _cloud_sensor_context_summary(context),
-                "context": _compact_value(context),
             },
             ensure_ascii=False,
             default=str,
