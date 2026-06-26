@@ -25,6 +25,7 @@ from app.llm_client import (
     LOCAL_VISUAL_INSTRUCTION,
     LocalMultimodalClient,
     RISK_POLICY_PROMPT,
+    _cloud_sensor_context_summary,
     _compact_local_case,
     _extract_json_object,
     _normalize_multimodal_output,
@@ -1083,11 +1084,11 @@ class LLMClientParserTests(unittest.TestCase):
 
         env_context = context["environment_context"]
         samples = env_context["samples"]
-        self.assertEqual(env_context["target_samples"], 20)
-        self.assertEqual(env_context["actual_samples"], 20)
+        self.assertEqual(env_context["target_samples"], 30)
+        self.assertEqual(env_context["actual_samples"], 30)
         self.assertEqual(env_context["room_sequence"], ["kitchen", "living_room"])
-        self.assertEqual([sample["room"] for sample in samples[:5]], ["kitchen"] * 5)
-        self.assertEqual([sample["room"] for sample in samples[5:]], ["living_room"] * 15)
+        self.assertEqual([sample["room"] for sample in samples[:15]], ["kitchen"] * 15)
+        self.assertEqual([sample["room"] for sample in samples[15:]], ["living_room"] * 15)
         self.assertEqual([sample["observed_at"] for sample in samples], sorted(sample["observed_at"] for sample in samples))
         self.assertEqual(context["elder_location"]["current_room"], "living_room")
 
@@ -1148,6 +1149,43 @@ class LLMClientParserTests(unittest.TestCase):
         self.assertEqual(compact["environment_context"]["actual_samples"], 20)
         self.assertEqual(len(compact["environment_context"]["samples"]), 20)
         self.assertEqual(compact["sensor_evidence"][0]["payload"]["heart_rate"], 138)
+
+    def test_cloud_sensor_context_summary_keeps_thirty_vital_and_environment_samples(self) -> None:
+        context = {
+            "elder_location": {"current_room": "living_room", "source": "pir_presence"},
+            "environment_context": {
+                "actual_samples": 30,
+                "room_sequence": ["living_room"],
+                "samples": [
+                    {
+                        "observation_id": f"env_{index}",
+                        "observed_at": f"2026-06-18T22:{index:02d}:00+08:00",
+                        "room": "living_room",
+                        "temperature": 24 + index / 10,
+                    }
+                    for index in range(30)
+                ],
+            },
+            "recent_vital_samples": {
+                "actual_samples": 30,
+                "samples": [
+                    {
+                        "observation_id": f"vital_{index}",
+                        "observed_at": f"2026-06-18T22:{index:02d}:30+08:00",
+                        "heart_rate": 70 + index,
+                        "spo2": 96,
+                    }
+                    for index in range(30)
+                ],
+            },
+        }
+
+        summary = _cloud_sensor_context_summary(context)
+
+        self.assertEqual(len(summary["environment"]["samples"]), 30)
+        self.assertEqual(len(summary["vital"]["samples"]), 30)
+        self.assertEqual(summary["environment"]["samples"][-1]["observation_id"], "env_29")
+        self.assertEqual(summary["vital"]["samples"][-1]["observation_id"], "vital_29")
 
     def test_vision_local_context_includes_recent_vitals_and_environment(self) -> None:
         observations = [

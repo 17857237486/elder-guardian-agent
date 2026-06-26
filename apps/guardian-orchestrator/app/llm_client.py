@@ -371,10 +371,10 @@ def _compact_vital_samples(samples: Any) -> list[Any]:
     return [_compact_value(item) for item in samples[:20]]
 
 
-def _latest_compact_sample(samples: Any) -> Any:
-    if not isinstance(samples, list) or not samples:
-        return None
-    return _compact_value(samples[-1])
+def _compact_samples(samples: Any, limit: int) -> list[Any]:
+    if not isinstance(samples, list):
+        return []
+    return [_compact_value(item) for item in samples[:limit]]
 
 
 def _cloud_sensor_context_summary(context: dict[str, Any]) -> dict[str, Any]:
@@ -386,11 +386,11 @@ def _cloud_sensor_context_summary(context: dict[str, Any]) -> dict[str, Any]:
         "environment": {
             "actual_samples": environment_context.get("actual_samples"),
             "room_sequence": environment_context.get("room_sequence", []),
-            "latest_sample": _latest_compact_sample(environment_context.get("samples", [])),
+            "samples": _compact_samples(environment_context.get("samples", []), 30),
         },
         "vital": {
             "actual_samples": recent_vital.get("actual_samples"),
-            "latest_sample": _latest_compact_sample(recent_vital.get("samples", [])),
+            "samples": _compact_samples(recent_vital.get("samples", []), 30),
         },
     }
 

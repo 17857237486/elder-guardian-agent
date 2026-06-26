@@ -31,7 +31,8 @@ from app.llm_client import CloudLLMClient, LocalMultimodalClient
 
 logger = logging.getLogger(__name__)
 RISK_ORDER = {"P4": 0, "P3": 1, "P2": 2, "P1": 3, "P0": 4}
-ENV_CONTEXT_TARGET_SAMPLES = 20
+ENV_CONTEXT_TARGET_SAMPLES = 30
+VITAL_CONTEXT_TARGET_SAMPLES = 30
 DETERMINISTIC_P3_EVENTS = {
     EventType.CO2_HIGH.value,
     EventType.TEMPERATURE_HIGH.value,
@@ -522,7 +523,7 @@ class WorkflowRunner:
             item
             for item in observations_desc
             if str(item.get("kind") or "") == "vital"
-        ][:20]
+        ][:VITAL_CONTEXT_TARGET_SAMPLES]
         recent_vital_samples = []
         for item in reversed(vital_candidates):
             payload = cls._payload(item)
@@ -591,7 +592,7 @@ class WorkflowRunner:
                 "samples": environment_samples,
             },
             "recent_vital_samples": {
-                "target_samples": 20,
+                "target_samples": VITAL_CONTEXT_TARGET_SAMPLES,
                 "actual_samples": len(recent_vital_samples),
                 "samples": recent_vital_samples,
             },
