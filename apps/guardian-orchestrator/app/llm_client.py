@@ -809,6 +809,12 @@ def _compact_local_case(event: dict[str, Any], context: dict[str, Any]) -> dict[
     behavior_context = context.get("behavior_context") if isinstance(context.get("behavior_context"), dict) else {}
     baseline_context = context.get("baseline_context") if isinstance(context.get("baseline_context"), dict) else {}
     candidate = _compact_candidate(context.get("candidate"))
+    is_vision_event = str(event.get("source_kind") or "").lower() == "vision"
+    if is_vision_event:
+        return {
+            "event": compact_event,
+            "vision_context": _compact_value(context.get("vision_context", {})),
+        }
     return {
         "event": compact_event,
         "candidate": candidate,
@@ -918,11 +924,13 @@ def build_local_multimodal_content(
         if str(event.get("event_type") or "") == "long_static"
         else ""
     )
+    local_scope_note = "本地视觉模型只分析图片；生命体征和环境数据交给云端复核。"
     prompt = (
         "分析老人安全事件，先分析证据再生成结论。"
         + LOCAL_RISK_POLICY_PROMPT
         + f"minimum_risk_level={minimum_risk}。"
         + downgrade_note
+        + local_scope_note
         + analysis_instruction
         + LOCAL_OUTPUT_CONTRACT
         + "\n输入："
