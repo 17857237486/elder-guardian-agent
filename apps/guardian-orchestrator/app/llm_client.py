@@ -377,10 +377,77 @@ def _compact_samples(samples: Any, limit: int) -> list[Any]:
     return [_compact_value(item) for item in samples[:limit]]
 
 
+def _num(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _avg(values: list[float]) -> float | None:
+    return round(sum(values) / len(values), 1) if values else None
+
+
+def _cloud_vital_summary(samples: list[Any], baseline_context: dict[str, Any]) -> dict[str, Any]:
+    compact_samples = [item for item in samples if isinstance(item, dict)]
+    heart_values = [_num(item.get("heart_rate")) for item in compact_samples]
+    heart_values = [value for value in heart_values if value is not None]
+    spo2_values = [_num(item.get("spo2")) for item in compact_samples]
+    spo2_values = [value for value in spo2_values if value is not None]
+    heart_baseline = baseline_context.get("heart_rate_daily") if isinstance(baseline_context.get("heart_rate_daily"), dict) else {}
+    spo2_baseline = baseline_context.get("spo2_daily") if isinstance(baseline_context.get("spo2_daily"), dict) else {}
+    heart_metrics = heart_baseline.get("metrics") if isinstance(heart_baseline.get("metrics"), dict) else {}
+    spo2_metrics = spo2_baseline.get("metrics") if isinstance(spo2_baseline.get("metrics"), dict) else {}
+    heart_low = _num(heart_metrics.get("p10"))
+    heart_high = _num(heart_metrics.get("p90"))
+    spo2_low = _num(spo2_metrics.get("p10"))
+    latest = compact_samples[-1] if compact_samples else {}
+    latest_heart = _num(latest.get("heart_rate"))
+    latest_spo2 = _num(latest.get("spo2"))
+    max_heart = max(heart_values) if heart_values else None
+    min_heart = min(heart_values) if heart_values else None
+    min_spo2 = min(spo2_values) if spo2_values else None
+    return {
+        "heart_rate": {
+            "latest": latest_heart,
+            "min": min_heart,
+            "max": max_heart,
+            "avg": _avg(heart_values),
+            "baseline_low_ref": heart_low,
+            "baseline_high_ref": heart_high,
+            "status": (
+                "above_personal_high_ref"
+                if heart_high is not None and max_heart is not None and max_heart > heart_high
+                else "below_personal_low_ref"
+                if heart_low is not None and min_heart is not None and min_heart < heart_low
+                else "within_personal_ref"
+                if heart_values
+                else "no_data"
+            ),
+        },
+        "spo2": {
+            "latest": latest_spo2,
+            "min": min_spo2,
+            "avg": _avg(spo2_values),
+            "baseline_low_ref": spo2_low,
+            "status": (
+                "below_personal_low_ref"
+                if spo2_low is not None and min_spo2 is not None and min_spo2 < spo2_low
+                else "within_personal_ref"
+                if spo2_values
+                else "no_data"
+            ),
+        },
+    }
+
+
 def _cloud_sensor_context_summary(context: dict[str, Any]) -> dict[str, Any]:
     environment_context = context.get("environment_context") if isinstance(context.get("environment_context"), dict) else {}
     recent_vital = context.get("recent_vital_samples") if isinstance(context.get("recent_vital_samples"), dict) else {}
     elder_location = context.get("elder_location") if isinstance(context.get("elder_location"), dict) else {}
+    baseline_context = context.get("baseline_context") if isinstance(context.get("baseline_context"), dict) else {}
+    vital_samples = _compact_samples(recent_vital.get("samples", []), 30)
+    compact_baseline = _compact_baseline_context(baseline_context)
     return {
         "elder_location": _compact_value(elder_location),
         "environment": {
@@ -390,8 +457,10 @@ def _cloud_sensor_context_summary(context: dict[str, Any]) -> dict[str, Any]:
         },
         "vital": {
             "actual_samples": recent_vital.get("actual_samples"),
-            "samples": _compact_samples(recent_vital.get("samples", []), 30),
+            "samples": vital_samples,
+            "summary": _cloud_vital_summary(vital_samples, compact_baseline),
         },
+        "baseline": compact_baseline,
     }
 
 

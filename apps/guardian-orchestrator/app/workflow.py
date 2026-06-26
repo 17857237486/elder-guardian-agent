@@ -211,6 +211,7 @@ class WorkflowRunner:
             if risk_text(event.source_kind) == "VISION":
                 cloud["recent_vital_samples"] = cloud_context.get("recent_vital_samples", {})
                 cloud["environment_context"] = cloud_context.get("environment_context", {})
+                cloud["baseline_context"] = cloud_context.get("baseline_context", {})
                 cloud["elder_location"] = cloud_context.get("elder_location", {})
         await self._record_step(workflow, event, "cloud_review", local, cloud)
 

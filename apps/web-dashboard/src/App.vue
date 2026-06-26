@@ -1122,7 +1122,12 @@ function firstArrayText(value: unknown): string {
   return Array.isArray(value) ? value.map((item) => String(item ?? "").trim()).filter(Boolean).slice(0, 2).join("；") : "";
 }
 
-function vitalTrendSummary(samples: AnyRecord[]): string {
+function baselineMetrics(baselineContext: AnyRecord, key: string): AnyRecord {
+  const item = baselineContext?.[key] ?? {};
+  return item.metrics ?? {};
+}
+
+function vitalTrendSummary(samples: AnyRecord[], baselineContext: AnyRecord = {}): string {
   if (!samples.length) return "生命体征数据不足";
   const heartValues = samples.map((item) => Number(item.heart_rate)).filter(Number.isFinite);
   const spo2Values = samples.map((item) => Number(item.spo2)).filter(Number.isFinite);
@@ -1132,6 +1137,20 @@ function vitalTrendSummary(samples: AnyRecord[]): string {
   const maxHeart = heartValues.length ? Math.max(...heartValues) : null;
   const minHeart = heartValues.length ? Math.min(...heartValues) : null;
   const minSpo2 = spo2Values.length ? Math.min(...spo2Values) : null;
+  const heartBaseline = baselineMetrics(baselineContext, "heart_rate_daily");
+  const spo2Baseline = baselineMetrics(baselineContext, "spo2_daily");
+  const heartHighRef = Number(heartBaseline.p90);
+  const heartLowRef = Number(heartBaseline.p10);
+  const spo2LowRef = Number(spo2Baseline.p10);
+  if (Number.isFinite(heartHighRef) && maxHeart !== null && maxHeart > heartHighRef) {
+    return `近期心率高于个人参考上限，最高约 ${Math.round(maxHeart)} bpm`;
+  }
+  if (Number.isFinite(heartLowRef) && minHeart !== null && minHeart < heartLowRef) {
+    return `近期心率低于个人参考下限，最低约 ${Math.round(minHeart)} bpm`;
+  }
+  if (Number.isFinite(spo2LowRef) && minSpo2 !== null && minSpo2 < spo2LowRef) {
+    return `近期血氧低于个人参考下限，最低约 ${minSpo2.toFixed(1)}%`;
+  }
   if (Number.isFinite(latestSpo2) && latestSpo2 < 92) return "近期血氧偏低";
   if (Number.isFinite(latestHeart) && (latestHeart < 45 || latestHeart > 130)) return "近期心率明显异常";
   if (maxHeart !== null && maxHeart > 110) return `近期心率偏高，最高约 ${Math.round(maxHeart)} bpm`;
@@ -1161,10 +1180,11 @@ const cloudIntegratedSummary = computed(() => {
   const vision = output.vision_context ?? {};
   const vitalContext = cloudOutput.recent_vital_samples ?? output.recent_vital_samples ?? {};
   const envContext = cloudOutput.environment_context ?? output.environment_context ?? {};
+  const baselineContext = cloudOutput.baseline_context ?? output.baseline_context ?? {};
   const vitalSamples = Array.isArray(vitalContext.samples) ? vitalContext.samples : [];
   const envSamples = Array.isArray(envContext.samples) ? envContext.samples : [];
   const frameText = vision.cloud_frame_policy === "five_original_frames" ? "结合五张图像" : "结合视觉信息";
-  return `${frameText}、${vitalTrendSummary(vitalSamples)}、${environmentTrendSummary(envSamples)}进行复核`;
+  return `${frameText}、${vitalTrendSummary(vitalSamples, baselineContext)}、${environmentTrendSummary(envSamples)}进行复核`;
 });
 
 const cloudSemanticStatus = computed(() => {
