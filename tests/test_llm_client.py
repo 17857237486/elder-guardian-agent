@@ -76,6 +76,26 @@ class LLMClientParserTests(unittest.TestCase):
 
         self.assertEqual(_extract_json_object(content), conclusion)
 
+    def test_repairs_top_level_object_missing_final_brace(self) -> None:
+        content = (
+            '{"event_semantics":"老人静卧可能休息",'
+            '"risk_level":"P2",'
+            '"confidence":0.78,'
+            '"supporting_evidence":["未见跌倒","生命体征正常"],'
+            '"family_summary":"建议询问老人是否需要帮助"'
+        )
+
+        self.assertEqual(
+            _extract_json_object(content),
+            {
+                "event_semantics": "老人静卧可能休息",
+                "risk_level": "P2",
+                "confidence": 0.78,
+                "supporting_evidence": ["未见跌倒", "生命体征正常"],
+                "family_summary": "建议询问老人是否需要帮助",
+            },
+        )
+
     def test_empty_content_is_rejected(self) -> None:
         with self.assertRaises(LLMOutputError):
             _extract_json_object("")
@@ -368,7 +388,7 @@ class LLMClientParserTests(unittest.TestCase):
         body = captured["json"]
         self.assertEqual(len(body["messages"]), 1)
         self.assertEqual(body["messages"][0]["role"], "user")
-        self.assertEqual(body["max_tokens"], 128)
+        self.assertEqual(body["max_tokens"], 160)
         self.assertEqual(result["risk_level"], "P1")
         self.assertEqual(result["temporal_changes"], [])
         self.assertEqual(result["contradictions"], [])
@@ -708,6 +728,36 @@ class LLMClientParserTests(unittest.TestCase):
             _normalize_local_multimodal_output(
                 {"event": {"event_type": "long_static", "risk_level": "P2"}}, output
             )
+
+    def test_long_static_sleep_can_downgrade_with_normal_context_vitals(self) -> None:
+        output = {
+            "event_semantics": "老人闭眼睡觉",
+            "risk_level": "P4",
+            "confidence": 0.86,
+            "supporting_evidence": ["自然睡姿", "无跌倒"],
+            "family_summary": "老人处于休息状态",
+        }
+        payload = {
+            "event": {"event_type": "long_static", "risk_level": "P2"},
+            "context": {
+                "recent_vital_samples": {
+                    "samples": [
+                        {"heart_rate": 76, "spo2": 96, "systolic_bp": 128, "diastolic_bp": 79}
+                    ]
+                },
+                "baseline_context": {
+                    "baselines": [
+                        {"baseline_type": "heart_rate_daily", "metrics": {"p10": 64, "p90": 97}},
+                        {"baseline_type": "spo2_daily", "metrics": {"p10": 93.5}},
+                    ]
+                },
+            },
+        }
+
+        normalized = _normalize_local_multimodal_output(payload, output)
+
+        self.assertEqual(normalized["risk_level"], "P4")
+        self.assertEqual(normalized["risk_guardrail_adjustment"], "long_static_local_downgrade_to_p4")
 
     def test_suspected_fall_local_model_still_cannot_downgrade(self) -> None:
         output = {

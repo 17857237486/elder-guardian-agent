@@ -752,6 +752,7 @@ const demoNodes = computed(() => {
   const hasHmiResponse = Boolean(responses.length);
   const deterministicRuleOnly = target.kind === "event" && isDeterministicRuleOnlyEvent(item, risk);
   const deterministicVitalRule = target.kind === "event" && isDeterministicVitalRuleEvent(item, risk);
+  const candidateReviewOnly = isCandidate || isPromotedCandidateEvent;
   const localWait = !localStep && ["P0", "P1", "P2"].includes(risk) && !deterministicRuleOnly
     ? "等待本地模型队列"
     : "等待本地分析";
@@ -940,12 +941,14 @@ const demoNodes = computed(() => {
     {
       key: "cloud",
       name: "云端复核",
-      state: deterministicRuleOnly ? "skipped" as DemoNodeState : stepState(cloudStep),
+      state: deterministicRuleOnly || (candidateReviewOnly && !cloudStep) ? "skipped" as DemoNodeState : stepState(cloudStep),
       note: shortText(
         cloudOutput.reason === "deterministic_vital_rule" || deterministicVitalRule
           ? "确定性生命体征规则，无需云端复核"
           : cloudOutput.reason === "deterministic_p3_rule"
             ? "确定性规则跳过云端"
+            : candidateReviewOnly && !cloudStep
+              ? "Candidate 本地复核已完成，无需云端复核"
             : `${cloudOutput.status ?? "等待复核"}${cloudOutput.risk_level ? ` · ${cloudOutput.risk_level}` : ""}`
       ),
       time: eventTime(cloudStep ?? item)
@@ -953,8 +956,8 @@ const demoNodes = computed(() => {
     {
       key: "policy",
       name: "设备策略",
-      state: actions.length ? "completed" as DemoNodeState : policyStep ? stepState(policyStep) : ["P3", "P4"].includes(risk) || candidateStatus === "dismissed" ? "skipped" as DemoNodeState : "idle" as DemoNodeState,
-      note: shortText(actions.length ? `设备动作 ${actions.length} 条` : policyStep?.output?.status ?? (candidateStatus === "dismissed" ? "候选已记录，不执行设备" : "等待策略")),
+      state: actions.length ? "completed" as DemoNodeState : policyStep ? stepState(policyStep) : ["P3", "P4"].includes(risk) || candidateStatus === "dismissed" || candidateReviewOnly ? "skipped" as DemoNodeState : "idle" as DemoNodeState,
+      note: shortText(actions.length ? `设备动作 ${actions.length} 条` : policyStep?.output?.status ?? (candidateStatus === "dismissed" || candidateReviewOnly ? "Candidate 复核事件不执行设备动作" : "等待策略")),
       time: eventTime(actions[0] ?? policyStep ?? item)
     },
     {

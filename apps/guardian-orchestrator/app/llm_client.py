@@ -54,7 +54,9 @@ LOCAL_RISK_POLICY_PROMPT = (
 LOCAL_OUTPUT_CONTRACT = (
     "只输出顶层JSON，不输出Markdown、解释、输入数据或控制命令。字段："
     "event_semantics:string,risk_level:P0|P1|P2|P3|P4,confidence:0..1,"
-    "supporting_evidence:string[<=2],family_summary:string。risk_level必须是单一值。"
+    "supporting_evidence:string[<=2],family_summary:string。"
+    "event_semantics和family_summary都用短中文，不超过28字；supporting_evidence每项不超过18字。"
+    "risk_level必须是单一值。"
 )
 LOCAL_VISUAL_INSTRUCTION = (
     "视觉：比较T-1、T、T+1的姿态、高度、位置、支撑和动作连续性；"
@@ -167,6 +169,42 @@ def _extract_completed_multimodal_prefix(content: str) -> dict[str, Any] | None:
     return None
 
 
+def _repair_truncated_top_level_object(content: str) -> dict[str, Any] | None:
+    """Recover a JSON object that is complete except for the final closing brace."""
+    start = content.find("{")
+    if start < 0:
+        return None
+    fragment = content[start:].strip()
+    if fragment.endswith("}"):
+        return None
+
+    depth = 0
+    in_string = False
+    escaped = False
+    for char in fragment:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+    if in_string or depth != 1:
+        return None
+    try:
+        parsed = json.loads(fragment + "}")
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _extract_json_object(content: str) -> dict[str, Any]:
     if not content.strip():
         raise LLMOutputError("LLM returned empty content")
@@ -179,6 +217,9 @@ def _extract_json_object(content: str) -> dict[str, Any]:
         completed_prefix = _extract_completed_multimodal_prefix(content)
         if completed_prefix is not None:
             return completed_prefix
+        repaired_top_level = _repair_truncated_top_level_object(content)
+        if repaired_top_level is not None:
+            return repaired_top_level
         start = content.find("{")
         end = content.rfind("}")
         if start < 0 or end <= start:
@@ -279,7 +320,86 @@ def _text_contains_any(text: str, terms: set[str]) -> bool:
     return any(term.lower() in lowered for term in terms)
 
 
-def _long_static_rest_downgrade_supported(output: dict[str, Any] | None) -> bool:
+def _contains_unnegated_danger(text: str, terms: set[str]) -> bool:
+    lowered = text.lower()
+    negation_prefixes = ("无", "未见", "没有", "无明显", "未发现", "not ", "no ")
+    for term in terms:
+        marker = term.lower()
+        start = 0
+        while True:
+            index = lowered.find(marker, start)
+            if index < 0:
+                break
+            prefix = lowered[max(0, index - 6):index]
+            if not any(prefix.endswith(item.lower()) for item in negation_prefixes):
+                return True
+            start = index + len(marker)
+    return False
+
+
+def _latest_vital_sample_from_context(context: dict[str, Any]) -> dict[str, Any] | None:
+    recent = context.get("recent_vital_samples")
+    if isinstance(recent, dict):
+        samples = recent.get("samples")
+        if isinstance(samples, list):
+            for sample in reversed(samples):
+                if isinstance(sample, dict):
+                    return sample
+    sensors = context.get("sensors")
+    observations = sensors.get("observations") if isinstance(sensors, dict) else None
+    if isinstance(observations, list):
+        for observation in observations:
+            if not isinstance(observation, dict) or str(observation.get("kind") or "") != "vital":
+                continue
+            payload = observation.get("payload")
+            if isinstance(payload, dict):
+                return payload
+    return None
+
+
+def _baseline_metric(context: dict[str, Any], baseline_type: str, key: str) -> float | None:
+    baseline_context = context.get("baseline_context")
+    baselines = baseline_context.get("baselines") if isinstance(baseline_context, dict) else None
+    if not isinstance(baselines, list):
+        return None
+    for baseline in baselines:
+        if not isinstance(baseline, dict) or str(baseline.get("baseline_type") or "") != baseline_type:
+            continue
+        metrics = baseline.get("metrics") or baseline.get("metrics_json")
+        if not isinstance(metrics, dict):
+            continue
+        value = _number(metrics.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _context_vitals_support_rest(payload: dict[str, Any]) -> bool:
+    context = payload.get("context")
+    if not isinstance(context, dict):
+        return False
+    latest = _latest_vital_sample_from_context(context)
+    if not latest:
+        return False
+    heart_rate = _number(latest.get("heart_rate"))
+    spo2 = _number(latest.get("spo2"))
+    if heart_rate is None or spo2 is None:
+        return False
+    if heart_rate < 45 or heart_rate > 130 or spo2 < 92:
+        return False
+    baseline_low = _baseline_metric(context, "heart_rate_daily", "p10")
+    baseline_high = _baseline_metric(context, "heart_rate_daily", "p90")
+    spo2_low = _baseline_metric(context, "spo2_daily", "p10")
+    if baseline_low is not None and heart_rate < baseline_low:
+        return False
+    if baseline_high is not None and heart_rate > baseline_high:
+        return False
+    if spo2_low is not None and spo2 < spo2_low:
+        return False
+    return True
+
+
+def _long_static_rest_downgrade_supported(payload: dict[str, Any], output: dict[str, Any] | None) -> bool:
     if not isinstance(output, dict):
         return False
     evidence = output.get("supporting_evidence")
@@ -289,23 +409,49 @@ def _long_static_rest_downgrade_supported(output: dict[str, Any] | None) -> bool
         for field in ("event_semantics", "family_summary")
     )
     text = f"{text} {evidence_text}"
-    danger_terms = {"跌倒", "摔倒", "倒地", "疼痛", "痛苦", "呼吸困难", "无法移动", "呼救", "求助", "危险"}
-    if _text_contains_any(text, danger_terms):
+    danger_terms = {"跌倒", "摔倒", "倒地", "疼痛", "痛苦", "呼吸困难", "无法移动", "呼救", "危险"}
+    if _contains_unnegated_danger(text, danger_terms):
         return False
     vital_normal_terms = {"生命体征正常", "生命体征平稳", "心率正常", "血氧正常", "vitals normal", "vital signs normal"}
-    visual_normal_terms = {"视觉无异常", "姿态正常", "姿态稳定", "无跌倒", "表情正常", "表情平静", "无痛苦表情", "无疼痛表情", "stable posture", "normal expression"}
-    rest_terms = {"正常休息", "休息状态", "短暂静止", "安静坐卧", "正常坐卧", "resting"}
-    return (
-        _text_contains_any(text, vital_normal_terms)
-        and _text_contains_any(text, visual_normal_terms)
-        and _text_contains_any(text, rest_terms)
-    )
+    visual_normal_terms = {
+        "视觉无异常",
+        "姿态正常",
+        "姿态稳定",
+        "姿态自然",
+        "自然睡姿",
+        "无异常姿态",
+        "无跌倒",
+        "无痛苦表情",
+        "无疼痛表情",
+        "表情正常",
+        "表情平静",
+        "面部放松",
+        "stable posture",
+        "normal expression",
+    }
+    rest_terms = {
+        "正常休息",
+        "休息状态",
+        "短暂静止",
+        "安静坐卧",
+        "正常坐卧",
+        "睡觉",
+        "睡眠",
+        "入睡",
+        "闭眼休息",
+        "静卧休息",
+        "resting",
+        "sleeping",
+    }
+    visual_support = _text_contains_any(text, visual_normal_terms) and _text_contains_any(text, rest_terms)
+    vital_support = _text_contains_any(text, vital_normal_terms) or _context_vitals_support_rest(payload)
+    return visual_support and vital_support
 
 
 def _allows_local_long_static_downgrade(payload: dict[str, Any], reviewed: str, output: dict[str, Any] | None = None) -> bool:
     if _is_candidate_payload(payload):
         return False
-    return _event_type(payload) == "long_static" and reviewed == "P4" and _long_static_rest_downgrade_supported(output)
+    return _event_type(payload) == "long_static" and reviewed == "P4" and _long_static_rest_downgrade_supported(payload, output)
 
 
 def _contains_forbidden_action_key(value: Any) -> bool:
@@ -1047,11 +1193,15 @@ def build_local_multimodal_content(
     minimum_risk = _minimum_allowed_risk({"event": event})
     analysis_instruction = LOCAL_VISUAL_INSTRUCTION if has_image else LOCAL_TEXT_INSTRUCTION
     downgrade_note = (
-        "例外：仅当event_type=long_static且生命体征正常、视觉姿态无异常、表情正常/无痛苦，并明确支持正常休息状态时，才可输出P4；其他事件不得降级。"
+        "例外：event_type=long_static时，若图像显示老人自然睡姿/闭眼休息、姿态稳定、无跌倒、无痛苦表情，且输入生命体征正常，可输出P4=休息状态；其他事件不得降级。"
         if str(event.get("event_type") or "") == "long_static"
         else ""
     )
-    local_scope_note = "本地视觉模型只分析图片；生命体征和环境数据交给云端复核。"
+    local_scope_note = (
+        "本地模型主要分析图片；long_static可结合输入中的latest_vital_sample判断是否为正常睡觉/休息。"
+        if str(event.get("event_type") or "") == "long_static"
+        else "本地视觉模型只分析图片；生命体征和环境数据交给云端复核。"
+    )
     prompt = (
         "分析老人安全事件，先分析证据再生成结论。"
         + LOCAL_RISK_POLICY_PROMPT
@@ -1141,7 +1291,7 @@ class LocalMultimodalClient:
             "model": settings.llm_model,
             "messages": [{"role": "user", "content": content}],
             "temperature": 0.1,
-            "max_tokens": 64 if is_candidate else min(settings.llm_max_tokens, 128),
+            "max_tokens": 64 if is_candidate else min(settings.llm_max_tokens, 192),
             "response_format": {"type": "json_object"},
             "enable_thinking": False,
         }
