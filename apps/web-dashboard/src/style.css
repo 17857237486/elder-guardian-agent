@@ -53,6 +53,7 @@ header p { margin-top: 7px; color: #687284; }
 .device-environment-grid { grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); margin-bottom: 14px; }
 .panel { height: 410px; padding: 18px; overflow: hidden; border-radius: 12px; box-shadow: 0 1px 3px rgba(23, 32, 51, 0.04); }
 .compact-panel { height: 370px; }
+.device-control-panel, .home-env-panel { height: auto; overflow: visible; }
 .daily-summary-panel, .monthly-trend-panel { height: 330px; }
 .panel h2 { margin-bottom: 12px; font-size: 22px; letter-spacing: 0.01em; }
 .panel-scroll { height: calc(100% - 34px); overflow-y: scroll; padding-right: 7px; scrollbar-gutter: stable; }
@@ -61,19 +62,18 @@ header p { margin-top: 7px; color: #687284; }
 .panel-scroll::-webkit-scrollbar-thumb { border: 2px solid #edf1f5; border-radius: 8px; background: #8b98aa; }
 .panel-scroll::-webkit-scrollbar-thumb:hover { background: #65758a; }
 .device-control-message { margin: 8px 0; color: #125f93; font-weight: 700; }
-.device-control-scroll { height: calc(100% - 56px); }
-.device-control-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.device-control-room { border: 1px solid #d5e2f1; border-radius: 12px; padding: 12px; background: #f8fbff; }
-.device-control-room h3 { margin: 0 0 10px; font-size: 17px; color: #123f60; }
-.device-control-row { display: grid; grid-template-columns: 1fr; gap: 6px; margin: 8px 0; padding: 8px; border: 1px solid #e4ebf3; border-radius: 10px; background: #fff; }
-.device-control-row span { font-size: 15px; font-weight: 800; color: #263246; }
+.device-control-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.device-control-room { border: 1px solid #d5e2f1; border-radius: 12px; padding: 10px; background: #f8fbff; }
+.device-control-room h3 { margin: 0 0 8px; font-size: 16px; color: #123f60; }
+.device-control-row { display: grid; grid-template-columns: 72px 1fr; align-items: center; gap: 8px; margin: 6px 0; padding: 7px; border: 1px solid #e4ebf3; border-radius: 10px; background: #fff; }
+.device-control-row span { font-size: 14px; font-weight: 800; color: #263246; }
 .device-control-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-.device-control-row button { min-width: 0; padding: 7px 8px; border: 1px solid #b7c7d9; border-radius: 8px; background: #fff; color: #1f3148; cursor: pointer; font-weight: 800; }
+.device-control-row button { min-width: 0; padding: 6px 7px; border: 1px solid #b7c7d9; border-radius: 8px; background: #fff; color: #1f3148; cursor: pointer; font-weight: 800; font-size: 13px; }
 .device-control-row button:hover:not(:disabled) { border-color: #1976b9; color: #125f93; }
 .device-control-row button:disabled { opacity: 0.5; cursor: not-allowed; }
-.device-execution-strip { height: 230px; margin-bottom: 14px; }
-.execution-strip-list { display: grid; grid-template-columns: repeat(5, minmax(220px, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
-.execution-strip-list li { min-height: 128px; padding: 12px; border: 1px solid #dbe5ef; border-radius: 12px; background: #f8fbff; }
+.device-execution-note { display: flex; align-items: center; gap: 10px; margin: -4px 0 14px; padding: 10px 12px; border: 1px dashed #cbd5e1; border-radius: 10px; background: #fbfcfe; color: #516073; font-size: 13px; overflow: hidden; }
+.device-execution-note strong { flex: 0 0 auto; color: #263246; font-size: 14px; }
+.device-execution-note span { flex: 0 1 auto; min-width: 0; padding-left: 10px; border-left: 1px solid #dce4ee; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 ul { margin: 0; padding: 0; list-style: none; }
 li { padding: 11px 0; border-top: 1px solid #edf1f5; }
 li:first-child { border-top: 0; }
@@ -110,5 +110,9 @@ li small { display: block; margin-top: 6px; color: #1f5f8b; font-size: 14px; fon
   .demo-steps li::after { top: auto; right: auto; bottom: -10px; left: 28px; width: 2px; height: 10px; }
   .model-semantics-grid { grid-template-columns: 1fr; }
   .metrics, .grid, .device-environment-grid { grid-template-columns: 1fr; }
+  .device-control-grid { grid-template-columns: 1fr; }
+  .device-execution-note { align-items: flex-start; flex-direction: column; }
+  .device-execution-note span { border-left: 0; padding-left: 0; white-space: normal; }
   .panel { height: 360px; }
+  .device-control-panel, .home-env-panel { height: auto; }
 }

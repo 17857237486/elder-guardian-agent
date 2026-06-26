@@ -1122,42 +1122,45 @@ function firstArrayText(value: unknown): string {
   return Array.isArray(value) ? value.map((item) => String(item ?? "").trim()).filter(Boolean).slice(0, 2).join("；") : "";
 }
 
-function numberRange(values: number[], unit: string): string {
-  if (!values.length) return "";
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  return min === max ? `${min}${unit}` : `${min}-${max}${unit}`;
-}
-
-function cloudVitalReasonText(samples: AnyRecord[]): string {
-  if (!samples.length) return "";
-  const latest = samples[samples.length - 1] ?? {};
+function vitalTrendSummary(samples: AnyRecord[]): string {
+  if (!samples.length) return "生命体征数据不足";
   const heartValues = samples.map((item) => Number(item.heart_rate)).filter(Number.isFinite);
   const spo2Values = samples.map((item) => Number(item.spo2)).filter(Number.isFinite);
-  const parts: string[] = [];
-  if (Number.isFinite(Number(latest.heart_rate))) parts.push(`最近心率 ${Number(latest.heart_rate)} bpm`);
-  if (Number.isFinite(Number(latest.spo2))) parts.push(`最近血氧 ${Number(latest.spo2)}%`);
-  const heartRange = numberRange(heartValues, " bpm");
-  const spo2Range = numberRange(spo2Values, "%");
-  if (heartRange) parts.push(`心率范围 ${heartRange}`);
-  if (spo2Range) parts.push(`血氧范围 ${spo2Range}`);
-  return parts.slice(0, 4).join("，");
+  const latest = samples[samples.length - 1] ?? {};
+  const latestHeart = Number(latest.heart_rate);
+  const latestSpo2 = Number(latest.spo2);
+  if (Number.isFinite(latestSpo2) && latestSpo2 < 92) return "近期血氧偏低";
+  if (Number.isFinite(latestHeart) && (latestHeart < 45 || latestHeart > 130)) return "近期心率明显异常";
+  const heartSpread = heartValues.length ? Math.max(...heartValues) - Math.min(...heartValues) : 0;
+  const spo2Min = spo2Values.length ? Math.min(...spo2Values) : null;
+  if (heartSpread >= 25) return "近期心率波动较大";
+  if (spo2Min !== null && spo2Min < 94) return "近期血氧略有下降";
+  return "近期心率和血氧总体平稳";
 }
 
-const cloudContextText = computed(() => {
+function environmentTrendSummary(samples: AnyRecord[]): string {
+  if (!samples.length) return "环境数据不足";
+  const latest = samples[samples.length - 1] ?? {};
+  const temperature = Number(latest.temperature);
+  const humidity = Number(latest.humidity);
+  const co2 = Number(latest.co2_ppm);
+  const gas = Number(latest.gas_ppm);
+  if (Number.isFinite(gas) && gas >= 100) return "环境存在燃气异常";
+  if (Number.isFinite(co2) && co2 >= 1500) return "环境 CO2 偏高";
+  if (Number.isFinite(temperature) && (temperature >= 30 || temperature <= 16)) return "室温处于异常范围";
+  if (Number.isFinite(humidity) && (humidity < 25 || humidity > 75)) return "湿度处于异常范围";
+  return "环境数据总体正常";
+}
+
+const cloudIntegratedSummary = computed(() => {
   const output = latestContextFusion.value?.output ?? {};
   const vision = output.vision_context ?? {};
   const vitalContext = output.recent_vital_samples ?? {};
-  const envCount = vision.environment_samples ?? output.environment_context?.actual_samples;
-  const vitalCount = vision.vital_samples ?? vitalContext.actual_samples;
+  const envContext = output.environment_context ?? {};
   const vitalSamples = Array.isArray(vitalContext.samples) ? vitalContext.samples : [];
-  const vitalReason = cloudVitalReasonText(vitalSamples);
-  const framePolicy = vision.cloud_frame_policy === "five_original_frames" ? "五张原图" : "云端图像";
-  const parts = [framePolicy];
-  if (envCount !== undefined) parts.push(`环境 ${envCount} 条`);
-  if (vitalCount !== undefined) parts.push(`生命体征 ${vitalCount} 条`);
-  if (vitalReason) parts.push(`生命体征依据：${vitalReason}`);
-  return parts.join(" · ");
+  const envSamples = Array.isArray(envContext.samples) ? envContext.samples : [];
+  const frameText = vision.cloud_frame_policy === "five_original_frames" ? "结合五张图像" : "结合视觉信息";
+  return `${frameText}、${vitalTrendSummary(vitalSamples)}、${environmentTrendSummary(envSamples)}进行复核`;
 });
 
 const cloudSemanticStatus = computed(() => {
@@ -1187,7 +1190,7 @@ const cloudSemanticStatus = computed(() => {
   if (text || output.risk_level) {
     const latency = output.latency_ms !== undefined ? ` · 耗时 ${durationText(output.latency_ms)}` : "";
     const suffix = output.family_summary && output.family_summary !== text ? ` · ${output.family_summary}` : "";
-    return { state: "completed", text: `${text ?? "云端复核完成"} · 云端风险 ${output.risk_level ?? "--"}${latency}${suffix}` };
+    return { state: "completed", text: `${text ?? "云端复核完成"}：${cloudIntegratedSummary.value}。云端风险 ${output.risk_level ?? "--"}${latency}${suffix}` };
   }
   return { state: "pending", text: "等待云端复核结果" };
 });
@@ -1530,73 +1533,63 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
       <article class="model-semantics-card cloud-card" :class="cloudSemanticStatus.state">
         <span>第三级：云端复核事件语义</span>
         <strong>{{ cloudSemanticStatus.text }}</strong>
-        <p>{{ cloudContextText }} · 云端风险 {{ summaryCloudRisk }}</p>
+        <p>云端风险 {{ summaryCloudRisk }}</p>
       </article>
     </section>
 
     <section class="device-environment-grid">
-      <article class="panel compact-panel">
+      <article class="panel device-control-panel">
         <h2>房间设备开关</h2>
         <p v-if="deviceControlMessage" class="device-control-message">{{ deviceControlMessage }}</p>
-        <div class="panel-scroll device-control-scroll">
-          <div class="device-control-grid">
-            <section v-for="room in DASHBOARD_DEVICE_CONTROLS" :key="room.room" class="device-control-room">
-              <h3>{{ ROOM_LABELS[room.room] ?? room.room }}</h3>
-              <div v-for="control in room.devices" :key="`${room.room}-${control.device}`" class="device-control-row">
-                <span>{{ control.label }}</span>
-                <div class="device-control-actions">
-                  <button :disabled="deviceControlBusy === `${room.room}:${control.device}:${control.on}`" @click="requestDashboardDeviceAction(room.room, control.device, control.on)">{{ actionLabel(control.on) }}</button>
-                  <button :disabled="deviceControlBusy === `${room.room}:${control.device}:${control.off}`" @click="requestDashboardDeviceAction(room.room, control.device, control.off)">{{ actionLabel(control.off) }}</button>
-                </div>
+        <div class="device-control-grid">
+          <section v-for="room in DASHBOARD_DEVICE_CONTROLS" :key="room.room" class="device-control-room">
+            <h3>{{ ROOM_LABELS[room.room] ?? room.room }}</h3>
+            <div v-for="control in room.devices" :key="`${room.room}-${control.device}`" class="device-control-row">
+              <span>{{ control.label }}</span>
+              <div class="device-control-actions">
+                <button :disabled="deviceControlBusy === `${room.room}:${control.device}:${control.on}`" @click="requestDashboardDeviceAction(room.room, control.device, control.on)">{{ actionLabel(control.on) }}</button>
+                <button :disabled="deviceControlBusy === `${room.room}:${control.device}:${control.off}`" @click="requestDashboardDeviceAction(room.room, control.device, control.off)">{{ actionLabel(control.off) }}</button>
               </div>
-            </section>
-          </div>
+            </div>
+          </section>
         </div>
       </article>
 
-      <article class="panel compact-panel">
+      <article class="panel home-env-panel">
         <h2>整屋环境状态</h2>
-        <div class="panel-scroll">
-          <table class="home-env-table">
-            <thead>
-              <tr>
-                <th>房间</th>
-                <th>红外</th>
-                <th>温度</th>
-                <th>湿度</th>
-                <th>CO2</th>
-                <th>燃气</th>
-                <th>更新时间</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="room in homeEnvironmentRooms" :key="room.room">
-                <td><strong>{{ ROOM_LABELS[room.room] ?? room.room }}</strong></td>
-                <td><span :class="['presence-pill', room.presence ? 'online' : 'offline']">{{ room.presence ? "有人" : "无人" }}</span></td>
-                <td>{{ roomMetric(room, "temperature", "°C") }}</td>
-                <td>{{ roomMetric(room, "humidity", "%") }}</td>
-                <td>{{ roomMetric(room, "co2_ppm", "ppm") }}</td>
-                <td>{{ roomMetric(room, "gas_ppm", "ppm") }}</td>
-                <td>{{ roomTimeLabel(room) }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <table class="home-env-table">
+          <thead>
+            <tr>
+              <th>房间</th>
+              <th>红外</th>
+              <th>温度</th>
+              <th>湿度</th>
+              <th>CO2</th>
+              <th>燃气</th>
+              <th>更新时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="room in homeEnvironmentRooms" :key="room.room">
+              <td><strong>{{ ROOM_LABELS[room.room] ?? room.room }}</strong></td>
+              <td><span :class="['presence-pill', room.presence ? 'online' : 'offline']">{{ room.presence ? "有人" : "无人" }}</span></td>
+              <td>{{ roomMetric(room, "temperature", "°C") }}</td>
+              <td>{{ roomMetric(room, "humidity", "%") }}</td>
+              <td>{{ roomMetric(room, "co2_ppm", "ppm") }}</td>
+              <td>{{ roomMetric(room, "gas_ppm", "ppm") }}</td>
+              <td>{{ roomTimeLabel(room) }}</td>
+            </tr>
+          </tbody>
+        </table>
       </article>
     </section>
 
-    <article class="panel device-execution-strip">
-      <h2>策略与设备执行</h2>
-      <div class="panel-scroll">
-        <p v-if="!policyExecutions.length" class="empty">暂无设备执行</p>
-        <ul v-else class="execution-strip-list">
-          <li v-for="item in policyExecutions" :key="item.execution_id ?? item.call_id">
-            <div class="row-head"><strong>{{ statusLabel(item.status) }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
-            <b>{{ policyTitle(item) }}</b>
-            <p>{{ clip(item.reason || item.error || "执行记录", 60) }}</p>
-          </li>
-        </ul>
-      </div>
+    <article class="device-execution-note">
+      <strong>策略与设备执行</strong>
+      <span v-if="!policyExecutions.length">暂无设备执行</span>
+      <span v-for="item in policyExecutions.slice(0, 4)" :key="item.execution_id ?? item.call_id">
+        {{ formatTime(eventTime(item)) }} · {{ statusLabel(item.status) }} · {{ policyTitle(item) }}
+      </span>
     </article>
 
     <section class="grid user-grid">
