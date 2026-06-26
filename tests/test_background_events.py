@@ -162,7 +162,7 @@ class BackgroundEventTests(unittest.TestCase):
         self.assertIn("验证卫生间停留时间", html)
         self.assertIn("demo-bathroom-duration", html)
         self.assertIn("demo-bathroom-candidate-result", html)
-        self.assertIn("demo-bathroom-duration-result", html)
+        self.assertNotIn("demo-bathroom-duration-result", html)
         self.assertIn("selectedBathroomStayDuration", html)
         self.assertIn("setBathroomStayMonitor(message.bathroom_stay_monitor)", html)
         self.assertNotIn("bathroom-flow-rows", html)

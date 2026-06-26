@@ -309,6 +309,21 @@ def _spo2_candidate_adjusted_risk(payload: dict[str, Any], reviewed: str) -> tup
     return "P2", "spo2_candidate_drop_not_severe_enough_for_p1"
 
 
+def _bathroom_candidate_adjusted_risk(payload: dict[str, Any], reviewed: str) -> tuple[str, str | None]:
+    if not _is_candidate_payload(payload):
+        return reviewed, None
+    compact = _candidate_local_input(payload)
+    if str(compact.get("t") or "") != "bathroom_stay_anomaly":
+        return reviewed, None
+    duration = _number(compact.get("dur"))
+    reference = _number(compact.get("p90s"))
+    if duration is None or reference is None:
+        return reviewed, None
+    if duration > reference and reviewed in {"P3", "P4"}:
+        return "P2", "bathroom_stay_over_reference_promoted_to_p2"
+    return reviewed, None
+
+
 def _minimum_allowed_risk(payload: dict[str, Any]) -> str:
     rule_risk = _event_risk_level(payload) or "P4"
     event_floor = EVENT_MINIMUM_RISK.get(_event_type(payload) or "", "P4")
@@ -427,6 +442,9 @@ def _long_static_rest_downgrade_supported(payload: dict[str, Any], output: dict[
         "表情平静",
         "面部放松",
         "stable posture",
+        "natural sleeping posture",
+        "calm lying posture",
+        "eyes closed",
         "normal expression",
     }
     rest_terms = {
@@ -449,6 +467,12 @@ def _long_static_rest_downgrade_supported(payload: dict[str, Any], output: dict[
 
 
 def _allows_local_long_static_downgrade(payload: dict[str, Any], reviewed: str, output: dict[str, Any] | None = None) -> bool:
+    # 本地视觉模型只给图像语义，不负责把 long_static 最终降级为 P4。
+    # 正常睡觉/休息的最终降级只允许在云端复核阶段结合生命体征和环境摘要完成。
+    return False
+
+
+def _allows_cloud_long_static_downgrade(payload: dict[str, Any], reviewed: str, output: dict[str, Any] | None = None) -> bool:
     if _is_candidate_payload(payload):
         return False
     return _event_type(payload) == "long_static" and reviewed == "P4" and _long_static_rest_downgrade_supported(payload, output)
@@ -876,7 +900,7 @@ def _normalize_multimodal_output(
     reviewed = str(output.get("risk_level", original)).split(".")[-1].upper()
     if reviewed not in RISK_ORDER:
         raise LLMOutputError(f"invalid risk level: {reviewed}")
-    if RISK_ORDER[reviewed] < RISK_ORDER[original]:
+    if RISK_ORDER[reviewed] < RISK_ORDER[original] and not _allows_cloud_long_static_downgrade(payload, reviewed, output):
         raise LLMOutputError(f"model attempted to downgrade risk from {original} to {reviewed}")
     normalized = dict(output)
     normalized["risk_level"] = reviewed
@@ -948,9 +972,19 @@ def _normalize_local_multimodal_output(payload: dict[str, Any], output: dict[str
     reviewed = str(output.get("risk_level", original)).split(".")[-1].upper()
     if reviewed not in RISK_ORDER:
         raise LLMOutputError(f"invalid risk level: {reviewed}")
-    if RISK_ORDER[reviewed] < RISK_ORDER[original] and not _allows_local_long_static_downgrade(payload, reviewed, output):
-        raise LLMOutputError(f"model attempted to downgrade risk from {original} to {reviewed}")
-    reviewed, risk_adjustment = _spo2_candidate_adjusted_risk(payload, reviewed)
+    risk_adjustment: str | None = None
+    if RISK_ORDER[reviewed] < RISK_ORDER[original]:
+        if _event_type(payload) == "long_static" and reviewed == "P4" and not _is_candidate_payload(payload):
+            reviewed = original
+            risk_adjustment = "long_static_local_low_risk_deferred_to_cloud"
+        else:
+            raise LLMOutputError(f"model attempted to downgrade risk from {original} to {reviewed}")
+    reviewed, spo2_adjustment = _spo2_candidate_adjusted_risk(payload, reviewed)
+    if spo2_adjustment:
+        risk_adjustment = spo2_adjustment
+    reviewed, bathroom_adjustment = _bathroom_candidate_adjusted_risk(payload, reviewed)
+    if bathroom_adjustment:
+        risk_adjustment = bathroom_adjustment
     evidence = output.get("supporting_evidence")
     repaired_fields: list[str] = []
     try:
@@ -993,8 +1027,6 @@ def _normalize_local_multimodal_output(payload: dict[str, Any], output: dict[str
         "recommended_followup": [],
         "family_summary": output["family_summary"],
     }
-    if _allows_local_long_static_downgrade(payload, reviewed, output):
-        normalized["risk_guardrail_adjustment"] = "long_static_local_downgrade_to_p4"
     if risk_adjustment:
         normalized["risk_guardrail_adjustment"] = risk_adjustment
         repaired_fields.append("risk_level")
@@ -1079,14 +1111,9 @@ def _compact_local_case(event: dict[str, Any], context: dict[str, Any]) -> dict[
     candidate = _compact_candidate(context.get("candidate"))
     is_vision_event = str(event.get("source_kind") or "").lower() == "vision"
     if is_vision_event:
-        vital_samples = _compact_vital_samples(recent_vital.get("samples", []))
-        environment_samples = _compact_environment_samples(environment_context.get("samples", []))
         return {
             "event": compact_event,
             "vision_context": _compact_value(context.get("vision_context", {})),
-            "latest_vital_sample": vital_samples[-1] if vital_samples else None,
-            "latest_environment_sample": environment_samples[-1] if environment_samples else None,
-            "elder_location": _compact_value(elder_location),
         }
     return {
         "event": compact_event,
@@ -1193,15 +1220,11 @@ def build_local_multimodal_content(
     minimum_risk = _minimum_allowed_risk({"event": event})
     analysis_instruction = LOCAL_VISUAL_INSTRUCTION if has_image else LOCAL_TEXT_INSTRUCTION
     downgrade_note = (
-        "例外：event_type=long_static时，若图像显示老人自然睡姿/闭眼休息、姿态稳定、无跌倒、无痛苦表情，且输入生命体征正常，可输出P4=休息状态；其他事件不得降级。"
+        "event_type=long_static时，本地只描述图像中是否像静止、休息、跌倒或异常姿态；最终是否降为P4由云端结合生命体征和环境复核。"
         if str(event.get("event_type") or "") == "long_static"
         else ""
     )
-    local_scope_note = (
-        "本地模型主要分析图片；long_static可结合输入中的latest_vital_sample判断是否为正常睡觉/休息。"
-        if str(event.get("event_type") or "") == "long_static"
-        else "本地视觉模型只分析图片；生命体征和环境数据交给云端复核。"
-    )
+    local_scope_note = "本地视觉模型只分析图片；生命体征和环境数据交给云端复核。"
     prompt = (
         "分析老人安全事件，先分析证据再生成结论。"
         + LOCAL_RISK_POLICY_PROMPT
@@ -1244,7 +1267,7 @@ def build_cloud_multimodal_content(
     )
     prompt = (
         "你是云端老人安全风险复核模型。规则处置和本地处置已经执行；你只能独立复核、升级风险、补充证据和家属说明，"
-        "不能降级风险、撤销既有动作或直接控制设备。"
+        "一般不能降级风险、撤销既有动作或直接控制设备。唯一例外：event_type=long_static时，若五张图像显示自然睡觉/休息、无跌倒/疼痛/异常姿态，且最近生命体征相对个人基线平稳、环境无明显危险，可输出P4表示休息状态。"
         + RISK_POLICY_PROMPT
         + modality_instruction
         + _cloud_output_constraints(temporal_limit)
@@ -1500,7 +1523,11 @@ class CloudLLMClient:
             raw_content = message.get("content") or message.get("reasoning_content") or ""
             parsed_output = _extract_json_object(raw_content)
             normalized = _normalize_multimodal_output(
-                {"event": {**event, "risk_level": local_result.get("risk_level", event.get("risk_level"))}},
+                {
+                    "event": {**event, "risk_level": local_result.get("risk_level", event.get("risk_level"))},
+                    "local_result": local_result,
+                    "context": context,
+                },
                 parsed_output,
                 array_limits={"temporal_changes": available_frame_count or 2},
             )

@@ -699,43 +699,33 @@ class LLMClientParserTests(unittest.TestCase):
             )
             self.assertEqual(normalized["risk_level"], accepted)
 
-    def test_long_static_local_model_may_downgrade_to_p4(self) -> None:
+    def test_long_static_local_model_low_risk_is_deferred_to_cloud(self) -> None:
         output = {
-            "event_semantics": "resting, vitals normal, normal expression",
+            "event_semantics": "looks like resting, no fall evidence",
             "risk_level": "P4",
             "confidence": 0.82,
-            "supporting_evidence": ["stable posture, no fall evidence"],
-            "family_summary": "elder appears resting with vital signs normal",
+            "supporting_evidence": ["stable posture", "eyes closed"],
+            "family_summary": "elder appears to be resting",
         }
 
         normalized = _normalize_local_multimodal_output(
             {"event": {"event_type": "long_static", "risk_level": "P2"}}, output
         )
 
-        self.assertEqual(normalized["risk_level"], "P4")
-        self.assertEqual(normalized["risk_guardrail_adjustment"], "long_static_local_downgrade_to_p4")
+        self.assertEqual(normalized["risk_level"], "P2")
+        self.assertEqual(normalized["risk_guardrail_adjustment"], "long_static_local_low_risk_deferred_to_cloud")
 
-    def test_long_static_p4_requires_vitals_and_normal_expression_evidence(self) -> None:
+    def test_cloud_long_static_can_downgrade_sleep_with_normal_context(self) -> None:
         output = {
-            "event_semantics": "normal rest",
-            "risk_level": "P4",
-            "confidence": 0.82,
-            "supporting_evidence": ["stable posture"],
-            "family_summary": "elder may be resting",
-        }
-
-        with self.assertRaises(LLMOutputError):
-            _normalize_local_multimodal_output(
-                {"event": {"event_type": "long_static", "risk_level": "P2"}}, output
-            )
-
-    def test_long_static_sleep_can_downgrade_with_normal_context_vitals(self) -> None:
-        output = {
-            "event_semantics": "老人闭眼睡觉",
+            "event_semantics": "sleeping rest",
             "risk_level": "P4",
             "confidence": 0.86,
-            "supporting_evidence": ["自然睡姿", "无跌倒"],
-            "family_summary": "老人处于休息状态",
+            "temporal_changes": ["stable posture"],
+            "supporting_evidence": ["stable posture", "vital signs normal"],
+            "contradictions": [],
+            "missing_information": [],
+            "recommended_followup": [],
+            "family_summary": "elder appears resting",
         }
         payload = {
             "event": {"event_type": "long_static", "risk_level": "P2"},
@@ -754,10 +744,9 @@ class LLMClientParserTests(unittest.TestCase):
             },
         }
 
-        normalized = _normalize_local_multimodal_output(payload, output)
+        normalized = _normalize_multimodal_output(payload, output)
 
         self.assertEqual(normalized["risk_level"], "P4")
-        self.assertEqual(normalized["risk_guardrail_adjustment"], "long_static_local_downgrade_to_p4")
 
     def test_suspected_fall_local_model_still_cannot_downgrade(self) -> None:
         output = {
@@ -1561,6 +1550,37 @@ class LLMClientParserTests(unittest.TestCase):
 
         self.assertEqual(normalized["risk_level"], "P2")
         self.assertEqual(normalized["risk_guardrail_adjustment"], "spo2_candidate_drop_not_severe_enough_for_p1")
+
+    def test_bathroom_candidate_over_reference_is_promoted_to_p2(self) -> None:
+        output = {
+            "event_semantics": "bathroom stay seems okay",
+            "risk_level": "P4",
+            "confidence": 0.7,
+            "family_summary": "record only",
+        }
+
+        normalized = _normalize_local_multimodal_output(
+            {
+                "event": {
+                    "event_type": "bathroom_stay_anomaly",
+                    "risk_level": "P4",
+                    "summary": "bathroom stay exceeds p90",
+                    "source_kind": "ai_review_candidate",
+                },
+                "context": {
+                    "candidate_local_input": {
+                        "t": "bathroom_stay_anomaly",
+                        "dur": 600,
+                        "p90s": 490,
+                        "room": "bathroom",
+                    }
+                },
+            },
+            output,
+        )
+
+        self.assertEqual(normalized["risk_level"], "P2")
+        self.assertEqual(normalized["risk_guardrail_adjustment"], "bathroom_stay_over_reference_promoted_to_p2")
 
     def test_candidate_local_output_repairs_confidence_words(self) -> None:
         output = {

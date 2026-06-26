@@ -1177,7 +1177,6 @@
               <p class="muted">设置一次卫生间停留秒数，系统会发送“客厅 → 卫生间 → 客厅”的整屋环境数据；环境数据记录中可看到进入、停留、离开的完整过程。若高于当前卫生间停留参考上限，将生成 Candidate 候选事件。</p>
               <div class="baseline-fields">
                 <label><span>验证停留时间（秒）</span><input id="demo-bathroom-duration" type="number" min="10" max="7200" step="5" value="600" /></label>
-                <label><span>本次验证停留时长</span><input id="demo-bathroom-duration-result" readonly value="--" /></label>
                 <label><span>候选事件结果</span><input id="demo-bathroom-candidate-result" readonly value="--" /></label>
               </div>
               <div class="form-actions">
@@ -2546,7 +2545,6 @@
         const button = $("demo-bathroom-stay");
         button.disabled = true;
         const durationSeconds = selectedBathroomStayDuration();
-        setInputValue("demo-bathroom-duration-result", formatDuration(durationSeconds));
         setInputValue("demo-bathroom-candidate-result", "验证中");
         setSubmitStatus("baseline-submit-status", `正在验证卫生间停留时间：${formatDuration(durationSeconds)}`);
         try {
@@ -2556,7 +2554,6 @@
             logical_interval_sec: 5,
           });
           if (result.bathroom_stay_monitor) setBathroomStayMonitor(result.bathroom_stay_monitor);
-          setInputValue("demo-bathroom-duration-result", formatDuration(result.duration_seconds ?? durationSeconds));
           const candidateCreated = Boolean(result.candidate);
           setInputValue("demo-bathroom-candidate-result", candidateCreated ? "已生成候选事件" : "未超过参考上限");
           setSubmitStatus(
@@ -2699,7 +2696,6 @@
       function renderBathroomStayMonitor() {
         const monitor = state.bathroomStayMonitor ?? {};
         const finalStay = monitor.demo_final_bathroom_stay_sec ?? monitor.last_stay_seconds ?? null;
-        setInputValue("demo-bathroom-duration-result", finalStay === null || finalStay === undefined ? "--" : formatDuration(finalStay));
       }
 
       function renderRecords() {

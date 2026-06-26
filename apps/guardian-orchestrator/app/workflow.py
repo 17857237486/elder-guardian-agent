@@ -227,7 +227,11 @@ class WorkflowRunner:
         await self._record_step(workflow, event, "cloud_review", local, cloud)
 
         cloud_risk = risk_text(cloud["risk_level"]) if cloud.get("status") == "completed" else None
-        final_risk = self._higher_risk(local_risk, cloud_risk) if cloud_risk else local_risk
+        if defer_policy_until_cloud and cloud_risk:
+            # long_static is the only event where cloud review may turn a rule P2 into P4 rest/sleep.
+            final_risk = cloud_risk
+        else:
+            final_risk = self._higher_risk(local_risk, cloud_risk) if cloud_risk else local_risk
         if defer_policy_until_cloud and final_risk != "P4":
             reviewed_event = event.model_copy(
                 update={
