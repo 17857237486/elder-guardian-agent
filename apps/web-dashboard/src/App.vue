@@ -1122,15 +1122,41 @@ function firstArrayText(value: unknown): string {
   return Array.isArray(value) ? value.map((item) => String(item ?? "").trim()).filter(Boolean).slice(0, 2).join("；") : "";
 }
 
+function numberRange(values: number[], unit: string): string {
+  if (!values.length) return "";
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  return min === max ? `${min}${unit}` : `${min}-${max}${unit}`;
+}
+
+function cloudVitalReasonText(samples: AnyRecord[]): string {
+  if (!samples.length) return "";
+  const latest = samples[samples.length - 1] ?? {};
+  const heartValues = samples.map((item) => Number(item.heart_rate)).filter(Number.isFinite);
+  const spo2Values = samples.map((item) => Number(item.spo2)).filter(Number.isFinite);
+  const parts: string[] = [];
+  if (Number.isFinite(Number(latest.heart_rate))) parts.push(`最近心率 ${Number(latest.heart_rate)} bpm`);
+  if (Number.isFinite(Number(latest.spo2))) parts.push(`最近血氧 ${Number(latest.spo2)}%`);
+  const heartRange = numberRange(heartValues, " bpm");
+  const spo2Range = numberRange(spo2Values, "%");
+  if (heartRange) parts.push(`心率范围 ${heartRange}`);
+  if (spo2Range) parts.push(`血氧范围 ${spo2Range}`);
+  return parts.slice(0, 4).join("，");
+}
+
 const cloudContextText = computed(() => {
   const output = latestContextFusion.value?.output ?? {};
   const vision = output.vision_context ?? {};
+  const vitalContext = output.recent_vital_samples ?? {};
   const envCount = vision.environment_samples ?? output.environment_context?.actual_samples;
-  const vitalCount = vision.vital_samples ?? output.recent_vital_samples?.actual_samples;
+  const vitalCount = vision.vital_samples ?? vitalContext.actual_samples;
+  const vitalSamples = Array.isArray(vitalContext.samples) ? vitalContext.samples : [];
+  const vitalReason = cloudVitalReasonText(vitalSamples);
   const framePolicy = vision.cloud_frame_policy === "five_original_frames" ? "五张原图" : "云端图像";
   const parts = [framePolicy];
   if (envCount !== undefined) parts.push(`环境 ${envCount} 条`);
   if (vitalCount !== undefined) parts.push(`生命体征 ${vitalCount} 条`);
+  if (vitalReason) parts.push(`生命体征依据：${vitalReason}`);
   return parts.join(" · ");
 });
 
