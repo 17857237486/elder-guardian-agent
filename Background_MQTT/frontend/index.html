@@ -1181,31 +1181,6 @@
       </article>
 
       <article class="panel">
-        <h2>卫生间停留验证</h2>
-        <p class="muted">这里展示一次完整的红外 presence 推导流程：老人先在其他房间，随后进入卫生间停留，最后离开卫生间去到其他房间。环境温度、湿度、CO2 和燃气均保持正常。</p>
-        <div class="table-wrap record-table-wrap">
-          <table class="record-table">
-            <thead>
-              <tr>
-                <th>序号</th>
-                <th>采样时间</th>
-                <th>老人所在房间</th>
-                <th>当前房间停留</th>
-                <th>卫生间状态</th>
-                <th>卫生间累计停留</th>
-                <th>过程说明</th>
-              </tr>
-            </thead>
-            <tbody id="bathroom-flow-rows"></tbody>
-          </table>
-          <div id="bathroom-flow-empty" class="empty">暂无卫生间停留流程。请点击“生成一次卫生间停留时间”。</div>
-        </div>
-        <div class="baseline-fields">
-          <label><span>本次卫生间停留时间</span><input id="bathroom-flow-final" readonly value="--" /></label>
-        </div>
-      </article>
-
-      <article class="panel">
         <h2>手动输入数据</h2>
         <div class="template-grid" aria-label="事件模板">
           <button class="template-button" type="button" data-template="gas_leak">P0 燃气异常<br />紧急告警</button>
@@ -2706,37 +2681,10 @@
           })
           .join("");
       }
-      function bathroomFlowStage(row, previousRow) {
-        if (row.current_room === "bathroom" && previousRow?.current_room !== "bathroom") return "进入卫生间";
-        if (row.current_room === "bathroom") return "停留卫生间";
-        if (previousRow?.current_room === "bathroom" && row.current_room !== "bathroom") return "离开卫生间";
-        return "其他房间";
-      }
-
       function renderBathroomStayMonitor() {
         const monitor = state.bathroomStayMonitor ?? {};
         const finalStay = monitor.demo_final_bathroom_stay_sec ?? monitor.last_stay_seconds ?? null;
         setInputValue("demo-bathroom-duration-result", finalStay === null || finalStay === undefined ? "--" : formatDuration(finalStay));
-        setInputValue("bathroom-flow-final", finalStay === null || finalStay === undefined ? "--" : formatDuration(finalStay));
-        const rows = monitor.demo_flow_rows ?? [];
-        $("bathroom-flow-empty").style.display = rows.length === 0 ? "block" : "none";
-        $("bathroom-flow-rows").innerHTML = rows
-          .map((row, index) => {
-            const previous = index > 0 ? rows[index - 1] : null;
-            const stage = bathroomFlowStage(row, previous);
-            return `
-              <tr>
-                <td>${index + 1}</td>
-                <td>${formatTime(row.timestamp)}</td>
-                <td>${roomLabels[row.current_room] ?? valueOrDash(row.current_room)}</td>
-                <td>${formatDuration(row.current_room_elapsed_sec ?? 0)}</td>
-                <td>${row.bathroom_present ? "有人" : "无人"}</td>
-                <td>${formatDuration(row.bathroom_elapsed_sec ?? 0)}</td>
-                <td>${stage}</td>
-              </tr>
-            `;
-          })
-          .join("");
       }
 
       function renderRecords() {

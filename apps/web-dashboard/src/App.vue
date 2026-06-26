@@ -277,6 +277,9 @@ const activeDemoTarget = computed<DemoTarget>(() => {
 const latestLocalAnalysis = computed(() =>
   findTargetStep(activeDemoTarget.value, "local_multiframe_analysis")
 );
+const latestCloudReview = computed(() =>
+  findTargetStep(activeDemoTarget.value, "cloud_review")
+);
 const isNormalInputDemo = computed(() => activeDemoTarget.value?.kind === "normal_input");
 const isRiskInputDemo = computed(() => activeDemoTarget.value?.kind === "risk_input");
 const localSemanticStatus = computed(() => {
@@ -1066,33 +1069,6 @@ const hmiPromptItems = computed<AnyRecord[]>(() => {
 });
 const familyAlertItems = computed<AnyRecord[]>(() => filteredAlerts.value.slice(0, DISPLAY_LIMIT));
 const realDevices = computed(() => filteredDeviceReadings.value.slice(0, DISPLAY_LIMIT));
-const finalDecisionCard = computed(() => {
-  const target = activeDemoTarget.value;
-  const finalStep = findTargetStep(target, "final_advisory");
-  const output = finalStep?.output ?? {};
-  const item = target?.item ?? latestEvent.value ?? {};
-  const risk = output.final_risk_level ?? output.risk_level ?? riskOf(item);
-  const source = output.decision_source ?? item.decision_source ?? summaryDecisionSource.value;
-  const summary = output.family_summary
-    ?? output.summary
-    ?? output.message
-    ?? item.family_summary
-    ?? item.local_semantics
-    ?? item.summary
-    ?? "暂无最终决策建议";
-  const followups = Array.isArray(output.recommended_followup)
-    ? output.recommended_followup
-    : Array.isArray(output.actions)
-      ? output.actions
-      : [];
-  return {
-    risk,
-    source,
-    summary,
-    followups,
-    time: eventTime(finalStep ?? item)
-  };
-});
 const latestDailyHealthSummary = computed<AnyRecord | null>(() => {
   const summaries = ((state.daily_health_summaries ?? []) as AnyRecord[])
     .filter(Boolean)
@@ -1134,6 +1110,53 @@ const localSemanticEventType = computed(() => {
   if (target?.kind === "normal_input") return "normal";
   if (target?.kind === "risk_input") return target.item.event_type ?? "risk_input";
   return latestEvent.value?.event_type ?? "暂无事件";
+});
+function firstArrayText(value: unknown): string {
+  return Array.isArray(value) ? value.map((item) => String(item ?? "").trim()).filter(Boolean).slice(0, 2).join("；") : "";
+}
+
+const cloudContextText = computed(() => {
+  const output = latestContextFusion.value?.output ?? {};
+  const vision = output.vision_context ?? {};
+  const envCount = vision.environment_samples ?? output.environment_context?.actual_samples;
+  const vitalCount = vision.vital_samples ?? output.recent_vital_samples?.actual_samples;
+  const framePolicy = vision.cloud_frame_policy === "five_original_frames" ? "五张原图" : "云端图像";
+  const parts = [framePolicy];
+  if (envCount !== undefined) parts.push(`环境 ${envCount} 条`);
+  if (vitalCount !== undefined) parts.push(`生命体征 ${vitalCount} 条`);
+  return parts.join(" · ");
+});
+
+const cloudSemanticStatus = computed(() => {
+  if (isNormalInputDemo.value) return { state: "completed", text: "P4 正常状态，无需云端复核" };
+  if (isRiskInputDemo.value) {
+    if (activeDemoTarget.value?.kind === "risk_input" && isP3EnvironmentRiskInput(activeDemoTarget.value.item)) {
+      return { state: "completed", text: "确定性 P3 规则，无需云端复核" };
+    }
+    if (activeDemoTarget.value?.kind === "risk_input" && isDeterministicVitalRiskInput(activeDemoTarget.value.item)) {
+      return { state: "completed", text: "确定性生命体征规则，无需云端复核" };
+    }
+    return { state: "pending", text: "等待正式风险事件后复核" };
+  }
+  const review = latestCloudReview.value;
+  const output = review?.output ?? {};
+  if (output.reason === "deterministic_p3_rule") return { state: "completed", text: "确定性 P3 规则，无需云端复核" };
+  if (output.reason === "deterministic_vital_rule") return { state: "completed", text: "确定性生命体征规则，无需云端复核" };
+  if (review && isStepRunning(review)) return { state: "pending", text: "云端正在结合图像、生命体征和环境数据复核" };
+  if (review?.status === "failed" || String(output.status ?? "").includes("failed")) {
+    return { state: "fallback", text: `云端复核失败：${output.error ?? output.status ?? "未知错误"}` };
+  }
+  if (output.status === "cloud_disabled" || output.status === "not_required") {
+    return { state: "completed", text: output.reason ? "云端复核不需要执行" : "云端复核未启用" };
+  }
+  const evidence = firstArrayText(output.supporting_evidence);
+  const text = output.event_semantics ?? output.family_summary ?? evidence;
+  if (text || output.risk_level) {
+    const latency = output.latency_ms !== undefined ? ` · 耗时 ${durationText(output.latency_ms)}` : "";
+    const suffix = output.family_summary && output.family_summary !== text ? ` · ${output.family_summary}` : "";
+    return { state: "completed", text: `${text ?? "云端复核完成"} · 云端风险 ${output.risk_level ?? "--"}${latency}${suffix}` };
+  }
+  return { state: "pending", text: "等待云端复核结果" };
 });
 const homeEnvironmentRooms = computed(() => {
   const rooms = new Map<string, AnyRecord>(ROOM_ORDER.map((room) => [room, { ...DEFAULT_HOME_ENV[room] }]));
@@ -1321,6 +1344,33 @@ function dailyCloudText(): string {
   return cloud.family_message ?? cloud.overall_status ?? summary.status ?? "本地统计摘要已生成";
 }
 
+function dailyOverallStatusText(): string {
+  const summary = latestDailyHealthSummary.value;
+  if (!summary) return "暂无每日健康摘要";
+  const cloud = dailySummaryCloud.value;
+  if (cloud.overall_status || cloud.family_message) {
+    return clip(cloud.overall_status ?? cloud.family_message, 120);
+  }
+  return `今日整体风险 ${summary.risk_level ?? "--"}，${dailyCloudText()}`;
+}
+
+function dailyAttentionText(): string {
+  const cloud = dailySummaryCloud.value;
+  const findings = Array.isArray(cloud.key_findings) ? cloud.key_findings : [];
+  const followup = Array.isArray(cloud.recommended_followup) ? cloud.recommended_followup : [];
+  if (followup.length) return followup.map((item: unknown) => clip(item, 34)).join("；");
+  if (findings.length) return findings.map((item: unknown) => clip(item, 34)).join("；");
+  const vitals = dailySummaryStats.value.vitals ?? {};
+  const events = dailySummaryStats.value.events ?? {};
+  const behavior = dailySummaryStats.value.behavior ?? {};
+  return [
+    `心率均值 ${vitals.heart_rate?.avg ?? "--"} bpm`,
+    `血氧均值 ${vitals.spo2?.avg ?? "--"}%`,
+    `最高风险 ${events.highest_risk ?? latestDailyHealthSummary.value?.risk_level ?? "--"}`,
+    `卫生间最长停留 ${behavior.bathroom_stay_max_sec ?? "--"} 秒`
+  ].join("；");
+}
+
 function monthlyTrendBaseText(): string {
   const summaries = monthlyHealthSummaryBase.value;
   if (!summaries.length) return "近30天趋势基础：暂无每日摘要";
@@ -1334,6 +1384,28 @@ function monthlyTrendBaseText(): string {
     return (RISK_ORDER[level] ?? 0) > (RISK_ORDER[current] ?? 0) ? level : current;
   }, "P4");
   return `近30天趋势基础：已有 ${summaries.length} 天摘要 · 最高风险 ${highest} · P0/P1/P2/P3/P4 ${riskCounts.P0 ?? 0}/${riskCounts.P1 ?? 0}/${riskCounts.P2 ?? 0}/${riskCounts.P3 ?? 0}/${riskCounts.P4 ?? 0}`;
+}
+
+function monthlyTrendKeyFindingsText(): string {
+  const summaries = monthlyHealthSummaryBase.value;
+  if (!summaries.length) return "暂无 30 天健康趋势。";
+  const heartValues = summaries.map((item) => item.local_stats?.vitals?.heart_rate?.avg).filter((value) => Number.isFinite(Number(value))).map(Number);
+  const spo2Values = summaries.map((item) => item.local_stats?.vitals?.spo2?.avg).filter((value) => Number.isFinite(Number(value))).map(Number);
+  const highest = summaries.reduce((current: string, item: AnyRecord) => {
+    const level = String(item.risk_level ?? "P4");
+    return (RISK_ORDER[level] ?? 0) > (RISK_ORDER[current] ?? 0) ? level : current;
+  }, "P4");
+  const heartText = heartValues.length ? `心率均值 ${Math.round(heartValues.reduce((a, b) => a + b, 0) / heartValues.length)} bpm` : "心率数据不足";
+  const spo2Text = spo2Values.length ? `血氧均值 ${(spo2Values.reduce((a, b) => a + b, 0) / spo2Values.length).toFixed(1)}%` : "血氧数据不足";
+  return `${summaries.length} 天数据 · ${heartText} · ${spo2Text} · 最高风险 ${highest}`;
+}
+
+function monthlyTrendNextStepsText(): string {
+  const summaries = monthlyHealthSummaryBase.value;
+  if (!summaries.length) return "请先生成每日健康摘要。";
+  const riskDays = summaries.filter((item) => (RISK_ORDER[String(item.risk_level ?? "P4")] ?? 0) >= RISK_ORDER.P2).length;
+  if (riskDays > 0) return `近 30 天有 ${riskDays} 天达到 P2 及以上，建议重点查看对应日期的生命体征、环境与老人反馈。`;
+  return "整体波动较小，建议继续保持日常监测，关注血氧下降、心率持续偏离和卫生间停留变长。";
 }
 
 async function loadState() {
@@ -1416,9 +1488,17 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
       </ol>
     </section>
 
-    <section class="local-semantics" :class="localSemanticStatus.state">
-      <div><span>第二级：RK3588 本地模型事件语义</span><strong>{{ localSemanticStatus.text }}</strong></div>
-      <p>{{ localSemanticEventType }} · 本地风险 {{ summaryLocalRisk }} · AI房间 {{ localAiRoom }}</p>
+    <section class="model-semantics-grid">
+      <article class="model-semantics-card" :class="localSemanticStatus.state">
+        <span>第二级：RK3588 本地模型事件语义</span>
+        <strong>{{ localSemanticStatus.text }}</strong>
+        <p>{{ eventLabel(localSemanticEventType) }} · 本地风险 {{ summaryLocalRisk }} · AI房间 {{ localAiRoom }}</p>
+      </article>
+      <article class="model-semantics-card cloud-card" :class="cloudSemanticStatus.state">
+        <span>第三级：云端复核事件语义</span>
+        <strong>{{ cloudSemanticStatus.text }}</strong>
+        <p>{{ cloudContextText }} · 云端风险 {{ summaryCloudRisk }}</p>
+      </article>
     </section>
 
     <section class="device-dashboard-grid">
@@ -1475,20 +1555,6 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
         </ul></div>
       </article>
 
-      <article class="panel decision-panel">
-        <h2>最终决策建议</h2>
-        <div class="decision-card">
-          <div class="row-head">
-            <strong>{{ finalDecisionCard.risk }}</strong>
-            <time>{{ formatTime(finalDecisionCard.time) }}</time>
-          </div>
-          <b>决策来源：{{ finalDecisionCard.source }}</b>
-          <p>{{ clip(finalDecisionCard.summary, 160) }}</p>
-          <small v-if="finalDecisionCard.followups.length">后续建议：{{ finalDecisionCard.followups.map((item: unknown) => clip(item, 24)).join("；") }}</small>
-          <small v-else>暂无额外后续建议</small>
-        </div>
-      </article>
-
       <article class="panel">
         <h2>整屋环境状态</h2>
         <div class="panel-scroll">
@@ -1529,11 +1595,10 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
                 <strong>{{ latestDailyHealthSummary.risk_level ?? "--" }}</strong>
                 <time>{{ latestDailyHealthSummary.summary_date ?? formatTime(latestDailyHealthSummary.updated_at) }}</time>
               </div>
-              <b>状态：{{ statusLabel(latestDailyHealthSummary.status) }}</b>
-              <p>{{ dailyVitalsText() }}</p>
-              <p>{{ dailyBehaviorText() }}</p>
-              <p>{{ dailyEventsText() }}</p>
-              <small>{{ clip(dailyCloudText(), 120) }}</small>
+              <b>整体状况</b>
+              <p>{{ dailyOverallStatusText() }}</p>
+              <b>建议关注</b>
+              <p>{{ dailyAttentionText() }}</p>
             </li>
           </ul>
         </div>
@@ -1549,9 +1614,10 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
                 <strong>{{ monthlyHealthSummaryBase.length }} 天</strong>
                 <time>{{ formatTime(monthlyHealthSummaryBase[0]?.updated_at ?? monthlyHealthSummaryBase[0]?.summary_date) }}</time>
               </div>
-              <b>趋势基础</b>
-              <p>{{ monthlyTrendBaseText() }}</p>
-              <small>基于每日健康摘要汇总，用于观察心率、血氧、事件和行为趋势。</small>
+              <b>关键发现</b>
+              <p>{{ monthlyTrendKeyFindingsText() }}</p>
+              <b>后续建议</b>
+              <p>{{ monthlyTrendNextStepsText() }}</p>
             </li>
           </ul>
         </div>
