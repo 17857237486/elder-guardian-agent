@@ -224,7 +224,7 @@ class LLMClientParserTests(unittest.TestCase):
         self.assertIn("temporal_changes", normalized["schema_repaired_fields"])
         self.assertIn("contradictions", normalized["schema_repaired_fields"])
 
-    def test_more_than_two_evidence_items_are_rejected(self) -> None:
+    def test_more_than_two_evidence_items_are_trimmed(self) -> None:
         output = {
             "event_semantics": "环境异常",
             "risk_level": "P3",
@@ -237,10 +237,12 @@ class LLMClientParserTests(unittest.TestCase):
             "family_summary": "环境异常",
         }
 
-        with self.assertRaises(LLMOutputError):
-            _normalize_multimodal_output(
-                {"event": {"event_type": "co2_high", "risk_level": "P3"}}, output
-            )
+        normalized = _normalize_multimodal_output(
+            {"event": {"event_type": "co2_high", "risk_level": "P3"}}, output
+        )
+
+        self.assertEqual(len(normalized["supporting_evidence"]), 2)
+        self.assertIn("supporting_evidence", normalized["schema_repaired_fields"])
 
     def test_cloud_temporal_changes_follow_available_frame_limit(self) -> None:
         output = {
@@ -262,12 +264,13 @@ class LLMClientParserTests(unittest.TestCase):
         )
         self.assertEqual(len(normalized["temporal_changes"]), 5)
 
-        with self.assertRaisesRegex(LLMOutputError, "more than 3 items"):
-            _normalize_multimodal_output(
-                {"event": {"event_type": "suspected_fall", "risk_level": "P1"}},
-                output,
-                array_limits={"temporal_changes": 3},
-            )
+        trimmed = _normalize_multimodal_output(
+            {"event": {"event_type": "suspected_fall", "risk_level": "P1"}},
+            output,
+            array_limits={"temporal_changes": 3},
+        )
+        self.assertEqual(trimmed["temporal_changes"], ["frame 0", "frame 1", "frame 2"])
+        self.assertIn("temporal_changes", trimmed["schema_repaired_fields"])
 
     def test_local_prompt_stays_within_rk3588_budget(self) -> None:
         fixed_prompt = (

@@ -662,7 +662,8 @@ def _normalize_multimodal_output(
         elif isinstance(value, list):
             limit = limits[field]
             if len(value) > limit:
-                raise LLMOutputError(f"multimodal field {field} contains more than {limit} items")
+                value = value[:limit]
+                repaired_fields.append(field)
             normalized[field] = [str(item) for item in value if str(item).strip()]
         else:
             raise LLMOutputError(f"multimodal field {field} must be an array of strings")
