@@ -1111,9 +1111,9 @@
               <div class="baseline-fields">
                 <label><span>老人 ID</span><input id="baseline-elder" value="elder_001" /></label>
                 <label><span>样本数量</span><input id="baseline-sample-count" type="number" min="1" step="1" value="1" /></label>
-                <label><span>鍋忎綆鍙傝€冨績鐜</span><input id="hr-p10" type="number" step="1" value="60" /></label>
-                <label><span>姝ｅ父鍙傝€冨績鐜</span><input id="hr-p50" type="number" step="1" value="76" /></label>
-                <label><span>鍋忛珮鍙傝€冨績鐜</span><input id="hr-p90" type="number" step="1" value="100" /></label>
+                <label><span>偏低参考心率</span><input id="hr-p10" type="number" step="1" value="60" /></label>
+                <label><span>正常参考心率</span><input id="hr-p50" type="number" step="1" value="76" /></label>
+                <label><span>偏高参考心率</span><input id="hr-p90" type="number" step="1" value="100" /></label>
                 <label><span>夜间平均心率</span><input id="hr-night-avg" type="number" step="1" value="68" /></label>
                 <label><span>日常平均心率</span><input id="hr-daily-avg" type="number" step="1" value="78" /></label>
               </div>
@@ -1140,7 +1140,7 @@
               <h3>卫生间停留基线</h3>
               <div class="baseline-fields">
                 <label><span>平均停留时间（秒）</span><input id="bathroom-stay-avg" type="number" min="0" step="1" value="180" /></label>
-                <label><span>鍋滅暀鍙傝€冧笂闄愶紙绉掞級</span><input id="bathroom-stay-p90" type="number" min="0" step="1" value="60" /></label>
+                <label><span>停留参考上限（秒）</span><input id="bathroom-stay-p90" type="number" min="0" step="1" value="60" /></label>
                 <label><span>样本数量</span><input id="bathroom-sample-count" type="number" min="1" step="1" value="1" /></label>
               </div>
               <div class="form-actions">
@@ -1150,7 +1150,7 @@
           </div>
           <div id="auto-baseline-panel" class="baseline-grid" hidden>
             <section class="baseline-card">
-              <h3>自动统计心率/琛€姘у熀绾</h3>
+              <h3>自动统计心率/血氧基线</h3>
               <div class="baseline-fields">
                 <label><span>生成组数</span><input id="auto-vital-count" type="number" min="24" max="5000" step="1" value="3000" /></label>
                 <label><span>逻辑采样间隔（秒）</span><input id="auto-vital-interval" type="number" min="1" max="60" step="1" value="5" /></label>
@@ -1228,7 +1228,7 @@
             <tbody>
               <tr>
                 <th>当前模板</th>
-                <td id="template-name">姝ｅ父鐘舵€</td>
+                <td id="template-name">正常状态</td>
                 <th>预期事件</th>
                 <td id="template-event">normal</td>
                 <th>预期等级</th>
@@ -1263,7 +1263,7 @@
                     <td><input id="manual-vital-elder" name="elder_id" value="elder_001" required /></td>
                     <th>心率</th>
                     <td><input id="manual-heart-rate" name="heart_rate" type="number" min="0" step="1" value="78" required /></td>
-                    <th>琛€姘</th>
+                    <th>血氧</th>
                     <td><input id="manual-spo2" name="spo2" type="number" min="0" max="100" step="1" value="96" required /></td>
                   </tr>
                   <tr>
@@ -1354,7 +1354,7 @@
                   <th>接收时间</th>
                   <th>老人 ID</th>
                   <th>心率</th>
-                  <th>琛€姘</th>
+                  <th>血氧</th>
                   <th>鏀剁缉鍘</th>
                   <th>鑸掑紶鍘</th>
                   <th>体温</th>
@@ -1363,7 +1363,7 @@
               </thead>
               <tbody id="vital-rows"></tbody>
             </table>
-            <div id="vital-empty" class="empty">鏆傛棤鐢熷懡浣撳緛鏁版嵁銆</div>
+            <div id="vital-empty" class="empty">暂无生命体征数据。</div>
           </div>
         </article>
 
@@ -1403,7 +1403,7 @@
             <button id="daily-summary-local" type="button">只生成本地统计</button>
             <button id="daily-summary-cloud" class="primary" type="button">生成今日健康摘要</button>
             <button id="monthly-trend-cloud" type="button">生成 30 天身体趋势</button>
-            <button id="daily-summary-load" type="button">璇诲彇鏈€杩戞憳瑕</button>
+            <button id="daily-summary-load" type="button">读取每日健康摘要</button>
             <span id="daily-summary-status" class="submit-status">等待生成</span>
           </div>
           <div class="baseline-grid">
@@ -2131,7 +2131,7 @@
         stopScenarioStatusPolling();
         state.scenarioStatusTimer = setInterval(() => {
           refreshScenarioStatus().catch((error) => {
-            setSubmitStatus("scenario-submit-status", `鐘舵€佸埛鏂板け璐ワ細${error.message}`, "error");
+            setSubmitStatus("scenario-submit-status", `状态更新失败：${error.message}`, "error");
           });
         }, 1000);
       }

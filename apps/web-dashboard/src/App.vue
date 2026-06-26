@@ -521,8 +521,9 @@ function elapsedSince(value?: string): string {
 }
 
 function runningModelText(step?: AnyRecord | null, fallbackTime?: string): string {
-  const elapsed = elapsedSince(step?.started_at ?? step?.created_at ?? fallbackTime);
-  return elapsed ? `等待 RK3588 本地模型分析 · 已等待 ${elapsed}` : "等待 RK3588 本地模型分析";
+  void step;
+  void fallbackTime;
+  return "等待 RK3588 本地模型分析";
 }
 
 function isDeterministicVitalRuleEvent(item: AnyRecord, risk: string): boolean {
@@ -711,7 +712,7 @@ const demoNodes = computed(() => {
   const deterministicRuleOnly = target.kind === "event" && isDeterministicRuleOnlyEvent(item, risk);
   const deterministicVitalRule = target.kind === "event" && isDeterministicVitalRuleEvent(item, risk);
   const localWait = !localStep && ["P0", "P1", "P2"].includes(risk) && !deterministicRuleOnly
-    ? `等待本地模型队列 · 已等待 ${elapsedSince(eventTime(item)) || "--"}`
+    ? "等待本地模型队列"
     : "等待本地分析";
   const localNote = localOutput.reason === "deterministic_p3_rule"
     ? "P3 确定性规则，无需本地模型"
@@ -1429,8 +1430,10 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
             <h3>{{ ROOM_LABELS[room.room] ?? room.room }}</h3>
             <div v-for="control in room.devices" :key="`${room.room}-${control.device}`" class="device-control-row">
               <span>{{ control.label }}</span>
-              <button :disabled="deviceControlBusy === `${room.room}:${control.device}:${control.on}`" @click="requestDashboardDeviceAction(room.room, control.device, control.on)">打开</button>
-              <button :disabled="deviceControlBusy === `${room.room}:${control.device}:${control.off}`" @click="requestDashboardDeviceAction(room.room, control.device, control.off)">关闭</button>
+              <div class="device-control-actions">
+                <button :disabled="deviceControlBusy === `${room.room}:${control.device}:${control.on}`" @click="requestDashboardDeviceAction(room.room, control.device, control.on)">打开</button>
+                <button :disabled="deviceControlBusy === `${room.room}:${control.device}:${control.off}`" @click="requestDashboardDeviceAction(room.room, control.device, control.off)">关闭</button>
+              </div>
             </div>
           </section>
         </div>
@@ -1488,17 +1491,32 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
 
       <article class="panel">
         <h2>整屋环境状态</h2>
-        <div class="panel-scroll"><ul>
-          <li v-for="room in homeEnvironmentRooms" :key="room.room">
-            <div class="row-head">
-              <strong :class="room.presence ? 'online' : 'offline'">{{ room.presence ? "有人" : "无人" }}</strong>
-              <time>{{ roomTimeLabel(room) }}</time>
-            </div>
-            <b>{{ ROOM_LABELS[room.room] ?? room.room }}</b>
-            <p>温度 {{ roomMetric(room, "temperature", "°C") }} · 湿度 {{ roomMetric(room, "humidity", "%") }} · CO2 {{ roomMetric(room, "co2_ppm", "ppm") }}</p>
-            <small>燃气 {{ roomMetric(room, "gas_ppm", "ppm") }} · 烟雾 {{ roomMetric(room, "smoke_ppm", "ppm") }} · 光照 {{ roomMetric(room, "illuminance_lux", "lux") }}</small>
-          </li>
-        </ul></div>
+        <div class="panel-scroll">
+          <table class="home-env-table">
+            <thead>
+              <tr>
+                <th>房间</th>
+                <th>红外</th>
+                <th>温度</th>
+                <th>湿度</th>
+                <th>CO2</th>
+                <th>燃气</th>
+                <th>更新时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="room in homeEnvironmentRooms" :key="room.room">
+                <td><strong>{{ ROOM_LABELS[room.room] ?? room.room }}</strong></td>
+                <td><span :class="['presence-pill', room.presence ? 'online' : 'offline']">{{ room.presence ? "有人" : "无人" }}</span></td>
+                <td>{{ roomMetric(room, "temperature", "°C") }}</td>
+                <td>{{ roomMetric(room, "humidity", "%") }}</td>
+                <td>{{ roomMetric(room, "co2_ppm", "ppm") }}</td>
+                <td>{{ roomMetric(room, "gas_ppm", "ppm") }}</td>
+                <td>{{ roomTimeLabel(room) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </article>
 
       <article class="panel daily-summary-panel">

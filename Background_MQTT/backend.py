@@ -1311,7 +1311,7 @@ async def shutdown() -> None:
 
 @app.get("/")
 async def index() -> FileResponse:
-    return FileResponse(APP_ROOT / "frontend" / "index.html")
+    return FileResponse(APP_ROOT / "frontend" / "index.html", media_type="text/html; charset=utf-8")
 
 
 @app.get("/api/health")
