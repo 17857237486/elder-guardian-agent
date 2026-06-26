@@ -1319,7 +1319,15 @@ async def shutdown() -> None:
 
 @app.get("/")
 async def index() -> FileResponse:
-    return FileResponse(APP_ROOT / "frontend" / "index.html", media_type="text/html; charset=utf-8")
+    return FileResponse(
+        APP_ROOT / "frontend" / "index.html",
+        media_type="text/html; charset=utf-8",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.get("/api/health")
