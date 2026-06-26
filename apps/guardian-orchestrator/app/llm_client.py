@@ -371,6 +371,30 @@ def _compact_vital_samples(samples: Any) -> list[Any]:
     return [_compact_value(item) for item in samples[:20]]
 
 
+def _latest_compact_sample(samples: Any) -> Any:
+    if not isinstance(samples, list) or not samples:
+        return None
+    return _compact_value(samples[-1])
+
+
+def _cloud_sensor_context_summary(context: dict[str, Any]) -> dict[str, Any]:
+    environment_context = context.get("environment_context") if isinstance(context.get("environment_context"), dict) else {}
+    recent_vital = context.get("recent_vital_samples") if isinstance(context.get("recent_vital_samples"), dict) else {}
+    elder_location = context.get("elder_location") if isinstance(context.get("elder_location"), dict) else {}
+    return {
+        "elder_location": _compact_value(elder_location),
+        "environment": {
+            "actual_samples": environment_context.get("actual_samples"),
+            "room_sequence": environment_context.get("room_sequence", []),
+            "latest_sample": _latest_compact_sample(environment_context.get("samples", [])),
+        },
+        "vital": {
+            "actual_samples": recent_vital.get("actual_samples"),
+            "latest_sample": _latest_compact_sample(recent_vital.get("samples", [])),
+        },
+    }
+
+
 def _compact_segment_summary(segment: Any) -> dict[str, Any] | None:
     if not isinstance(segment, dict):
         return None
@@ -958,7 +982,7 @@ def build_cloud_multimodal_content(
     temporal_limit = available_frame_count or 2
     modality_instruction = (
         "这是视觉事件。独立复核各张原始关键帧；每张图片前的文字是相对触发时刻的真实标签，缺失时间点不会补图。"
-        "比较姿态、身体高度、位置和动作变化，区分突然倒地与正常坐下、主动躺卧、弯腰。"
+        "比较姿态、身体高度、位置和动作变化，区分突然倒地与正常坐下、主动躺卧、弯腰；同时结合sensor_context_summary里的最近生命体征、环境和所在房间摘要。"
         if has_images
         else "这是非视觉事件，没有图片。仅复核结构化传感器证据、规则结果和本地模型摘要。"
     )
@@ -974,6 +998,7 @@ def build_cloud_multimodal_content(
                 **_multimodal_schema(),
                 "event": event,
                 "local_result": local_result,
+                "sensor_context_summary": _cloud_sensor_context_summary(context),
                 "context": _compact_value(context),
             },
             ensure_ascii=False,
