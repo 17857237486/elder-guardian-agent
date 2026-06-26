@@ -183,16 +183,35 @@ class WorkflowRunner:
             local_execution = await self._execute_policy(workflow, escalated, local)
         await self._record_step(workflow, event, "local_policy_execution", local, local_execution)
 
+        cloud_context = context
+        if risk_text(event.source_kind) == "VISION":
+            try:
+                refreshed_sensors = await self.edge.get_recent_sensor_context(event.elder_id, limit=240)
+                cloud_context = self._build_local_context(
+                    event,
+                    saved_event,
+                    refreshed_sensors,
+                    devices,
+                    segments=segments,
+                    baselines=baselines,
+                )
+            except Exception:
+                logger.exception("failed to refresh sensor context before cloud review")
+
         cloud: dict[str, Any] = {"status": "not_required"}
         if local_risk in {"P0", "P1", "P2"}:
             cloud_started = perf_counter()
             cloud = await self.cloud_llm.review(
                 event={**saved_event, "risk_level": local_risk},
                 local_result=local,
-                context=context,
+                context=cloud_context,
                 image_frames=image_frames if risk_text(event.source_kind) == "VISION" and len(image_frames) >= 3 else [],
             )
             cloud["latency_ms"] = round((perf_counter() - cloud_started) * 1000, 1)
+            if risk_text(event.source_kind) == "VISION":
+                cloud["recent_vital_samples"] = cloud_context.get("recent_vital_samples", {})
+                cloud["environment_context"] = cloud_context.get("environment_context", {})
+                cloud["elder_location"] = cloud_context.get("elder_location", {})
         await self._record_step(workflow, event, "cloud_review", local, cloud)
 
         cloud_risk = risk_text(cloud["risk_level"]) if cloud.get("status") == "completed" else None

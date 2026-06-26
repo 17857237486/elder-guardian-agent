@@ -1129,12 +1129,15 @@ function vitalTrendSummary(samples: AnyRecord[]): string {
   const latest = samples[samples.length - 1] ?? {};
   const latestHeart = Number(latest.heart_rate);
   const latestSpo2 = Number(latest.spo2);
+  const maxHeart = heartValues.length ? Math.max(...heartValues) : null;
+  const minHeart = heartValues.length ? Math.min(...heartValues) : null;
+  const minSpo2 = spo2Values.length ? Math.min(...spo2Values) : null;
   if (Number.isFinite(latestSpo2) && latestSpo2 < 92) return "近期血氧偏低";
   if (Number.isFinite(latestHeart) && (latestHeart < 45 || latestHeart > 130)) return "近期心率明显异常";
-  const heartSpread = heartValues.length ? Math.max(...heartValues) - Math.min(...heartValues) : 0;
-  const spo2Min = spo2Values.length ? Math.min(...spo2Values) : null;
+  if (maxHeart !== null && maxHeart > 110) return `近期心率偏高，最高约 ${Math.round(maxHeart)} bpm`;
+  const heartSpread = maxHeart !== null && minHeart !== null ? maxHeart - minHeart : 0;
   if (heartSpread >= 25) return "近期心率波动较大";
-  if (spo2Min !== null && spo2Min < 94) return "近期血氧略有下降";
+  if (minSpo2 !== null && minSpo2 < 94) return "近期血氧略有下降";
   return "近期心率和血氧总体平稳";
 }
 
@@ -1154,9 +1157,10 @@ function environmentTrendSummary(samples: AnyRecord[]): string {
 
 const cloudIntegratedSummary = computed(() => {
   const output = latestContextFusion.value?.output ?? {};
+  const cloudOutput = latestCloudReview.value?.output ?? {};
   const vision = output.vision_context ?? {};
-  const vitalContext = output.recent_vital_samples ?? {};
-  const envContext = output.environment_context ?? {};
+  const vitalContext = cloudOutput.recent_vital_samples ?? output.recent_vital_samples ?? {};
+  const envContext = cloudOutput.environment_context ?? output.environment_context ?? {};
   const vitalSamples = Array.isArray(vitalContext.samples) ? vitalContext.samples : [];
   const envSamples = Array.isArray(envContext.samples) ? envContext.samples : [];
   const frameText = vision.cloud_frame_policy === "five_original_frames" ? "结合五张图像" : "结合视觉信息";
