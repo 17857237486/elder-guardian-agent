@@ -1561,18 +1561,22 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
       </article>
     </section>
 
-    <section class="device-environment-grid">
+    <section class="device-environment-stack">
       <article class="panel device-control-panel">
-        <h2>房间设备开关</h2>
-        <p v-if="deviceControlMessage" class="device-control-message">{{ deviceControlMessage }}</p>
+        <div class="section-title-row">
+          <h2>房间设备开关</h2>
+          <p v-if="deviceControlMessage" class="device-control-message">{{ deviceControlMessage }}</p>
+        </div>
         <div class="device-control-grid">
           <section v-for="room in DASHBOARD_DEVICE_CONTROLS" :key="room.room" class="device-control-room">
             <h3>{{ ROOM_LABELS[room.room] ?? room.room }}</h3>
-            <div v-for="control in room.devices" :key="`${room.room}-${control.device}`" class="device-control-row">
-              <span>{{ control.label }}</span>
-              <div class="device-control-actions">
-                <button :disabled="deviceControlBusy === `${room.room}:${control.device}:${control.on}`" @click="requestDashboardDeviceAction(room.room, control.device, control.on)">{{ actionLabel(control.on) }}</button>
-                <button :disabled="deviceControlBusy === `${room.room}:${control.device}:${control.off}`" @click="requestDashboardDeviceAction(room.room, control.device, control.off)">{{ actionLabel(control.off) }}</button>
+            <div class="device-card-grid">
+              <div v-for="control in room.devices" :key="`${room.room}-${control.device}`" class="device-control-card">
+                <span>{{ control.label }}</span>
+                <div class="device-control-actions">
+                  <button :disabled="deviceControlBusy === `${room.room}:${control.device}:${control.on}`" @click="requestDashboardDeviceAction(room.room, control.device, control.on)">{{ actionLabel(control.on) }}</button>
+                  <button :disabled="deviceControlBusy === `${room.room}:${control.device}:${control.off}`" @click="requestDashboardDeviceAction(room.room, control.device, control.off)">{{ actionLabel(control.off) }}</button>
+                </div>
               </div>
             </div>
           </section>
