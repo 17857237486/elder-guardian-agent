@@ -1043,7 +1043,7 @@ function statusLabel(value: unknown): string {
 function policyTitle(item: AnyRecord): string {
   if (item.itemType !== "execution") return `${item.tool_name ?? "工具调用"} · 异常调用`;
   const command = item.command ?? {};
-  const room = command.room ? `${command.room} · ` : "";
+  const room = command.room ? `${ROOM_LABELS[String(command.room)] ?? command.room} · ` : "";
   return `${room}${deviceLabel(command.device)} · ${actionLabel(command.action)}`;
 }
 
