@@ -165,6 +165,8 @@ class LLMClientParserTests(unittest.TestCase):
             self.assertIn("T-1、T、T+1", local_content[0]["text"])
             self.assertNotIn("T-2、T-1", local_content[0]["text"])
             self.assertIn("temporal_changes最多5项", cloud_content[0]["text"])
+            self.assertIn("捂腹", cloud_content[0]["text"])
+            self.assertIn("生命体征平稳只能说明暂未见生命体征恶化", cloud_content[0]["text"])
             labels = [item["text"] for item in cloud_content if item["type"] == "text"][1:]
             self.assertEqual(
                 labels,

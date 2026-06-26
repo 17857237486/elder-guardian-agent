@@ -1214,7 +1214,8 @@ const cloudSemanticStatus = computed(() => {
   if (text || output.risk_level) {
     const latency = output.latency_ms !== undefined ? ` · 耗时 ${durationText(output.latency_ms)}` : "";
     const suffix = output.family_summary && output.family_summary !== text ? ` · ${output.family_summary}` : "";
-    return { state: "completed", text: `${text ?? "云端复核完成"}：${cloudIntegratedSummary.value}。云端风险 ${output.risk_level ?? "--"}${latency}${suffix}` };
+    const evidenceSuffix = evidence && evidence !== text ? ` · 图像证据：${evidence}` : "";
+    return { state: "completed", text: `${text ?? "云端复核完成"}：${cloudIntegratedSummary.value}${evidenceSuffix}。云端风险 ${output.risk_level ?? "--"}${latency}${suffix}` };
   }
   return { state: "pending", text: "等待云端复核结果" };
 });
