@@ -1197,16 +1197,6 @@ class LLMClientParserTests(unittest.TestCase):
                     "metrics": {"p10": 93.5, "p50": 96, "p90": 98.5},
                 },
             },
-        }
-
-        summary = _cloud_sensor_context_summary(context)
-
-        self.assertEqual(len(summary["environment"]["samples"]), 30)
-        self.assertEqual(len(summary["vital"]["samples"]), 30)
-        self.assertEqual(summary["environment"]["samples"][-1]["observation_id"], "env_29")
-        self.assertEqual(summary["vital"]["samples"][-1]["observation_id"], "vital_29")
-        self.assertEqual(summary["vital"]["summary"]["heart_rate"]["status"], "above_personal_high_ref")
-        self.assertEqual(summary["baseline"]["heart_rate_daily"]["metrics"]["p90"], 95)
 
     def test_vision_local_context_includes_recent_vitals_and_environment(self) -> None:
         observations = [

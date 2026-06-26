@@ -439,26 +439,6 @@ def _cloud_vital_summary(samples: list[Any], baseline_context: dict[str, Any]) -
             ),
         },
     }
-
-
-def _cloud_sensor_context_summary(context: dict[str, Any]) -> dict[str, Any]:
-    environment_context = context.get("environment_context") if isinstance(context.get("environment_context"), dict) else {}
-    recent_vital = context.get("recent_vital_samples") if isinstance(context.get("recent_vital_samples"), dict) else {}
-    elder_location = context.get("elder_location") if isinstance(context.get("elder_location"), dict) else {}
-    baseline_context = context.get("baseline_context") if isinstance(context.get("baseline_context"), dict) else {}
-    vital_samples = _compact_samples(recent_vital.get("samples", []), 30)
-    compact_baseline = _compact_baseline_context(baseline_context)
-    return {
-        "elder_location": _compact_value(elder_location),
-        "environment": {
-            "actual_samples": environment_context.get("actual_samples"),
-            "room_sequence": environment_context.get("room_sequence", []),
-            "samples": _compact_samples(environment_context.get("samples", []), 30),
-        },
-        "vital": {
-            "actual_samples": recent_vital.get("actual_samples"),
-            "samples": vital_samples,
-            "summary": _cloud_vital_summary(vital_samples, compact_baseline),
         },
         "baseline": compact_baseline,
     }
