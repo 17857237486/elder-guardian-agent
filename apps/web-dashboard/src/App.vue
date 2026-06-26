@@ -41,6 +41,7 @@ const IMPORTANT_STEPS = new Set([
   "frame_collection",
   "local_multiframe_analysis",
   "local_policy_execution",
+  "post_cloud_policy_execution",
   "cloud_review",
   "final_advisory"
 ]);
@@ -549,6 +550,10 @@ function findTargetStep(target: DemoTarget, name: string): AnyRecord | null {
   return targetSteps(target).find((step) => step.step_name === name) ?? null;
 }
 
+function findPolicyStep(target: DemoTarget): AnyRecord | null {
+  return findTargetStep(target, "post_cloud_policy_execution") ?? findTargetStep(target, "local_policy_execution");
+}
+
 function promotedCandidateIdForEvent(event: AnyRecord): string | null {
   const fromList = ((state.ai_review_candidates ?? []) as AnyRecord[]).find(
     (candidate) => candidate.promoted_event_id === event.event_id
@@ -608,7 +613,10 @@ function workflowSummary(step: AnyRecord): string {
     const queue = output.queue_wait_ms ? ` · 排队等待 ${durationText(output.queue_wait_ms)}` : "";
     return clip(`${output.event_semantics ?? "本地分析"} · ${output.risk_level ?? "--"}${latency}${queue}${output.fallback ? ` · ${fallbackLabel[output.fallback_type] ?? "规则回退"}` : ""}`);
   }
-  if (step.step_name === "local_policy_execution") return clip(output.status ?? "本地策略已执行");
+  if (["local_policy_execution", "post_cloud_policy_execution"].includes(step.step_name)) {
+    if (output.status === "deferred_until_cloud_review") return "等待云端复核后再询问老人";
+    return clip(output.status ?? "本地策略已执行");
+  }
   if (step.step_name === "cloud_review") {
     if (output.reason === "deterministic_p3_rule") return "确定性规则处置，无需云端复核";
     if (output.reason === "deterministic_vital_rule") return "确定性生命体征规则，无需云端复核";
@@ -694,7 +702,7 @@ const demoNodes = computed(() => {
   const ruleStep = findTargetStep(target, "rule_gate");
   const localStep = findTargetStep(target, "local_multiframe_analysis");
   const cloudStep = findTargetStep(target, "cloud_review");
-  const policyStep = findTargetStep(target, "local_policy_execution");
+  const policyStep = findPolicyStep(target);
   const finalStep = findTargetStep(target, "final_advisory");
   const actions = relatedItems(target, "action_executions");
   const prompts = relatedItems(target, "hmi_prompts");
@@ -1569,7 +1577,7 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
           <p v-if="deviceControlMessage" class="device-control-message">{{ deviceControlMessage }}</p>
         </div>
         <div class="device-control-grid">
-          <section v-for="room in DASHBOARD_DEVICE_CONTROLS" :key="room.room" class="device-control-room">
+          <section v-for="room in DASHBOARD_DEVICE_CONTROLS" :key="room.room" class="device-control-room" :class="{ 'whole-home-room': room.room === 'local' }">
             <h3>{{ ROOM_LABELS[room.room] ?? room.room }}</h3>
             <div class="device-card-grid">
               <div v-for="control in room.devices" :key="`${room.room}-${control.device}`" class="device-control-card">
@@ -1626,10 +1634,8 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
         <h2>老人反馈</h2>
         <div class="panel-scroll"><p v-if="!hmiPromptItems.length" class="empty">暂无老人提示或反馈</p><ul>
           <li v-for="item in hmiPromptItems" :key="item.prompt_id ? `prompt-${item.prompt_id}` : `response-${item.created_at}`">
-            <div class="row-head"><strong>{{ statusLabel(item.status ?? item.response_type) }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
-            <b v-if="item.itemType === 'prompt'">HMI · {{ item.risk_level }} · {{ item.event_type }}</b>
-            <b v-else>老人反馈 · {{ item.response_text }}</b>
-            <p>{{ clip(item.message) }}</p>
+            <div class="row-head feedback-head"><time>{{ formatTime(eventTime(item)) }}</time></div>
+            <p class="feedback-message">{{ item.itemType === 'prompt' ? clip(item.message, 70) : clip(item.response_text, 70) }}</p>
           </li>
         </ul></div>
       </article>
@@ -1638,9 +1644,8 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
         <h2>家属告警内容</h2>
         <div class="panel-scroll"><p v-if="!familyAlertItems.length" class="empty">暂无家属告警</p><ul>
           <li v-for="item in familyAlertItems" :key="item.alert_id">
-            <div class="row-head"><strong>{{ statusLabel(item.status) }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
-            <b>家属告警 · {{ item.alert_level }} · {{ item.channel }}</b>
-            <p>{{ clip(item.message) }}</p>
+            <div class="row-head feedback-head"><time>{{ formatTime(eventTime(item)) }}</time></div>
+            <p class="feedback-message">{{ clip(item.message, 96) }}</p>
           </li>
         </ul></div>
       </article>

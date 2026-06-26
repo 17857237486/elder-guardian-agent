@@ -1594,6 +1594,65 @@ class LLMClientParserTests(unittest.TestCase):
         ]
         self.assertEqual(final_calls[-1].args[4]["family_summary"], "cloud family summary")
 
+    def test_long_static_hmi_waits_until_cloud_review_finishes(self) -> None:
+        class FakeLocalClient:
+            async def analyze(self, **_: object) -> dict[str, object]:
+                return {
+                    "event_semantics": "long static still concerning",
+                    "risk_level": "P2",
+                    "confidence": 0.78,
+                    "family_summary": "local summary",
+                }
+
+        class FakeCloudClient:
+            async def review(self, **_: object) -> dict[str, object]:
+                return {
+                    "status": "completed",
+                    "event_semantics": "cloud confirms needs attention",
+                    "risk_level": "P2",
+                    "confidence": 0.84,
+                    "family_summary": "cloud summary",
+                }
+
+        runner = WorkflowRunner()
+        runner.local_llm = FakeLocalClient()
+        runner.cloud_llm = FakeCloudClient()
+        runner._collect_frames = AsyncMock(return_value=({}, None, []))
+        runner._record_step = AsyncMock()
+        runner._execute_policy = AsyncMock(return_value={"status": "waiting_hmi"})
+        runner.edge.get_recent_sensor_context = AsyncMock(return_value={"observations": []})
+        runner.edge.get_home_device_snapshot = AsyncMock(return_value={"devices": []})
+        runner.edge.update_event_analysis = AsyncMock(return_value={})
+        event = NormalizedEventV2(
+            elder_id="elder_001",
+            event_type=EventType.LONG_STATIC,
+            risk_level=RiskLevel.P2,
+            summary="long static",
+            confidence=0.78,
+            source_kind="vision",
+        )
+
+        asyncio.run(
+            runner._run_analysis_inner(
+                SimpleNamespace(workflow_id="wf_test"),
+                event,
+                {"event_type": "long_static", "risk_level": "P2"},
+                {"status": "deferred_until_local_review", "reason": "long_static_local_review_can_downgrade"},
+            )
+        )
+
+        recorded = [(call.args[2], call.args[4]) for call in runner._record_step.await_args_list if len(call.args) >= 5]
+        local_policy_index = next(index for index, item in enumerate(recorded) if item[0] == "local_policy_execution")
+        cloud_index = next(index for index, item in enumerate(recorded) if item[0] == "cloud_review")
+        post_policy_index = next(index for index, item in enumerate(recorded) if item[0] == "post_cloud_policy_execution")
+        self.assertLess(local_policy_index, cloud_index)
+        self.assertGreater(post_policy_index, cloud_index)
+        self.assertEqual(recorded[local_policy_index][1]["status"], "deferred_until_cloud_review")
+        runner._execute_policy.assert_awaited_once()
+        reviewed_event = runner._execute_policy.await_args.args[1]
+        self.assertEqual(str(reviewed_event.event_type), EventType.LONG_STATIC.value)
+        self.assertEqual(str(reviewed_event.risk_level), RiskLevel.P2.value)
+
     def test_frame_collection_prefers_local_sheet_and_supports_old_manifest(self) -> None:
         event = NormalizedEventV2(
             elder_id="elder_001",

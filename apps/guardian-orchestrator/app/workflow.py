@@ -162,8 +162,19 @@ class WorkflowRunner:
         rule_risk = risk_text(event.risk_level)
         local_risk = self._resolve_local_risk(event, rule_risk, risk_text(local.get("risk_level", rule_risk)), local)
         local_execution: dict[str, Any] = {"status": "baseline_retained", "baseline": baseline}
+        defer_policy_until_cloud = (
+            str(event.event_type) == EventType.LONG_STATIC.value
+            and baseline.get("status") == "deferred_until_local_review"
+            and local_risk != "P4"
+        )
         if baseline.get("status") == "deferred_until_local_review":
-            if local.get("fallback"):
+            if defer_policy_until_cloud:
+                local_execution = {
+                    "status": "deferred_until_cloud_review",
+                    "reason": "long_static_waits_for_cloud_final_risk",
+                    "baseline": baseline,
+                }
+            elif local.get("fallback"):
                 local_execution = await self._execute_policy(workflow, event, local)
             elif local_risk == "P4":
                 local_execution = {
@@ -217,7 +228,22 @@ class WorkflowRunner:
 
         cloud_risk = risk_text(cloud["risk_level"]) if cloud.get("status") == "completed" else None
         final_risk = self._higher_risk(local_risk, cloud_risk) if cloud_risk else local_risk
-        if cloud_risk and RISK_ORDER[final_risk] > RISK_ORDER[local_risk]:
+        if defer_policy_until_cloud and final_risk != "P4":
+            reviewed_event = event.model_copy(
+                update={
+                    "risk_level": final_risk,
+                    "summary": cloud.get("event_semantics") or local.get("event_semantics", event.summary),
+                }
+            )
+            post_cloud_execution = await self._execute_policy(workflow, reviewed_event, cloud if cloud_risk else local)
+            await self._record_step(
+                workflow,
+                event,
+                "post_cloud_policy_execution",
+                {"local": local, "cloud": cloud},
+                post_cloud_execution,
+            )
+        elif cloud_risk and RISK_ORDER[final_risk] > RISK_ORDER[local_risk]:
             escalated = event.model_copy(
                 update={"risk_level": final_risk, "summary": cloud.get("event_semantics", event.summary)}
             )
@@ -1026,17 +1052,17 @@ class WorkflowRunner:
             gas = payload.get("gas_ppm")
             gas_text = f" {gas:g} ppm" if isinstance(gas, (int, float)) else ""
             room = cls._room_label(event.room)
-            return f"{room}检测到燃气{gas_text}，系统已关闭燃气阀、打开窗户并启动本地报警。"
+            return f"{room}检测到燃气{gas_text}，系统已关闭燃气阀、打开窗户并启动本地报警。建议家属立即联系老人，确认其远离厨房并保持通风。"
         if event_type == EventType.HEART_RATE_ABNORMAL.value:
             heart_rate = payload.get("heart_rate")
             value = cls._format_number(heart_rate, " bpm")
-            return f"检测到老人心率 {value}，超过安全阈值，已在 HMI 询问老人。"
+            return f"检测到老人心率 {value}，超过安全阈值，系统已在 HMI 询问老人。建议家属关注是否胸闷、头晕或需要协助。"
         if event_type == EventType.SPO2_LOW.value:
             spo2 = payload.get("spo2")
             value = cls._format_number(spo2, "%")
             if alert_level == RiskLevel.P0:
-                return f"检测到老人血氧 {value}，严重低于安全阈值，系统已启动紧急告警。"
-            return f"检测到老人血氧 {value}，低于安全阈值，已在 HMI 询问老人。"
+                return f"检测到老人血氧 {value}，严重低于安全阈值，系统已启动紧急告警。建议家属立即联系老人并准备就医。"
+            return f"检测到老人血氧 {value}，低于安全阈值，系统已在 HMI 询问老人。建议家属关注是否气短、乏力或需要帮助。"
         if event_type == "vital_baseline_anomaly":
             features = cls._candidate_features(event)
             metric = str(features.get("metric") or "")
@@ -1044,20 +1070,24 @@ class WorkflowRunner:
             latest = features.get("latest_value", features.get("latest"))
             if metric == "heart_rate":
                 label = "高于" if direction == "high" else "低于"
-                return f"检测到老人心率 {cls._format_number(latest, ' bpm')}，{label}个人参考范围，已在 HMI 询问老人。"
+                return f"检测到老人心率 {cls._format_number(latest, ' bpm')}，{label}个人参考范围，系统已在 HMI 询问老人。建议家属观察是否持续异常。"
             if metric == "spo2":
-                return f"检测到老人血氧 {cls._format_number(latest, '%')}，低于个人参考范围，已在 HMI 询问老人。"
-            return "检测到老人的生命体征与平时相比有异常，已在 HMI 询问老人。"
+                return f"检测到老人血氧 {cls._format_number(latest, '%')}，低于个人参考范围，系统已在 HMI 询问老人。建议家属关注是否持续下降。"
+            return "检测到老人的生命体征与平时相比有异常，系统已在 HMI 询问老人。建议家属关注后续反馈。"
         if event_type == "bathroom_stay_anomaly":
             features = cls._candidate_features(event)
             duration = features.get("duration_seconds", features.get("dur"))
             limit = features.get("baseline_p90_seconds", features.get("p90s"))
             if isinstance(duration, (int, float)) and isinstance(limit, (int, float)):
-                return f"检测到老人在卫生间停留 {duration:g} 秒，超过个人参考上限 {limit:g} 秒，已在 HMI 询问老人。"
-            return "检测到老人在卫生间停留时间较长，已在 HMI 询问老人。"
+                return f"检测到老人在卫生间停留 {duration:g} 秒，超过个人参考上限 {limit:g} 秒，系统已在 HMI 询问老人。建议家属关注是否需要协助。"
+            return "检测到老人在卫生间停留时间较长，系统已在 HMI 询问老人。建议家属留意老人反馈。"
+        if event_type == EventType.LONG_STATIC.value:
+            return "检测到老人较长时间没有活动，经本地和云端复核后仍需要关注。建议家属查看老人反馈，必要时电话确认是否安全。"
+        if event_type == EventType.SUSPECTED_FALL.value:
+            return "检测到疑似跌倒或异常姿态，系统已在 HMI 询问老人。建议家属尽快确认老人是否受伤。"
         if alert_level == RiskLevel.P0:
-            return "检测到紧急风险事件，系统已启动紧急处置并通知家属。"
-        return "检测到高风险事件，系统已在 HMI 询问老人并通知家属。"
+            return "检测到紧急风险事件，系统已启动紧急处置并通知家属。建议立即联系老人。"
+        return "检测到高风险事件，系统已在 HMI 询问老人并通知家属。建议关注老人反馈。"
 
     async def _execute_p0(self, workflow: WorkflowV2, event: NormalizedEventV2) -> dict[str, Any]:
         if str(event.event_type) == EventType.GAS_LEAK.value:
