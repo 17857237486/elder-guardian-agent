@@ -19,7 +19,8 @@ const ROOM_LABELS: Record<string, string> = {
   bedroom: "卧室",
   bathroom: "卫生间",
   living_room: "客厅",
-  kitchen: "厨房"
+  kitchen: "厨房",
+  local: "全屋"
 };
 const EVENT_LABELS: Record<string, string> = {
   normal: "正常状态",
@@ -980,35 +981,41 @@ const DASHBOARD_DEVICE_CONTROLS = [
   {
     room: "bedroom",
     devices: [
-      { device: "light", label: "灯光", on: "turn_on", off: "turn_off" },
       { device: "air_conditioner", label: "空调", on: "turn_on", off: "turn_off" },
       { device: "fan", label: "风扇", on: "turn_on", off: "turn_off" },
-      { device: "window", label: "窗户", on: "open", off: "close" }
-    ]
-  },
-  {
-    room: "bathroom",
-    devices: [
-      { device: "light", label: "灯光", on: "turn_on", off: "turn_off" },
-      { device: "heater", label: "取暖器", on: "turn_on", off: "turn_off" },
-      { device: "window", label: "窗户", on: "open", off: "close" }
-    ]
-  },
-  {
-    room: "living_room",
-    devices: [
-      { device: "light", label: "灯光", on: "turn_on", off: "turn_off" },
-      { device: "air_conditioner", label: "空调", on: "turn_on", off: "turn_off" },
-      { device: "window", label: "窗户", on: "open", off: "close" }
+      { device: "window", label: "窗户", on: "open", off: "close" },
+      { device: "light", label: "灯光", on: "turn_on", off: "turn_off" }
     ]
   },
   {
     room: "kitchen",
     devices: [
+      { device: "window", label: "窗户", on: "open", off: "close" },
       { device: "light", label: "灯光", on: "turn_on", off: "turn_off" },
       { device: "fan", label: "风扇", on: "turn_on", off: "turn_off" },
-      { device: "window", label: "窗户", on: "open", off: "close" },
       { device: "gas_valve", label: "燃气阀", on: "open", off: "close" }
+    ]
+  },
+  {
+    room: "living_room",
+    devices: [
+      { device: "air_conditioner", label: "空调", on: "turn_on", off: "turn_off" },
+      { device: "window", label: "窗户", on: "open", off: "close" },
+      { device: "light", label: "灯光", on: "turn_on", off: "turn_off" }
+    ]
+  },
+  {
+    room: "bathroom",
+    devices: [
+      { device: "window", label: "窗户", on: "open", off: "close" },
+      { device: "light", label: "灯光", on: "turn_on", off: "turn_off" },
+      { device: "heater", label: "取暖器", on: "turn_on", off: "turn_off" }
+    ]
+  },
+  {
+    room: "local",
+    devices: [
+      { device: "local_alarm", label: "本地报警器", on: "alarm_on", off: "alarm_off" }
     ]
   }
 ];
@@ -1501,61 +1508,27 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
       </article>
     </section>
 
-    <section class="device-dashboard-grid">
+    <section class="device-environment-grid">
       <article class="panel compact-panel">
         <h2>房间设备开关</h2>
         <p v-if="deviceControlMessage" class="device-control-message">{{ deviceControlMessage }}</p>
-        <div class="device-control-grid">
-          <section v-for="room in DASHBOARD_DEVICE_CONTROLS" :key="room.room" class="device-control-room">
-            <h3>{{ ROOM_LABELS[room.room] ?? room.room }}</h3>
-            <div v-for="control in room.devices" :key="`${room.room}-${control.device}`" class="device-control-row">
-              <span>{{ control.label }}</span>
-              <div class="device-control-actions">
-                <button :disabled="deviceControlBusy === `${room.room}:${control.device}:${control.on}`" @click="requestDashboardDeviceAction(room.room, control.device, control.on)">打开</button>
-                <button :disabled="deviceControlBusy === `${room.room}:${control.device}:${control.off}`" @click="requestDashboardDeviceAction(room.room, control.device, control.off)">关闭</button>
+        <div class="panel-scroll device-control-scroll">
+          <div class="device-control-grid">
+            <section v-for="room in DASHBOARD_DEVICE_CONTROLS" :key="room.room" class="device-control-room">
+              <h3>{{ ROOM_LABELS[room.room] ?? room.room }}</h3>
+              <div v-for="control in room.devices" :key="`${room.room}-${control.device}`" class="device-control-row">
+                <span>{{ control.label }}</span>
+                <div class="device-control-actions">
+                  <button :disabled="deviceControlBusy === `${room.room}:${control.device}:${control.on}`" @click="requestDashboardDeviceAction(room.room, control.device, control.on)">{{ actionLabel(control.on) }}</button>
+                  <button :disabled="deviceControlBusy === `${room.room}:${control.device}:${control.off}`" @click="requestDashboardDeviceAction(room.room, control.device, control.off)">{{ actionLabel(control.off) }}</button>
+                </div>
               </div>
-            </div>
-          </section>
+            </section>
+          </div>
         </div>
       </article>
 
       <article class="panel compact-panel">
-        <h2>策略与设备执行</h2>
-        <div class="panel-scroll"><p v-if="!policyExecutions.length" class="empty">暂无设备执行</p><ul>
-          <li v-for="item in policyExecutions" :key="item.execution_id ?? item.call_id">
-            <div class="row-head"><strong>{{ statusLabel(item.status) }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
-            <b>{{ policyTitle(item) }}</b>
-            <p>{{ clip(item.reason || item.error || "执行记录") }}</p>
-          </li>
-        </ul></div>
-      </article>
-    </section>
-
-    <section class="grid user-grid">
-      <article class="panel">
-        <h2>老人反馈</h2>
-        <div class="panel-scroll"><p v-if="!hmiPromptItems.length" class="empty">暂无老人提示或反馈</p><ul>
-          <li v-for="item in hmiPromptItems" :key="item.prompt_id ? `prompt-${item.prompt_id}` : `response-${item.created_at}`">
-            <div class="row-head"><strong>{{ statusLabel(item.status ?? item.response_type) }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
-            <b v-if="item.itemType === 'prompt'">HMI · {{ item.risk_level }} · {{ item.event_type }}</b>
-            <b v-else>老人反馈 · {{ item.response_text }}</b>
-            <p>{{ clip(item.message) }}</p>
-          </li>
-        </ul></div>
-      </article>
-
-      <article class="panel">
-        <h2>家属告警内容</h2>
-        <div class="panel-scroll"><p v-if="!familyAlertItems.length" class="empty">暂无家属告警</p><ul>
-          <li v-for="item in familyAlertItems" :key="item.alert_id">
-            <div class="row-head"><strong>{{ statusLabel(item.status) }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
-            <b>家属告警 · {{ item.alert_level }} · {{ item.channel }}</b>
-            <p>{{ clip(item.message) }}</p>
-          </li>
-        </ul></div>
-      </article>
-
-      <article class="panel">
         <h2>整屋环境状态</h2>
         <div class="panel-scroll">
           <table class="home-env-table">
@@ -1583,6 +1556,45 @@ onBeforeUnmount(() => refreshTimer && window.clearTimeout(refreshTimer));
             </tbody>
           </table>
         </div>
+      </article>
+    </section>
+
+    <article class="panel device-execution-strip">
+      <h2>策略与设备执行</h2>
+      <div class="panel-scroll">
+        <p v-if="!policyExecutions.length" class="empty">暂无设备执行</p>
+        <ul v-else class="execution-strip-list">
+          <li v-for="item in policyExecutions" :key="item.execution_id ?? item.call_id">
+            <div class="row-head"><strong>{{ statusLabel(item.status) }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
+            <b>{{ policyTitle(item) }}</b>
+            <p>{{ clip(item.reason || item.error || "执行记录", 60) }}</p>
+          </li>
+        </ul>
+      </div>
+    </article>
+
+    <section class="grid user-grid">
+      <article class="panel">
+        <h2>老人反馈</h2>
+        <div class="panel-scroll"><p v-if="!hmiPromptItems.length" class="empty">暂无老人提示或反馈</p><ul>
+          <li v-for="item in hmiPromptItems" :key="item.prompt_id ? `prompt-${item.prompt_id}` : `response-${item.created_at}`">
+            <div class="row-head"><strong>{{ statusLabel(item.status ?? item.response_type) }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
+            <b v-if="item.itemType === 'prompt'">HMI · {{ item.risk_level }} · {{ item.event_type }}</b>
+            <b v-else>老人反馈 · {{ item.response_text }}</b>
+            <p>{{ clip(item.message) }}</p>
+          </li>
+        </ul></div>
+      </article>
+
+      <article class="panel">
+        <h2>家属告警内容</h2>
+        <div class="panel-scroll"><p v-if="!familyAlertItems.length" class="empty">暂无家属告警</p><ul>
+          <li v-for="item in familyAlertItems" :key="item.alert_id">
+            <div class="row-head"><strong>{{ statusLabel(item.status) }}</strong><time>{{ formatTime(eventTime(item)) }}</time></div>
+            <b>家属告警 · {{ item.alert_level }} · {{ item.channel }}</b>
+            <p>{{ clip(item.message) }}</p>
+          </li>
+        </ul></div>
       </article>
 
       <article class="panel daily-summary-panel">
